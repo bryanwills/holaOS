@@ -3311,6 +3311,7 @@ export function ChatPane({
     isActivatingWorkspace,
     workspaceAppsReady,
     workspaceBlockingReason,
+    workspaceErrorMessage,
     refreshWorkspaceData,
   } = useWorkspaceDesktop();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -6032,7 +6033,9 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     }
     if (!isOnboardingVariant && !workspaceAppsReady) {
       setChatErrorMessage(
-        workspaceBlockingReason || "Workspace apps are still starting.",
+        workspaceBlockingReason ||
+          workspaceErrorMessage ||
+          "Workspace apps are still starting.",
       );
       return;
     }
@@ -7215,6 +7218,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     !selectedWorkspace || isOnboardingVariant || workspaceAppsReady
       ? ""
       : workspaceBlockingReason ||
+        workspaceErrorMessage ||
         (isActivatingWorkspace
           ? "Preparing workspace apps..."
           : "Workspace apps are still starting.");
@@ -7468,6 +7472,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
       signed_in: isSignedIn,
       workspace_ready: Boolean(selectedWorkspace) && workspaceAppsReady,
       workspace_blocking_reason: workspaceBlockingReason || null,
+      workspace_error_message: workspaceErrorMessage || null,
       runtime_default_model: runtimeConfig?.defaultModel ?? null,
       session_metrics: {
         available_session_count: desktopMainSession ? 1 : 0,
@@ -7564,6 +7569,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
       usesHostedManagedCredits,
       workspaceAppsReady,
       workspaceBlockingReason,
+      workspaceErrorMessage,
     ],
   );
   useRendererSentrySection("chat_pane", chatPaneSentryState);

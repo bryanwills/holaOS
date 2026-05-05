@@ -7,6 +7,24 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.join(__dirname, "ChatPane.tsx");
 
+test("chat pane surfaces workspace activation errors before generic app-starting copy", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const \{\s*[\s\S]*workspaceBlockingReason,\s*workspaceErrorMessage,\s*refreshWorkspaceData,\s*\} = useWorkspaceDesktop\(\);/,
+  );
+  assert.match(
+    source,
+    /setChatErrorMessage\(\s*workspaceBlockingReason \|\|[\s\S]*workspaceErrorMessage \|\|[\s\S]*"Workspace apps are still starting\.",\s*\);/,
+  );
+  assert.match(
+    source,
+    /const readinessMessage =[\s\S]*workspaceBlockingReason \|\|[\s\S]*workspaceErrorMessage \|\|[\s\S]*"Preparing workspace apps\.\.\."[\s\S]*"Workspace apps are still starting\."/,
+  );
+  assert.match(source, /workspace_error_message: workspaceErrorMessage \|\| null,/);
+});
+
 test("chat model picker hides holaboss models while signed out and only marks them pending after sign-in", async () => {
   const source = await readFile(sourcePath, "utf8");
 
