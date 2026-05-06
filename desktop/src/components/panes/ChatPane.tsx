@@ -104,6 +104,10 @@ import * as modelCatalog from "../../../shared/model-catalog.js";
 
 type ChatAttachment = SessionInputAttachmentPayload;
 type ChatPaneVariant = "default" | "onboarding";
+const MAIN_SESSION_EVENT_BATCH_HEADER =
+  "[Holaboss Main Session Event Batch v1]";
+const BACKGROUND_DELIVERY_RETRY_STATUS_MESSAGE =
+  "Background update delayed. Retrying automatically.";
 
 export type ChatAssistantSegment =
   | {
@@ -362,7 +366,14 @@ const STREAM_ATTACH_PENDING = "__stream_attach_pending__";
 const STREAM_TELEMETRY_LIMIT = 240;
 const TOOL_TRACE_TERMINAL_PHASES = new Set(["completed", "failed", "error"]);
 const CHAT_AUTO_SCROLL_THRESHOLD_PX = 72;
-const CHAT_HISTORY_PAGE_SIZE = 10;
+// Drives both the initial session-open fetch and each "load earlier" pull.
+// Was 10 originally — small enough that scroll-restoration after a prepend
+// often left the user still inside the 96px top threshold, immediately
+// triggering the next load. The runtime caps `limit` at 1000 (default 200);
+// 50 keeps the per-call work bounded while making any single load earn
+// enough vertical content (~25 turns) to push the user well past the
+// re-trigger threshold.
+const CHAT_HISTORY_PAGE_SIZE = 50;
 const CHAT_HISTORY_TOP_LOAD_THRESHOLD_PX = 96;
 const COMPOSER_FOOTER_GAP_PX = 8;
 const COMPOSER_FULL_MODEL_CONTROL_WIDTH_PX = 240;
@@ -848,6 +859,12 @@ function hasRenderableMessageContent(
   attachments: ChatAttachment[],
 ) {
   return Boolean(text.trim()) || attachments.length > 0;
+}
+
+function isMainSessionEventBatchInstructionPreview(
+  value: string | null | undefined,
+) {
+  return (value || "").trim().startsWith(MAIN_SESSION_EVENT_BATCH_HEADER);
 }
 
 function hasRenderableAssistantTurn(
@@ -3346,6 +3363,8 @@ export function ChatPane({
   const [isSubmittingMessage, setIsSubmittingMessage] = useState(false);
   const [isPausePending, setIsPausePending] = useState(false);
   const [chatErrorMessage, setChatErrorMessage] = useState("");
+  const [backgroundDeliveryStatusMessage, setBackgroundDeliveryStatusMessage] =
+    useState("");
   const [attachmentGateMessage, setAttachmentGateMessage] = useState("");
   const [verboseTelemetryEnabled, setVerboseTelemetryEnabled] = useState(false);
   const [composerBlockHeight, setComposerBlockHeight] = useState(0);
@@ -3380,7 +3399,7 @@ export function ChatPane({
     proposalId: string;
     action: "accept" | "dismiss";
   } | null>(null);
-const [queuedSessionInputs, setQueuedSessionInputs] = useState<
+  const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     QueuedSessionInput[]
   >([]);
   const [pendingOptimisticUserMessages, setPendingOptimisticUserMessages] =
@@ -3455,6 +3474,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
   const previousSelectedWorkspaceIdRef = useRef(
     (selectedWorkspaceId || "").trim(),
   );
+  const mainSessionEventBatchInputIdsRef = useRef<Set<string>>(new Set());
   const draftParentSessionIdRef = useRef<string | null>(null);
   const draftHydrationWorkspaceIdRef = useRef(
     (selectedWorkspaceId || "").trim(),
@@ -3726,6 +3746,44 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     setLiveExecutionItems([]);
   }
 
+  function rememberMainSessionEventBatchInput(
+    inputId: string,
+    payload: Record<string, unknown>,
+  ) {
+    const instructionPreview =
+      typeof payload.instruction_preview === "string"
+        ? payload.instruction_preview
+        : "";
+    if (
+      !inputId ||
+      !isMainSessionEventBatchInstructionPreview(instructionPreview)
+    ) {
+      return false;
+    }
+    mainSessionEventBatchInputIdsRef.current.add(inputId);
+    return true;
+  }
+
+  function isRememberedMainSessionEventBatchInput(inputId: string) {
+    return Boolean(
+      inputId && mainSessionEventBatchInputIdsRef.current.has(inputId),
+    );
+  }
+
+  function forgetMainSessionEventBatchInput(inputId: string) {
+    if (!inputId) {
+      return;
+    }
+    mainSessionEventBatchInputIdsRef.current.delete(inputId);
+  }
+
+  function liveAssistantHasVisibleOutput() {
+    return (
+      Boolean(liveAssistantTextRef.current.trim()) ||
+      assistantSegmentsIncludeOutput(liveAssistantSegmentsRef.current)
+    );
+  }
+
   function clearSessionView() {
     setMessages([]);
     setSessionOutputs([]);
@@ -3736,10 +3794,12 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     setArtifactBrowserFilter("all");
     setArtifactBrowserScopedOutputs(null);
     setArtifactBrowserScope("session");
+    setBackgroundDeliveryStatusMessage("");
     setMemoryProposalAction(null);
     setEditingMemoryProposalId(null);
     setMemoryProposalDrafts({});
     loadedHistoryOutputEventsRef.current = [];
+    mainSessionEventBatchInputIdsRef.current.clear();
     pendingHistoryPrependRestoreRef.current = null;
     resetLiveTurn();
     setCollapsedTraceByStepId({});
@@ -3868,6 +3928,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
         const [outputEventsResult, outputListResult, memoryProposalListResult] =
           await Promise.allSettled([
             window.electronAPI.workspace.getSessionOutputEvents({
+              workspaceId: params.workspaceId,
               sessionId: params.sessionId,
               inputId,
             }),
@@ -4537,6 +4598,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     try {
       await window.electronAPI.workspace.acceptMemoryUpdateProposal({
         proposalId: proposal.proposal_id,
+        workspaceId: proposal.workspace_id,
         summary: nextSummary,
       });
       setEditingMemoryProposalId((current) =>
@@ -4564,6 +4626,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
     });
     try {
       await window.electronAPI.workspace.dismissMemoryUpdateProposal(
+        proposal.workspace_id,
         proposal.proposal_id,
       );
       setEditingMemoryProposalId((current) =>
@@ -5270,6 +5333,12 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
           Number.isFinite(typedEvent.sequence)
             ? typedEvent.sequence
             : Number.MAX_SAFE_INTEGER;
+        const trackedMainSessionEventBatchInput =
+          (eventType === "run_claimed" || eventType === "run_started") &&
+          rememberMainSessionEventBatchInput(eventInputId, eventPayload);
+        const isMainSessionEventBatchInput =
+          trackedMainSessionEventBatchInput ||
+          isRememberedMainSessionEventBatchInput(eventInputId);
 
         appendStreamTelemetry({
           streamId: payload.streamId,
@@ -5485,6 +5554,9 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
               ? `assistant-${eventInputId}`
               : `assistant-${Date.now()}`);
           activeAssistantMessageIdRef.current = assistantMessageId;
+          if (isMainSessionEventBatchInput) {
+            setBackgroundDeliveryStatusMessage("");
+          }
           appendLiveAssistantDelta(delta);
           appendStreamTelemetry({
             streamId: payload.streamId,
@@ -5548,10 +5620,31 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
             return;
           }
           const detail = runFailedDetail(eventPayload);
+          const shouldPersistFailureText = !liveAssistantHasVisibleOutput();
+          if (isMainSessionEventBatchInput && shouldPersistFailureText) {
+            forgetMainSessionEventBatchInput(eventInputId);
+            resetLiveTurn();
+            setBackgroundDeliveryStatusMessage(
+              BACKGROUND_DELIVERY_RETRY_STATUS_MESSAGE,
+            );
+            setIsResponding(false);
+            activeStreamIdRef.current = null;
+            pendingInputIdRef.current = null;
+            appendStreamTelemetry({
+              streamId: payload.streamId,
+              transportType: payload.type,
+              eventName,
+              eventType,
+              inputId: eventInputId,
+              sessionId: eventSessionId,
+              action: "suppress_background_delivery_failure",
+              detail,
+            });
+            scheduleConversationRefresh(eventSessionId, selectedWorkspaceId);
+            return;
+          }
+          forgetMainSessionEventBatchInput(eventInputId);
           finalizeLiveTraceSteps("error");
-          const shouldPersistFailureText =
-            !liveAssistantTextRef.current &&
-            !assistantSegmentsIncludeOutput(liveAssistantSegmentsRef.current);
           const committedFailureMessage = commitLiveAssistantMessage({
             fallbackText: shouldPersistFailureText ? detail : undefined,
             tone: shouldPersistFailureText ? "error" : "default",
@@ -5598,10 +5691,41 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
             typeof eventPayload.status === "string"
               ? eventPayload.status.trim().toLowerCase()
               : "";
+          const suppressBackgroundDeliveryCompletion =
+            isMainSessionEventBatchInput &&
+            completedStatus === "paused" &&
+            !liveAssistantHasVisibleOutput();
+          if (suppressBackgroundDeliveryCompletion) {
+            forgetMainSessionEventBatchInput(eventInputId);
+            resetLiveTurn();
+            setBackgroundDeliveryStatusMessage(
+              BACKGROUND_DELIVERY_RETRY_STATUS_MESSAGE,
+            );
+            setIsResponding(false);
+            activeStreamIdRef.current = null;
+            pendingInputIdRef.current = null;
+            appendStreamTelemetry({
+              streamId: payload.streamId,
+              transportType: payload.type,
+              eventName,
+              eventType,
+              inputId: eventInputId,
+              sessionId: eventSessionId,
+              action: "suppress_background_delivery_completion",
+              detail: `status=${completedStatus || "unknown"}`,
+            });
+            scheduleConversationRefresh(eventSessionId, selectedWorkspaceId);
+            void refreshWorkspaceData().catch(() => undefined);
+            return;
+          }
           finalizeLiveTraceSteps(
             completedStatus === "paused" ? "waiting" : "completed",
           );
-          commitLiveAssistantMessage();
+          const committedAssistantMessage = commitLiveAssistantMessage();
+          if (isMainSessionEventBatchInput && committedAssistantMessage) {
+            setBackgroundDeliveryStatusMessage("");
+          }
+          forgetMainSessionEventBatchInput(eventInputId);
           maybePlayMainSessionCompletionChime({
             sessionId: eventSessionId,
             inputId: eventInputId,
@@ -7628,6 +7752,7 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
         ) : null}
 
         {chatErrorMessage ||
+        backgroundDeliveryStatusMessage ||
         attachmentGateMessage ||
         pendingImageInputUnsupportedMessage ||
         verboseTelemetryEnabled ? (
@@ -7635,6 +7760,12 @@ const [queuedSessionInputs, setQueuedSessionInputs] = useState<
             {chatErrorMessage ? (
               <div className="theme-chat-system-bubble rounded-xl border px-3 py-2 text-xs">
                 {chatErrorMessage}
+              </div>
+            ) : null}
+
+            {backgroundDeliveryStatusMessage ? (
+              <div className="theme-chat-system-bubble mt-3 rounded-xl border px-3 py-2 text-xs">
+                {backgroundDeliveryStatusMessage}
               </div>
             ) : null}
 
@@ -8667,7 +8798,6 @@ function AssistantTurnActionsMenu({
 export const AssistantTurn = memo(AssistantTurnComponent, (prev, next) =>
   prev.label === next.label &&
   prev.mode === next.mode &&
-  prev.showSeparator === next.showSeparator &&
   prev.showExecutionInternals === next.showExecutionInternals &&
   prev.text === next.text &&
   prev.tone === next.tone &&
@@ -8688,7 +8818,6 @@ export const AssistantTurn = memo(AssistantTurnComponent, (prev, next) =>
 function AssistantTurnComponent({
   label,
   mode,
-  showSeparator = false,
   showExecutionInternals = true,
   fitToContent = false,
   text,
@@ -8717,7 +8846,6 @@ function AssistantTurnComponent({
 }: {
   label: string;
   mode: string;
-  showSeparator?: boolean;
   showExecutionInternals?: boolean;
   fitToContent?: boolean;
   text: string;
@@ -8833,7 +8961,7 @@ function AssistantTurnComponent({
 
   return (
     <div
-      className={`group/assistant-turn relative flex min-w-0 justify-start ${showSeparator ? "mt-4" : ""}`.trim()}
+      className="group/assistant-turn relative flex min-w-0 justify-start"
     >
       <article
         className={
@@ -9461,7 +9589,6 @@ export function ConversationTurns<Message extends ChatMessage>({
             <AssistantTurn
               label={assistantLabel}
               mode={assistantMode}
-              showSeparator={index > 0}
               showExecutionInternals={showExecutionInternals}
               fitToContent={assistantFitToContent}
               text={message.text}
@@ -9507,7 +9634,6 @@ export function ConversationTurns<Message extends ChatMessage>({
         <AssistantTurn
           label={assistantLabel}
           mode={assistantMode}
-          showSeparator={messages.length > 0}
           showExecutionInternals={showExecutionInternals}
           fitToContent={assistantFitToContent}
           text={liveAssistantTurn.text}

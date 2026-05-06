@@ -24,6 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PaneCard } from "@/components/ui/PaneCard";
 import { browserSurfaceStatusSummary } from "@/components/panes/browserSessionUi";
+import { BrowserProfileImportButton } from "@/components/panes/BrowserProfileImportButton";
 import {
   BrowserCaptureStatusToast,
   useBrowserCaptureActions,
@@ -113,6 +114,8 @@ export function BrowserPane({
   layoutSyncKey = "",
 }: BrowserPaneProps) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
+  const [browserProfileImportDialogOpen, setBrowserProfileImportDialogOpen] =
+    useState(false);
   const [paneWidth, setPaneWidth] = useState(0);
   const [browserState, setBrowserState] =
     useState<BrowserTabListPayload>(INITIAL_STATE);
@@ -158,6 +161,8 @@ export function BrowserPane({
     captureScreenshotToClipboard,
     screenshotCapturePending,
   } = useBrowserCaptureActions();
+  const effectiveSuspendNativeView =
+    suspendNativeView || browserProfileImportDialogOpen;
 
   useLayoutEffect(() => {
     const pane = paneRef.current;
@@ -351,7 +356,7 @@ export function BrowserPane({
       return;
     }
 
-    if (suspendNativeView) {
+    if (effectiveSuspendNativeView) {
       void window.electronAPI.browser.setBounds({
         x: 0,
         y: 0,
@@ -391,7 +396,7 @@ export function BrowserPane({
       window.removeEventListener("resize", queueSync);
       window.cancelAnimationFrame(rafId);
     };
-  }, [layoutSyncKey, suspendNativeView]);
+  }, [effectiveSuspendNativeView, layoutSyncKey]);
 
   useEffect(() => {
     return () => {
@@ -772,6 +777,14 @@ export function BrowserPane({
               <div
                 className={`relative flex shrink-0 items-center gap-1 ${isCompactPane ? "" : "ml-auto"}`}
               >
+                <BrowserProfileImportButton
+                  buttonClassName="shrink-0"
+                  buttonSize="sm"
+                  buttonVariant="outline"
+                  open={browserProfileImportDialogOpen}
+                  onOpenChange={setBrowserProfileImportDialogOpen}
+                  showLabel={!isNarrowPane}
+                />
                 <Button
                   type="button"
                   variant="outline"

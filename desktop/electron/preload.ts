@@ -27,12 +27,22 @@ type FilePreviewKind =
   | "presentation"
   | "unsupported";
 
+interface FilePreviewTableImagePayload {
+  row: number;
+  column: number;
+  dataUrl: string;
+  widthPx?: number;
+  heightPx?: number;
+  alt?: string;
+}
+
 interface FilePreviewTableSheetPayload {
   name: string;
   index: number;
   columns: string[];
   rows: string[][];
   links?: (string | null)[][];
+  images?: FilePreviewTableImagePayload[];
   totalRows: number;
   totalColumns: number;
   truncated: boolean;
@@ -760,6 +770,7 @@ interface SessionOutputEventPayload {
 }
 
 interface SessionOutputEventListRequestPayload {
+  workspaceId: string;
   sessionId: string;
   inputId?: string | null;
 }
@@ -1155,6 +1166,19 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("fs:movePath", sourcePath, destinationDirectoryPath, workspaceId) as Promise<FileSystemMutationPayload>,
     deletePath: (targetPath: string, workspaceId?: string | null) =>
       ipcRenderer.invoke("fs:deletePath", targetPath, workspaceId) as Promise<{ deleted: boolean }>,
+    revealInFolder: (targetPath: string, workspaceId?: string | null) =>
+      ipcRenderer.invoke("fs:revealInFolder", targetPath, workspaceId) as Promise<{ revealed: boolean }>,
+    exportFileTo: (
+      targetPath: string,
+      workspaceId?: string | null,
+      payload?: { content?: string; suggestedName?: string },
+    ) =>
+      ipcRenderer.invoke(
+        "fs:exportFileTo",
+        targetPath,
+        workspaceId,
+        payload,
+      ) as Promise<{ path: string | null; canceled: boolean }>,
     getBookmarks: (workspaceId?: string | null) =>
       ipcRenderer.invoke("fs:getBookmarks", workspaceId) as Promise<FileBookmarkPayload[]>,
     addBookmark: (targetPath: string, label?: string, workspaceId?: string | null) =>
@@ -1320,6 +1344,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:getWorkspaceLifecycle", workspaceId) as Promise<WorkspaceLifecyclePayload>,
     activateWorkspace: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:activateWorkspace", workspaceId) as Promise<WorkspaceLifecyclePayload>,
+    openWorkspace: (workspaceId: string) =>
+      ipcRenderer.invoke("workspace:openWorkspace", workspaceId) as Promise<WorkspaceOpenSessionPayload>,
     listInstalledApps: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listInstalledApps", workspaceId) as Promise<InstalledWorkspaceAppListResponsePayload>,
     removeInstalledApp: (workspaceId: string, appId: string) =>
@@ -1345,14 +1371,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:deleteWorkspace", workspaceId, keepFiles) as Promise<WorkspaceResponsePayload>,
     listCronjobs: (workspaceId: string, enabledOnly?: boolean) =>
       ipcRenderer.invoke("workspace:listCronjobs", workspaceId, enabledOnly) as Promise<CronjobListResponsePayload>,
-    runCronjobNow: (jobId: string) =>
-      ipcRenderer.invoke("workspace:runCronjobNow", jobId) as Promise<CronjobRunResponsePayload>,
+    runCronjobNow: (workspaceId: string, jobId: string) =>
+      ipcRenderer.invoke("workspace:runCronjobNow", workspaceId, jobId) as Promise<CronjobRunResponsePayload>,
     createCronjob: (payload: CronjobCreatePayload) =>
       ipcRenderer.invoke("workspace:createCronjob", payload) as Promise<CronjobRecordPayload>,
-    updateCronjob: (jobId: string, payload: CronjobUpdatePayload) =>
-      ipcRenderer.invoke("workspace:updateCronjob", jobId, payload) as Promise<CronjobRecordPayload>,
-    deleteCronjob: (jobId: string) =>
-      ipcRenderer.invoke("workspace:deleteCronjob", jobId) as Promise<{ success: boolean }>,
+    updateCronjob: (workspaceId: string, jobId: string, payload: CronjobUpdatePayload) =>
+      ipcRenderer.invoke("workspace:updateCronjob", workspaceId, jobId, payload) as Promise<CronjobRecordPayload>,
+    deleteCronjob: (workspaceId: string, jobId: string) =>
+      ipcRenderer.invoke("workspace:deleteCronjob", workspaceId, jobId) as Promise<{ success: boolean }>,
     listNotifications: (
       workspaceId?: string | null,
       includeDismissed?: boolean,
@@ -1367,8 +1393,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
         includeDismissed,
         options,
       ) as Promise<RuntimeNotificationListResponsePayload>,
-    updateNotification: (notificationId: string, payload: RuntimeNotificationUpdatePayload) =>
-      ipcRenderer.invoke("workspace:updateNotification", notificationId, payload) as Promise<RuntimeNotificationRecordPayload>,
+    updateNotification: (workspaceId: string, notificationId: string, payload: RuntimeNotificationUpdatePayload) =>
+      ipcRenderer.invoke("workspace:updateNotification", workspaceId, notificationId, payload) as Promise<RuntimeNotificationRecordPayload>,
     listTaskProposals: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listTaskProposals", workspaceId) as Promise<TaskProposalListResponsePayload>,
     listBackgroundTasks: (payload: BackgroundTaskListRequestPayload) =>
@@ -1381,8 +1407,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:listMemoryUpdateProposals", payload) as Promise<MemoryUpdateProposalListResponsePayload>,
     acceptMemoryUpdateProposal: (payload: MemoryUpdateProposalAcceptPayload) =>
       ipcRenderer.invoke("workspace:acceptMemoryUpdateProposal", payload) as Promise<MemoryUpdateProposalAcceptResponsePayload>,
-    dismissMemoryUpdateProposal: (proposalId: string) =>
-      ipcRenderer.invoke("workspace:dismissMemoryUpdateProposal", proposalId) as Promise<MemoryUpdateProposalDismissResponsePayload>,
+    dismissMemoryUpdateProposal: (workspaceId: string, proposalId: string) =>
+      ipcRenderer.invoke("workspace:dismissMemoryUpdateProposal", workspaceId, proposalId) as Promise<MemoryUpdateProposalDismissResponsePayload>,
     getProactiveStatus: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:getProactiveStatus", workspaceId) as Promise<ProactiveAgentStatusPayload>,
     getProactiveTaskProposalPreference: () =>
@@ -1414,8 +1440,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
         "workspace:setProactiveHeartbeatWorkspaceEnabled",
         payload,
       ) as Promise<ProactiveHeartbeatConfigPayload>,
-    updateTaskProposalState: (proposalId: string, state: string) =>
-      ipcRenderer.invoke("workspace:updateTaskProposalState", proposalId, state) as Promise<TaskProposalStateUpdatePayload>,
+    updateTaskProposalState: (workspaceId: string, proposalId: string, state: string) =>
+      ipcRenderer.invoke("workspace:updateTaskProposalState", workspaceId, proposalId, state) as Promise<TaskProposalStateUpdatePayload>,
     requestRemoteTaskProposalGeneration: (
       payload: RemoteTaskProposalGenerationRequestPayload,
     ) =>

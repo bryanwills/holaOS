@@ -18,6 +18,7 @@ import {
   useState,
 } from "react";
 import { browserSurfaceStatusSummary } from "@/components/panes/browserSessionUi";
+import { BrowserProfileImportButton } from "@/components/panes/BrowserProfileImportButton";
 import {
   BrowserCaptureStatusToast,
   useBrowserCaptureActions,
@@ -72,6 +73,8 @@ export function SpaceBrowserDisplayPane({
   embedded = false,
   jumpPulseKey = 0,
 }: SpaceBrowserDisplayPaneProps) {
+  const [browserProfileImportDialogOpen, setBrowserProfileImportDialogOpen] =
+    useState(false);
   const [inputValue, setInputValue] = useState("");
   const [addressFocused, setAddressFocused] = useState(false);
   const [highlightedSuggestionIndex, setHighlightedSuggestionIndex] =
@@ -116,6 +119,8 @@ export function SpaceBrowserDisplayPane({
     captureScreenshotToClipboard,
     screenshotCapturePending,
   } = useBrowserCaptureActions();
+  const effectiveSuspendNativeView =
+    suspendNativeView || browserProfileImportDialogOpen;
 
   const [jumpFlashActive, setJumpFlashActive] = useState(false);
   useEffect(() => {
@@ -142,7 +147,7 @@ export function SpaceBrowserDisplayPane({
       return;
     }
 
-    if (suspendNativeView) {
+    if (effectiveSuspendNativeView) {
       void window.electronAPI.browser.setBounds({
         x: 0,
         y: 0,
@@ -181,7 +186,7 @@ export function SpaceBrowserDisplayPane({
       window.removeEventListener("resize", queueSync);
       window.cancelAnimationFrame(rafId);
     };
-  }, [layoutSyncKey, suspendNativeView]);
+  }, [effectiveSuspendNativeView, layoutSyncKey]);
 
   useEffect(() => {
     return () => {
@@ -449,6 +454,13 @@ export function SpaceBrowserDisplayPane({
               fill={isBookmarked ? "currentColor" : "none"}
             />
           </Button>
+          <BrowserProfileImportButton
+            buttonSize="icon-sm"
+            buttonVariant="ghost"
+            open={browserProfileImportDialogOpen}
+            onOpenChange={setBrowserProfileImportDialogOpen}
+            showLabel={false}
+          />
           <Button
             type="button"
             variant="ghost"

@@ -158,11 +158,19 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   );
   assert.match(
     prompt.systemPrompt,
-    /Create or update a workspace-local skill when the user describes a reusable workflow/
+    /Create or update a workspace-local skill for reusable workflows/
   );
   assert.match(
     prompt.systemPrompt,
-    /do not create skills for one-off state\./i
+    /do not use skills for unconditional policy or one-off state\./i
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Put always-on workspace rules in `AGENTS\.md`/i
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /use skills for reusable workflows that load when relevant/i
   );
   assert.match(prompt.systemPrompt, /Session policy:/);
   assert.match(prompt.systemPrompt, /front-of-house workspace session/i);
@@ -587,7 +595,7 @@ test("composeAgentPrompt tells main sessions how to inspect legacy session expor
     sessionMode: "code",
     harnessId: "pi",
     legacySessionHistoryContext: {
-      manifest_path: ".holaboss/legacy-session-histories/index.json",
+      manifest_path: ".holaboss/state/legacy-session-histories/index.json",
       legacy_session_count: 2,
       entries: [
         {
@@ -597,8 +605,8 @@ test("composeAgentPrompt tells main sessions how to inspect legacy session expor
           archived_at: "2026-04-24T06:52:27.419Z",
           message_count: 14,
           output_count: 1,
-          json_path: ".holaboss/legacy-session-histories/session-older.json",
-          markdown_path: ".holaboss/legacy-session-histories/session-older.md",
+          json_path: ".holaboss/state/legacy-session-histories/session-older.json",
+          markdown_path: ".holaboss/state/legacy-session-histories/session-older.md",
         },
       ],
     },
@@ -607,7 +615,7 @@ test("composeAgentPrompt tells main sessions how to inspect legacy session expor
 
   assert.match(prompt.contextMessages.join("\n"), /Legacy session history exports:/);
   assert.match(prompt.contextMessages.join("\n"), /consult the manifest or a directly relevant export before saying that prior session context is unavailable/i);
-  assert.match(prompt.contextMessages.join("\n"), /Manifest path: `\.holaboss\/legacy-session-histories\/index\.json`\./);
+  assert.match(prompt.contextMessages.join("\n"), /Manifest path: `\.holaboss\/state\/legacy-session-histories\/index\.json`\./);
   assert.match(prompt.contextMessages.join("\n"), /Earlier planning chat:/);
 });
 
@@ -739,7 +747,7 @@ test("composeBaseAgentPrompt exposes existing scratchpad metadata without collap
     capabilityManifest,
     scratchpadContext: {
       exists: true,
-      file_path: ".holaboss/scratchpads/session-main.md",
+      file_path: ".holaboss/state/scratchpads/session-main.md",
       updated_at: "2026-04-23T15:00:00.000Z",
       size_bytes: 128,
       preview: "- verified finding\n- open question",
@@ -752,7 +760,7 @@ test("composeBaseAgentPrompt exposes existing scratchpad metadata without collap
     scratchpadMessage,
     /Use the scratchpad as the session's working memory for multi-step execution, interim findings, open questions, candidate lists, and compacted current state\./
   );
-  assert.match(scratchpadMessage, /Path: `\.holaboss\/scratchpads\/session-main\.md`\./);
+  assert.match(scratchpadMessage, /Path: `\.holaboss\/state\/scratchpads\/session-main\.md`\./);
   assert.match(scratchpadMessage, /Preview: - verified finding/);
   assert.match(
     scratchpadMessage,

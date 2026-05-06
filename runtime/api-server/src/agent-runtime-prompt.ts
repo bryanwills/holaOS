@@ -465,7 +465,7 @@ function legacySessionHistoryContextPromptSection(
   const entries = Array.isArray(context.entries) ? context.entries : [];
   const lines = [
     "Legacy session history exports:",
-    "Older front-of-house workspace sessions may have been migrated out of the live transcript and exported to `.holaboss/legacy-session-histories`.",
+    "Older front-of-house workspace sessions may have been migrated out of the live transcript and exported to `.holaboss/state/legacy-session-histories`.",
     "These exports are not automatically merged into the current conversation state.",
     "When the user asks about prior workspace conversations, past sessions, or historical context, consult the manifest or a directly relevant export before saying that prior session context is unavailable.",
     "Use `list`, `glob`, and `read` to inspect these legacy exports when needed.",
@@ -679,7 +679,8 @@ export function buildBaseAgentPromptSections(
     "Use coordination tools instead of hidden state. The newest user message is primary.",
     "Resume unfinished work only when the newest message clearly asks to continue it; otherwise respond to the new message directly.",
     "Ask for missing identity details instead of guessing.",
-    "Create or update a workspace-local skill when the user describes a reusable workflow; do not create skills for one-off state."
+    "Put always-on workspace rules in `AGENTS.md`; use skills for reusable workflows that load when relevant.",
+    "Create or update a workspace-local skill for reusable workflows; do not use skills for unconditional policy or one-off state."
   ];
   if (hasWorkspaceInstructionUpdateTool(request)) {
     executionLines.push(
@@ -928,7 +929,8 @@ export function buildMainSessionPromptSections(
     "Use coordination tools instead of hidden state. The newest user message is primary.",
     "Resume unfinished work only when the newest message clearly asks to continue it; otherwise respond to the new message directly.",
     "Ask for missing identity details instead of guessing.",
-    "Create or update a workspace-local skill when the user describes a reusable workflow; do not create skills for one-off state."
+    "Put always-on workspace rules in `AGENTS.md`; use skills for reusable workflows that load when relevant.",
+    "Create or update a workspace-local skill for reusable workflows; do not use skills for unconditional policy or one-off state."
   ];
   if (hasWorkspaceInstructionUpdateTool(request)) {
     conversationLines.push(

@@ -23,12 +23,22 @@ declare global {
     | "presentation"
     | "unsupported";
 
+  interface FilePreviewTableImagePayload {
+    row: number;
+    column: number;
+    dataUrl: string;
+    widthPx?: number;
+    heightPx?: number;
+    alt?: string;
+  }
+
   interface FilePreviewTableSheetPayload {
     name: string;
     index: number;
     columns: string[];
     rows: string[][];
     links?: (string | null)[][];
+    images?: FilePreviewTableImagePayload[];
     totalRows: number;
     totalColumns: number;
     truncated: boolean;
@@ -425,8 +435,11 @@ interface RuntimeNotificationListOptionsPayload {
     spotlight: SpotlightItemPayload[];
   }
 
+  type WorkspaceLocationPayload = "local" | "cloud";
+
   interface WorkspaceRecordPayload {
     id: string;
+    location: WorkspaceLocationPayload;
     name: string;
     status: string;
     harness: string | null;
@@ -718,6 +731,7 @@ interface RuntimeNotificationListOptionsPayload {
 
   interface TaskProposalAcceptPayload {
     proposal_id: string;
+    workspace_id: string;
     task_name?: string | null;
     task_prompt?: string | null;
     session_id?: string | null;
@@ -773,6 +787,7 @@ interface RuntimeNotificationListOptionsPayload {
 
   interface MemoryUpdateProposalAcceptPayload {
     proposalId: string;
+    workspaceId: string;
     summary?: string | null;
   }
 
@@ -977,6 +992,7 @@ interface RuntimeNotificationListOptionsPayload {
   }
 
   interface SessionOutputEventListRequestPayload {
+    workspaceId: string;
     sessionId: string;
     inputId?: string | null;
   }
@@ -1162,6 +1178,18 @@ interface RuntimeNotificationListOptionsPayload {
     phase_label: string;
     phase_detail: string | null;
     blocking_apps: WorkspaceLifecycleBlockingAppPayload[];
+  }
+
+  interface WorkspaceRuntimeSessionPayload {
+    workspace_id: string;
+    location: WorkspaceLocationPayload;
+    runtime_base_url: string;
+    runtime_auth_token: string | null;
+    workspace_root: string;
+  }
+
+  interface WorkspaceOpenSessionPayload extends WorkspaceRuntimeSessionPayload {
+    lifecycle: WorkspaceLifecyclePayload;
   }
 
   interface WorkspaceOutputRecordPayload {
@@ -1594,6 +1622,12 @@ interface RuntimeNotificationListOptionsPayload {
         workspaceId?: string | null,
       ) => Promise<FileSystemMutationPayload>;
       deletePath: (targetPath: string, workspaceId?: string | null) => Promise<{ deleted: boolean }>;
+      revealInFolder: (targetPath: string, workspaceId?: string | null) => Promise<{ revealed: boolean }>;
+      exportFileTo: (
+        targetPath: string,
+        workspaceId?: string | null,
+        payload?: { content?: string; suggestedName?: string },
+      ) => Promise<{ path: string | null; canceled: boolean }>;
       getBookmarks: (workspaceId?: string | null) => Promise<FileBookmarkPayload[]>;
       addBookmark: (targetPath: string, label?: string, workspaceId?: string | null) => Promise<FileBookmarkPayload[]>;
       removeBookmark: (bookmarkId: string) => Promise<FileBookmarkPayload[]>;
@@ -1690,6 +1724,7 @@ interface RuntimeNotificationListOptionsPayload {
       listWorkspacesCached: () => Promise<WorkspaceListResponsePayload>;
       getWorkspaceLifecycle: (workspaceId: string) => Promise<WorkspaceLifecyclePayload>;
       activateWorkspace: (workspaceId: string) => Promise<WorkspaceLifecyclePayload>;
+      openWorkspace: (workspaceId: string) => Promise<WorkspaceOpenSessionPayload>;
       listInstalledApps: (workspaceId: string) => Promise<InstalledWorkspaceAppListResponsePayload>;
       removeInstalledApp: (workspaceId: string, appId: string) => Promise<void>;
       listAppCatalog: (params: { source?: "marketplace" | "local" }) => Promise<AppCatalogListResponse>;
@@ -1703,16 +1738,17 @@ interface RuntimeNotificationListOptionsPayload {
       createWorkspace: (payload: HolabossCreateWorkspacePayload) => Promise<WorkspaceResponsePayload>;
       deleteWorkspace: (workspaceId: string, keepFiles?: boolean) => Promise<WorkspaceResponsePayload>;
       listCronjobs: (workspaceId: string, enabledOnly?: boolean) => Promise<CronjobListResponsePayload>;
-      runCronjobNow: (jobId: string) => Promise<CronjobRunResponsePayload>;
+      runCronjobNow: (workspaceId: string, jobId: string) => Promise<CronjobRunResponsePayload>;
       createCronjob: (payload: CronjobCreatePayload) => Promise<CronjobRecordPayload>;
-      updateCronjob: (jobId: string, payload: CronjobUpdatePayload) => Promise<CronjobRecordPayload>;
-      deleteCronjob: (jobId: string) => Promise<{ success: boolean }>;
+      updateCronjob: (workspaceId: string, jobId: string, payload: CronjobUpdatePayload) => Promise<CronjobRecordPayload>;
+      deleteCronjob: (workspaceId: string, jobId: string) => Promise<{ success: boolean }>;
       listNotifications: (
         workspaceId?: string | null,
         includeDismissed?: boolean,
         options?: RuntimeNotificationListOptionsPayload
       ) => Promise<RuntimeNotificationListResponsePayload>;
       updateNotification: (
+        workspaceId: string,
         notificationId: string,
         payload: RuntimeNotificationUpdatePayload
       ) => Promise<RuntimeNotificationRecordPayload>;
@@ -1730,7 +1766,7 @@ interface RuntimeNotificationListOptionsPayload {
       acceptMemoryUpdateProposal: (
         payload: MemoryUpdateProposalAcceptPayload
       ) => Promise<MemoryUpdateProposalAcceptResponsePayload>;
-      dismissMemoryUpdateProposal: (proposalId: string) => Promise<MemoryUpdateProposalDismissResponsePayload>;
+      dismissMemoryUpdateProposal: (workspaceId: string, proposalId: string) => Promise<MemoryUpdateProposalDismissResponsePayload>;
       getProactiveStatus: (workspaceId: string) => Promise<ProactiveAgentStatusPayload>;
       getProactiveTaskProposalPreference: () => Promise<ProactiveTaskProposalPreferencePayload>;
       setProactiveTaskProposalPreference: (
@@ -1743,7 +1779,11 @@ interface RuntimeNotificationListOptionsPayload {
       setProactiveHeartbeatWorkspaceEnabled: (
         payload: ProactiveHeartbeatWorkspaceUpdatePayload
       ) => Promise<ProactiveHeartbeatConfigPayload>;
-      updateTaskProposalState: (proposalId: string, state: string) => Promise<TaskProposalStateUpdatePayload>;
+      updateTaskProposalState: (
+        workspaceId: string,
+        proposalId: string,
+        state: string
+      ) => Promise<TaskProposalStateUpdatePayload>;
       requestRemoteTaskProposalGeneration: (
         payload: RemoteTaskProposalGenerationRequestPayload
       ) => Promise<RemoteTaskProposalGenerationResponsePayload>;

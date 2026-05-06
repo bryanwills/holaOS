@@ -70,6 +70,8 @@ const CLAIMED_INPUT_SENTRY_PERMISSION_DENIAL_LIMIT = 10;
 const BACKEND_OUTPUT_DELTA_RELAY_FLUSH_CHARS = 1200;
 const SUBAGENT_EVENT_COALESCE_WINDOW_MS = 5_000;
 const SUBAGENT_EVENT_IDLE_TIMEOUT_MS = 5_000;
+const MAIN_SESSION_EVENT_RETRY_BASE_DELAY_MS = 5_000;
+const MAIN_SESSION_EVENT_RETRY_MAX_DELAY_MS = 5 * 60_000;
 const CONTEXT_BUDGET_OBSERVABILITY_SCHEMA_VERSION = 1;
 const CONTEXT_BUDGET_COMPACTION_EVENT_TYPES = new Set([
   "auto_compaction_start",
@@ -1414,11 +1416,13 @@ function claimLeaseUntilIso(
 
 function latestPersistedTerminalOutputEvent(params: {
   store: RuntimeStateStore;
+  workspaceId: string;
   sessionId: string;
   inputId: string;
 }) {
   return params.store
     .listOutputEvents({
+      workspaceId: params.workspaceId,
       sessionId: params.sessionId,
       inputId: params.inputId,
     })
@@ -1818,7 +1822,10 @@ function maybeQueueCronjobCompletionFollowup(params: {
     return;
   }
 
-  const job = params.store.getCronjob(cronjobId);
+  const job = params.store.getCronjob({
+    workspaceId: params.record.workspaceId,
+    jobId: cronjobId,
+  });
   const workspace = params.store.getWorkspace(params.record.workspaceId);
   if (!job || !workspace) {
     return;
@@ -1942,7 +1949,10 @@ function maybeCreateCronjobCompletionNotification(params: {
     return;
   }
 
-  const job = params.store.getCronjob(cronjobId);
+  const job = params.store.getCronjob({
+    workspaceId: params.record.workspaceId,
+    jobId: cronjobId,
+  });
   const workspace = params.store.getWorkspace(params.record.workspaceId);
   if (!job || !workspace) {
     return;
@@ -2058,6 +2068,7 @@ async function maybePromoteAcceptedEvolveSkillCandidate(params: {
   await promoteAcceptedSkillCandidate({
     store: params.store,
     memoryService: params.memoryService,
+    workspaceId: params.record.workspaceId,
     candidateId,
   });
 }
@@ -2450,6 +2461,7 @@ function supersedePendingSubagentEvents(params: {
 }): void {
   const pending = params.store
     .listPendingMainSessionEvents({
+      workspaceId: params.run.workspaceId,
       ownerMainSessionId: params.run.ownerMainSessionId,
       limit: 500,
     })
@@ -2458,6 +2470,7 @@ function supersedePendingSubagentEvents(params: {
     return;
   }
   params.store.markMainSessionEventsSuperseded({
+    workspaceId: params.run.workspaceId,
     eventIds: pending.map((event) => event.eventId),
   });
 }
@@ -2501,6 +2514,7 @@ function updateSubagentRunFromTurnResult(params: {
   if (!status) {
     return (
       params.store.updateSubagentRun({
+        workspaceId: run.workspaceId,
         subagentId: run.subagentId,
         fields,
       }) ?? run
@@ -2556,6 +2570,7 @@ function updateSubagentRunFromTurnResult(params: {
 
   const updated =
     params.store.updateSubagentRun({
+      workspaceId: run.workspaceId,
       subagentId: run.subagentId,
       fields,
     }) ?? run;
@@ -2598,6 +2613,77 @@ function mainSessionEventIdsFromContext(
     .filter((value): value is string => Boolean(value));
 }
 
+function mainSessionEventRetryAttemptCount(
+  payload: Record<string, unknown> | null | undefined,
+): number {
+  const retry =
+    payload && isRecord(payload.delivery_retry) ? payload.delivery_retry : null;
+  const rawValue = retry?.attempt_count;
+  if (typeof rawValue !== "number" || !Number.isFinite(rawValue)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(rawValue));
+}
+
+function nextMainSessionEventRetryDelayMs(attemptCount: number): number {
+  const normalizedAttemptCount = Math.max(1, Math.floor(attemptCount));
+  const exponent = Math.max(0, normalizedAttemptCount - 1);
+  return Math.min(
+    MAIN_SESSION_EVENT_RETRY_MAX_DELAY_MS,
+    MAIN_SESSION_EVENT_RETRY_BASE_DELAY_MS * (2 ** exponent),
+  );
+}
+
+function requeueMainSessionEventForRetry(params: {
+  store: RuntimeStateStore;
+  workspaceId: string;
+  eventId: string;
+  completedAt: string;
+  stopReason: string | null;
+  incrementAttemptCount: boolean;
+}): void {
+  const existing = params.store.getMainSessionEvent({
+    workspaceId: params.workspaceId,
+    eventId: params.eventId,
+  });
+  if (!existing) {
+    return;
+  }
+  const basePayload = isRecord(existing.payload) ? existing.payload : {};
+  const priorAttemptCount = mainSessionEventRetryAttemptCount(basePayload);
+  const attemptCount = params.incrementAttemptCount
+    ? priorAttemptCount + 1
+    : priorAttemptCount;
+  const retryDelayMs = params.incrementAttemptCount
+    ? nextMainSessionEventRetryDelayMs(attemptCount)
+    : 0;
+  const earliestDeliverAt =
+    retryDelayMs > 0
+      ? plusMillisecondsIso(params.completedAt, retryDelayMs)
+      : params.completedAt;
+  const retryPayload: Record<string, unknown> = {
+    ...basePayload,
+    delivery_retry: {
+      attempt_count: attemptCount,
+      retry_delay_ms: retryDelayMs,
+      next_retry_at: earliestDeliverAt,
+      last_stop_reason: params.stopReason ?? null,
+      last_attempt_at: params.completedAt,
+    },
+  };
+  params.store.updateMainSessionEvent({
+    workspaceId: params.workspaceId,
+    eventId: params.eventId,
+    fields: {
+      status: "pending",
+      payload: retryPayload,
+      materializedInputId: null,
+      deliveredAt: null,
+      earliestDeliverAt,
+    },
+  });
+}
+
 function maybeFinalizeMainSessionEvents(params: {
   store: RuntimeStateStore;
   record: SessionInputRecord;
@@ -2614,25 +2700,25 @@ function maybeFinalizeMainSessionEvents(params: {
     params.turnResult.completedAt ??
     params.turnResult.updatedAt ??
     new Date().toISOString();
-  if (params.turnResult.status !== "failed") {
+  if (
+    params.turnResult.status !== "failed" &&
+    params.turnResult.status !== "paused"
+  ) {
     params.store.markMainSessionEventsDelivered({
+      workspaceId: params.record.workspaceId,
       eventIds,
       deliveredAt: now,
     });
     return;
   }
   for (const eventId of eventIds) {
-    params.store.updateMainSessionEvent({
+    requeueMainSessionEventForRetry({
+      store: params.store,
+      workspaceId: params.record.workspaceId,
       eventId,
-      fields: {
-        status: "pending",
-        materializedInputId: null,
-        deliveredAt: null,
-        earliestDeliverAt: plusMillisecondsIso(
-          now,
-          SUBAGENT_EVENT_COALESCE_WINDOW_MS,
-        ),
-      },
+      completedAt: now,
+      stopReason: params.turnResult.stopReason ?? null,
+      incrementAttemptCount: params.turnResult.status === "failed",
     });
   }
 }
@@ -2815,10 +2901,14 @@ export async function processClaimedInput(params: {
   }
   const workspace = store.getWorkspace(record.workspaceId);
   if (!workspace) {
-    store.updateInput(record.inputId, {
-      status: "FAILED",
-      claimedBy: null,
-      claimedUntil: null,
+    store.updateInput({
+      workspaceId: record.workspaceId,
+      inputId: record.inputId,
+      fields: {
+        status: "FAILED",
+        claimedBy: null,
+        claimedUntil: null,
+      },
     });
     store.updateRuntimeState({
       workspaceId: record.workspaceId,
@@ -2901,7 +2991,10 @@ export async function processClaimedInput(params: {
       if (!shouldTrackClaimOwnership) {
         return true;
       }
-      const currentRecord = store.getInput(record.inputId);
+      const currentRecord = store.getInput({
+        workspaceId: record.workspaceId,
+        inputId: record.inputId,
+      });
       return (
         currentRecord?.status === "CLAIMED" &&
         currentRecord.claimedBy === claimedBy
@@ -2940,7 +3033,11 @@ export async function processClaimedInput(params: {
         extras: {
           source,
           claimed_by: claimedBy,
-          claimed_until: store.getInput(record.inputId)?.claimedUntil ?? null,
+          claimed_until:
+            store.getInput({
+              workspaceId: record.workspaceId,
+              inputId: record.inputId,
+            })?.claimedUntil ?? null,
         },
       });
       return true;
@@ -2960,6 +3057,7 @@ export async function processClaimedInput(params: {
 
       if (shouldTrackClaimOwnership) {
         const renewedClaim = store.renewInputClaim({
+          workspaceId: record.workspaceId,
           inputId: record.inputId,
           claimedBy,
           leaseSeconds,
@@ -3276,6 +3374,7 @@ export async function processClaimedInput(params: {
 
       if (shouldTrackClaimOwnership) {
         const renewedClaim = store.renewInputClaim({
+          workspaceId: record.workspaceId,
           inputId: record.inputId,
           claimedBy,
           leaseSeconds,
@@ -3613,6 +3712,7 @@ export async function processClaimedInput(params: {
 
       const persistedTerminalEvent = latestPersistedTerminalOutputEvent({
         store,
+        workspaceId: record.workspaceId,
         sessionId: record.sessionId,
         inputId: record.inputId,
       });
@@ -3880,15 +3980,19 @@ export async function processClaimedInput(params: {
         deferredTerminalEvent = null;
       }
 
-      store.updateInput(record.inputId, {
-        status:
-          terminalStatus === "ERROR"
-            ? "FAILED"
-            : terminalStatus === "PAUSED"
-              ? "PAUSED"
-              : "DONE",
-        claimedBy: null,
-        claimedUntil: null,
+      store.updateInput({
+        workspaceId: record.workspaceId,
+        inputId: record.inputId,
+        fields: {
+          status:
+            terminalStatus === "ERROR"
+              ? "FAILED"
+              : terminalStatus === "PAUSED"
+                ? "PAUSED"
+                : "DONE",
+          claimedBy: null,
+          claimedUntil: null,
+        },
       });
       store.updateRuntimeState({
         workspaceId: record.workspaceId,
@@ -4083,10 +4187,14 @@ export async function processClaimedInput(params: {
         return;
       }
       const message = error instanceof Error ? error.message : String(error);
-      store.updateInput(record.inputId, {
-        status: "FAILED",
-        claimedBy: null,
-        claimedUntil: null,
+      store.updateInput({
+        workspaceId: record.workspaceId,
+        inputId: record.inputId,
+        fields: {
+          status: "FAILED",
+          claimedBy: null,
+          claimedUntil: null,
+        },
       });
       store.appendOutputEvent({
         workspaceId: record.workspaceId,
