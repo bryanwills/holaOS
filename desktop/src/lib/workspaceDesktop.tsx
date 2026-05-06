@@ -37,6 +37,8 @@ export const APP_TO_PROVIDER_MAP: Record<string, string> = {
   zoominfo: "zoominfo",
   notion: "notion",
   instagram: "instagram",
+  gcalendar: "googlecalendar",
+  gdrive: "googledrive",
 };
 
 export function getProviderForApp(appId: string): string | undefined {
