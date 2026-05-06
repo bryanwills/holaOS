@@ -35,6 +35,8 @@ export const APP_TO_PROVIDER_MAP: Record<string, string> = {
   apollo: "apollo",
   instantly: "instantly",
   zoominfo: "zoominfo",
+  notion: "notion",
+  instagram: "instagram",
 };
 
 export function getProviderForApp(appId: string): string | undefined {
