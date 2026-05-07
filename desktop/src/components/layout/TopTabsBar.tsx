@@ -519,7 +519,7 @@ export function TopTabsBar({
 
               <div className="max-h-[240px] overflow-y-auto">
                 {filteredWorkspaces.length ? (
-                  <div className="divide-y divide-border">
+                  <div className="flex flex-col">
                     {filteredWorkspaces.map((workspace) => {
                       const isActive = workspace.id === selectedWorkspaceId;
                       const isDeleting = deletingWorkspaceId === workspace.id;
