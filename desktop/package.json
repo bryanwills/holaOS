@@ -64,6 +64,7 @@
     "@fontsource-variable/inter": "^5.2.8",
     "@holaboss/app-sdk": "file:../sdk/app-sdk",
     "@holaboss/runtime-client": "file:../sdk/runtime-client",
+    "@holaboss/editor": "file:../packages/editor",
     "@iconify-json/catppuccin": "^1.2.17",
     "@iconify/react": "^6.0.2",
     "@sentry/electron": "^7.11.0",
