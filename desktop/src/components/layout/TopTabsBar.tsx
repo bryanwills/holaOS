@@ -29,6 +29,8 @@ import { RuntimeStatusIndicator } from "@/components/layout/RuntimeStatusIndicat
 import { Button } from "@/components/ui/button";
 import { StatusDot } from "@/components/ui/status-dot";
 import { UserAvatar } from "@/components/ui/UserAvatar";
+import { WorkspaceIcon } from "@/components/ui/workspace-icon";
+import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -370,7 +372,11 @@ export function TopTabsBar({
                 }}
                 className={workspaceSwitcherButtonClassName}
               >
-                <FolderKanban />
+                {selectedWorkspace ? (
+                  <WorkspaceIcon workspace={selectedWorkspace} size="sm" />
+                ) : (
+                  <FolderKanban />
+                )}
                 <span className="min-w-0 truncate text-left">
                   {selectedWorkspace?.name || "Select workspace"}
                 </span>
@@ -513,7 +519,7 @@ export function TopTabsBar({
 
               <div className="max-h-[240px] overflow-y-auto">
                 {filteredWorkspaces.length ? (
-                  <div className="grid gap-1">
+                  <div className="divide-y divide-border">
                     {filteredWorkspaces.map((workspace) => {
                       const isActive = workspace.id === selectedWorkspaceId;
                       const isDeleting = deletingWorkspaceId === workspace.id;
@@ -522,11 +528,11 @@ export function TopTabsBar({
                       return (
                         <div
                           key={workspace.id}
-                          className={`flex items-center gap-1 rounded-lg border px-2 py-1.5 transition-colors ${
-                            isActive
-                              ? "border-primary bg-primary/10"
-                              : "border-transparent hover:bg-accent"
-                          } ${isDeleting ? "opacity-50" : ""}`}
+                          className={cn(
+                            "group flex items-center gap-2 px-2 py-1.5 transition-colors",
+                            isActive ? "bg-fg-6" : "hover:bg-fg-2",
+                            isDeleting && "opacity-50",
+                          )}
                         >
                           <button
                             type="button"
@@ -537,15 +543,15 @@ export function TopTabsBar({
                             }}
                             className="flex min-w-0 flex-1 items-center gap-2 px-1 text-left text-sm font-medium disabled:cursor-not-allowed"
                           >
-                            <StatusDot
-                              variant={folderMissing ? "warning" : "success"}
-                              title={
-                                folderMissing
-                                  ? `Folder missing at ${workspace.workspace_path ?? "unknown"}`
-                                  : (workspace.workspace_path ?? undefined)
-                              }
-                            />
+                            <WorkspaceIcon workspace={workspace} size="md" />
                             <span className="truncate">{workspace.name}</span>
+                            {folderMissing ? (
+                              <StatusDot
+                                variant="warning"
+                                className="ml-auto"
+                                title={`Folder missing at ${workspace.workspace_path ?? "unknown"}`}
+                              />
+                            ) : null}
                           </button>
                           <Button
                             variant="ghost"
@@ -553,7 +559,7 @@ export function TopTabsBar({
                             aria-label={`Delete workspace ${workspace.name}`}
                             disabled={Boolean(deletingWorkspaceId)}
                             onClick={() => void onDeleteWorkspace(workspace)}
-                            className="text-muted-foreground hover:text-destructive"
+                            className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
                           >
                             {isDeleting ? (
                               <Loader2 className="size-3.5 animate-spin" />
