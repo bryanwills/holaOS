@@ -257,11 +257,11 @@
 }
 /* Surface palette — registered so theme switches interpolate the
    whole canvas instead of hard-cutting on most surfaces. Initial
-   values mirror the warm-gray amber-minimal-light defaults. */
+   values mirror the amber-minimal-light defaults. */
 @property --card {
   syntax: "<color>";
   inherits: true;
-  initial-value: oklch(0.98 0.003 85);
+  initial-value: oklch(0.985 0.002 250);
 }
 @property --popover {
   syntax: "<color>";
@@ -271,27 +271,27 @@
 @property --muted {
   syntax: "<color>";
   inherits: true;
-  initial-value: oklch(0.94 0.004 85);
+  initial-value: oklch(0.97 0.002 250);
 }
 @property --muted-foreground {
   syntax: "<color>";
   inherits: true;
-  initial-value: oklch(0.55 0.005 75);
+  initial-value: oklch(0.5 0.005 250);
 }
 @property --accent {
   syntax: "<color>";
   inherits: true;
-  initial-value: oklch(0.96 0.003 85);
+  initial-value: oklch(0.95 0.002 250);
 }
 @property --secondary {
   syntax: "<color>";
   inherits: true;
-  initial-value: oklch(0.97 0.003 85);
+  initial-value: oklch(0.97 0.002 250);
 }
 @property --border {
   syntax: "<color>";
   inherits: true;
-  initial-value: oklch(0.88 0.004 85);
+  initial-value: oklch(0.92 0.003 250);
 }
 @property --ring {
   syntax: "<color>";
@@ -301,7 +301,7 @@
 @property --sidebar {
   syntax: "<color>";
   inherits: true;
-  initial-value: oklch(0.965 0.003 85);
+  initial-value: oklch(0.97 0.002 250);
 }
 
 /* Token fallbacks — tweakcn themes override these. Anything declared here
@@ -310,31 +310,32 @@
 :root {
   --radius: 0.5rem;
 
-  /* Surface + content. Neutral warm-gray scale, mirrors amber-minimal-light. */
+  /* Surface + content. Quiet near-neutral grays with a subtle cool
+     undertone; mirrors amber-minimal-light. */
   --background: oklch(1 0 0);
-  --foreground: oklch(0.14 0.005 75);
-  --card: oklch(0.98 0.003 85);
-  --card-foreground: oklch(0.14 0.005 75);
+  --foreground: oklch(0.18 0.003 250);
+  --card: oklch(0.985 0.002 250);
+  --card-foreground: oklch(0.18 0.003 250);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.14 0.005 75);
+  --popover-foreground: oklch(0.18 0.003 250);
   --primary: oklch(0.624 0.229 32);
   --primary-foreground: oklch(0.98 0.01 32);
-  --secondary: oklch(0.97 0.003 85);
-  --secondary-foreground: oklch(0.21 0.005 75);
-  --muted: oklch(0.94 0.004 85);
-  --muted-foreground: oklch(0.55 0.005 75);
-  --accent: oklch(0.96 0.003 85);
-  --accent-foreground: oklch(0.21 0.005 75);
-  --border: oklch(0.88 0.004 85);
-  --input: oklch(0.88 0.004 85);
+  --secondary: oklch(0.97 0.002 250);
+  --secondary-foreground: oklch(0.21 0.003 250);
+  --muted: oklch(0.97 0.002 250);
+  --muted-foreground: oklch(0.5 0.005 250);
+  --accent: oklch(0.95 0.002 250);
+  --accent-foreground: oklch(0.18 0.003 250);
+  --border: oklch(0.92 0.003 250);
+  --input: oklch(0.92 0.003 250);
   --ring: oklch(0.624 0.229 32);
-  --sidebar: oklch(0.965 0.003 85);
-  --sidebar-foreground: oklch(0.14 0.005 75);
+  --sidebar: oklch(0.97 0.002 250);
+  --sidebar-foreground: oklch(0.18 0.003 250);
   --sidebar-primary: oklch(0.624 0.229 32);
   --sidebar-primary-foreground: oklch(0.98 0.01 32);
-  --sidebar-accent: oklch(0.93 0.003 85);
-  --sidebar-accent-foreground: oklch(0.21 0.005 75);
-  --sidebar-border: oklch(0.88 0.004 85);
+  --sidebar-accent: oklch(0.94 0.002 250);
+  --sidebar-accent-foreground: oklch(0.21 0.003 250);
+  --sidebar-border: oklch(0.92 0.003 250);
   --sidebar-ring: oklch(0.624 0.229 32);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
