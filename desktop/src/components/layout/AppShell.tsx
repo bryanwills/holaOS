@@ -23,7 +23,7 @@ import {
   type OperationsDrawerTab,
   OperationsInboxPane,
 } from "@/components/layout/OperationsDrawer";
-import { SettingsDialog } from "@/components/layout/SettingsDialog";
+import { SettingsScreenRoot } from "@/components/layout/SettingsScreenRoot";
 import { TopTabsBar } from "@/components/layout/TopTabsBar";
 import { WorkspaceControlCenter } from "@/components/layout/WorkspaceControlCenter";
 import { WorkspaceAppsDialog } from "@/components/layout/WorkspaceAppsDialog";
@@ -5423,30 +5423,38 @@ function AppShellContent() {
         onClose={() => setWorkspaceAppsDialogOpen(false)}
       />
 
-      <SettingsDialog
-        open={settingsDialogOpen}
-        activeSection={settingsDialogSection}
-        appVersion={effectiveAppUpdateStatus?.currentVersion || ""}
-        onSectionChange={(section) => {
-          setSettingsDialogSection(section);
-          if (section !== "submissions") {
-            setSubmissionsFocusId(null);
-          }
-        }}
-        onClose={() => {
-          setSettingsDialogOpen(false);
-          setSubmissionsFocusId(null);
-        }}
-        colorScheme={colorScheme}
-        onColorSchemeChange={handleColorSchemeChange}
-        themeVariant={themeVariant}
-        themeVariants={THEME_VARIANTS}
-        onThemeVariantChange={handleThemeVariantChange}
-        workspaceCardsPerRow={controlCenterCardsPerRow}
-        onWorkspaceCardsPerRowChange={setControlCenterCardsPerRow}
-        onOpenExternalUrl={handleOpenExternalUrl}
-        submissionsFocusId={submissionsFocusId}
-      />
+      {/* Settings is a full-screen route now — covers the entire shell
+          (TopTabsBar + workspace) when active. The previous modal Dialog
+          mount used to sit here. SettingsScreenRoot owns its own scroll
+          + nav rail; this wrapper just covers the surface so the
+          background shell isn't visible behind it. */}
+      {settingsDialogOpen ? (
+        <div className="absolute inset-0 z-40 overflow-hidden bg-background">
+          <SettingsScreenRoot
+            activeSection={settingsDialogSection}
+            appVersion={effectiveAppUpdateStatus?.currentVersion || ""}
+            onSectionChange={(section) => {
+              setSettingsDialogSection(section);
+              if (section !== "submissions") {
+                setSubmissionsFocusId(null);
+              }
+            }}
+            onBackToApp={() => {
+              setSettingsDialogOpen(false);
+              setSubmissionsFocusId(null);
+            }}
+            colorScheme={colorScheme}
+            onColorSchemeChange={handleColorSchemeChange}
+            themeVariant={themeVariant}
+            themeVariants={THEME_VARIANTS}
+            onThemeVariantChange={handleThemeVariantChange}
+            workspaceCardsPerRow={controlCenterCardsPerRow}
+            onWorkspaceCardsPerRowChange={setControlCenterCardsPerRow}
+            onOpenExternalUrl={handleOpenExternalUrl}
+            submissionsFocusId={submissionsFocusId}
+          />
+        </div>
+      ) : null}
       {selectedWorkspaceId && (
         <PublishScreen
           onOpenChange={setPublishOpen}
