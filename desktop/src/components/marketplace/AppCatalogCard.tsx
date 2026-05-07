@@ -166,7 +166,7 @@ export function AppCatalogCard({
             </SelectTrigger>
             <SelectContent
               align="start"
-              className="min-w-[200px] gap-0 rounded-lg p-1 shadow-subtle-sm"
+              className="min-w-[200px] gap-0 rounded-lg p-1 shadow-xs"
             >
               {availableAccounts?.map((conn, index) => {
                 const meta = accountMetadata.get(conn.connection_id);

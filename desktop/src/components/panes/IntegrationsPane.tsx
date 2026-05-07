@@ -865,7 +865,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
             <SelectContent
               align="end"
               alignItemWithTrigger={false}
-              className="min-w-[140px] gap-0 rounded-lg p-1 shadow-subtle-sm ring-0"
+              className="min-w-[140px] gap-0 rounded-lg p-1 shadow-xs ring-0"
             >
               <SelectItem
                 value="all"

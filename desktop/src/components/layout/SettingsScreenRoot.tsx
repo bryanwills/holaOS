@@ -634,7 +634,6 @@ export function SettingsScreenRoot({
                     value: scheme,
                     label: COLOR_SCHEME_LABELS[scheme],
                   }))}
-                  triggerWidth="w-[140px]"
                 />
                 <SettingsMenuSelectRow
                   label="Theme"
@@ -662,7 +661,6 @@ export function SettingsScreenRoot({
                       ),
                     };
                   })}
-                  triggerWidth="w-[180px]"
                 />
                 <SettingsMenuSelectRow
                   label="Workspace cards per row"
@@ -690,7 +688,6 @@ export function SettingsScreenRoot({
                       description: "Dense, smaller cards.",
                     },
                   ]}
-                  triggerWidth="w-[140px]"
                 />
               </SettingsCard>
             </SettingsSection>
@@ -732,7 +729,6 @@ export function SettingsScreenRoot({
                   value={diagnosticsWorkspaceId}
                   onValueChange={setDiagnosticsWorkspaceId}
                   options={diagnosticsWorkspaceOptions}
-                  triggerWidth="w-[240px]"
                   disabled={
                     diagnosticsExportState.status === "exporting" ||
                     diagnosticsWorkspaceOptions.length === 0

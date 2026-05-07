@@ -288,7 +288,7 @@ export function TopTabsBar({
     ? isWindowsIntegratedTitleBar
       ? "window-drag relative h-[32px] px-2 pt-0.5"
       : "window-drag relative h-[32px] px-2"
-    : "rounded-xl border border-border bg-card px-2.5 py-1 shadow-subtle-xs backdrop-blur-sm sm:px-4";
+    : "rounded-xl border border-border bg-card px-2.5 py-1 shadow-2xs backdrop-blur-sm sm:px-4";
   const headerGridClassName =
     "relative z-10 grid min-w-0 items-center gap-1.5 sm:gap-2 lg:h-full lg:grid-cols-[minmax(0,1fr)_auto]";
   const headerGridStyle = compensateForStoplight
@@ -492,7 +492,7 @@ export function TopTabsBar({
         ? createPortal(
             <div
               ref={workspaceSwitcherPopupRef}
-              className={`${integratedTitleBar ? "window-no-drag " : ""}fixed z-[80] rounded-xl border border-border bg-popover p-3 shadow-subtle-sm`}
+              className={`${integratedTitleBar ? "window-no-drag " : ""}fixed z-[80] rounded-xl border border-border bg-popover p-3 shadow-xs`}
               style={{
                 top: workspaceSwitcherPosition.top,
                 left: workspaceSwitcherPosition.left,

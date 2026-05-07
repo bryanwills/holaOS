@@ -1308,7 +1308,7 @@ function FocusPlaceholder({
   description: string;
 }) {
   return (
-    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-xl shadow-subtle-sm">
+    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-xl shadow-xs">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(87,255,173,0.08),transparent_45%)]" />
       <div className="relative max-w-[520px] px-8 text-center">
         <div className="text-[10px] uppercase text-primary">{eyebrow}</div>
@@ -5114,7 +5114,7 @@ function AppShellContent() {
         data-container="shell"
         className="fixed inset-0 h-screen overflow-hidden text-foreground"
       >
-      <div className="theme-grid pointer-events-none absolute inset-0 bg-noise-grid bg-[size:22px_22px]" />
+      <div className="pointer-events-none absolute inset-0 bg-noise-grid bg-[size:22px_22px] opacity-[0.04]" />
       <div className="theme-orb-primary pointer-events-none absolute -left-32 -top-32 h-80 w-80 rounded-full blur-3xl" />
       <div className="theme-orb-secondary pointer-events-none absolute -bottom-40 right-12 h-96 w-96 rounded-full blur-3xl" />
 

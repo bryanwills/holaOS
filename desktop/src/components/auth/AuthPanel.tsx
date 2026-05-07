@@ -79,7 +79,7 @@ const KNOWN_PROVIDER_ORDER = [
 const SUBAGENT_MODEL_FOLLOW_COMPOSER = "__subagent_follow_composer__";
 type KnownProviderId = (typeof KNOWN_PROVIDER_ORDER)[number];
 const AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME =
-  "auth-settings-control theme-control-surface relative isolate h-9 w-full overflow-hidden rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground shadow-none transition-colors hover:border-border focus-visible:border-border focus-visible:ring-0 focus-visible:ring-transparent aria-invalid:border-border aria-invalid:ring-0";
+  "auth-settings-control relative isolate h-9 w-full overflow-hidden rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground shadow-none transition-colors hover:border-border focus-visible:border-border focus-visible:ring-0 focus-visible:ring-transparent aria-invalid:border-border aria-invalid:ring-0";
 const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<
   string,
   Record<string, string>
@@ -2045,7 +2045,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   ];
 
   const setupLoadingPanel = (
-    <div className="theme-subtle-surface flex flex-col items-center gap-3 rounded-2xl border border-border px-5 py-8 text-center">
+    <div className="flex flex-col items-center gap-3 rounded-2xl border border-border bg-muted px-5 py-8 text-center">
       <div className="flex size-11 items-center justify-center rounded-full border border-primary bg-primary/10 text-primary">
         <Loader2 size={18} className="animate-spin" />
       </div>
@@ -3359,7 +3359,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               {statusTone ? (
                 <Badge
                   variant="outline"
-                  className={`${badgeClass} text-[11px]`}
+                  className={`${badgeClass} text-xs`}
                 >
                   {statusLabel}
                 </Badge>
@@ -3532,7 +3532,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 onValueChange={handleDefaultChatModelChange}
                 options={defaultChatModelOptions}
                 placeholder="Pick a model"
-                triggerWidth="w-[260px]"
               />
               <SettingsMenuSelectRow
                 label="Subagent model"
@@ -3541,7 +3540,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 onValueChange={handleSubagentModelChange}
                 options={subagentModelOptions}
                 placeholder="Pick a model"
-                triggerWidth="w-[260px]"
               />
             </>
           ) : (
@@ -3658,7 +3656,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               applyWebSearchProviderSelection(webSearchProviderDraftId(value))
             }
             options={webSearchProviderOptions}
-            triggerWidth="w-[220px]"
             disabled={
               !hasHydratedWebSearchDraft || webSearchSaveStatus === "saving"
             }
@@ -4347,7 +4344,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               {infoRows.map((row) => (
                 <div
                   key={row.label}
-                  className="theme-subtle-surface flex items-center justify-between gap-3 rounded-2xl border border-panel-border/35 px-4 py-3"
+                  className="flex items-center justify-between gap-3 rounded-2xl border border-panel-border/35 bg-muted px-4 py-3"
                 >
                   <div className="text-sm text-foreground">{row.label}</div>
                   <div className="max-w-[58%] truncate text-right text-sm text-muted-foreground">

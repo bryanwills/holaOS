@@ -743,7 +743,7 @@ export function BrowserPane({
   };
 
   return (
-    <PaneCard title="" className="shadow-subtle-xs">
+    <PaneCard title="" className="shadow-2xs">
       <div ref={paneRef} className="flex h-full min-h-0 flex-col">
         <div className="shrink-0 border-b border-border px-2 py-1.5">
           <div className="mb-1.5 flex items-center gap-1.5 overflow-x-auto pb-0.5">
@@ -1072,7 +1072,7 @@ export function BrowserPane({
 
             {!activeTab.initialized ? (
               <div className="absolute inset-0 grid place-items-center bg-card p-6 text-center">
-                <div className="pointer-events-none w-full max-w-[320px] rounded-3xl border border-border bg-card px-5 py-5 shadow-subtle-sm backdrop-blur">
+                <div className="pointer-events-none w-full max-w-[320px] rounded-3xl border border-border bg-card px-5 py-5 shadow-xs backdrop-blur">
                   <div className="mt-4 text-base font-medium text-foreground">
                     Starting{" "}
                     {visibleBrowserSpace === "agent" ? "agent" : "user"} browser
