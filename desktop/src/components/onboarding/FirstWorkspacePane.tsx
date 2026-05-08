@@ -37,10 +37,13 @@ interface FirstWorkspacePaneProps {
  */
 function buildWizardSteps(
   hasOptionalApps: boolean,
+  includeBrowserStep: boolean,
 ): Array<"select_apps" | "configure" | "browser_profile"> {
   return hasOptionalApps
     ? ["select_apps", "configure", "browser_profile"]
-    : ["configure", "browser_profile"];
+    : includeBrowserStep
+      ? ["configure", "browser_profile"]
+      : ["configure"];
 }
 
 export function FirstWorkspacePane({
@@ -50,6 +53,8 @@ export function FirstWorkspacePane({
   const {
     templateSourceMode,
     setTemplateSourceMode,
+    workspaceCreateLocation,
+    setWorkspaceCreateLocation,
     selectedTemplateFolder,
     marketplaceTemplates,
     selectedMarketplaceTemplate,
@@ -250,6 +255,15 @@ export function FirstWorkspacePane({
   const sectionClassName = firstWorkspacePaneSectionClassName(step);
   const creatingViaMarketplace =
     templateSourceMode === "marketplace" && canUseMarketplaceTemplates;
+  const cloudScratchCreateSelected =
+    workspaceCreateLocation === "cloud" &&
+    (templateSourceMode === "empty" || templateSourceMode === "empty_onboarding");
+
+  useEffect(() => {
+    if (cloudScratchCreateSelected && step === "browser_profile") {
+      setStep("configure");
+    }
+  }, [cloudScratchCreateSelected, step]);
 
   const openAuthPopup = () => {
     void window.electronAPI.auth.requestAuth();
@@ -288,8 +302,8 @@ export function FirstWorkspacePane({
       ? selectedMarketplaceTemplate.apps.some((a) => !a.required)
       : false;
   const wizardSteps = useMemo(
-    () => buildWizardSteps(hasOptionalApps),
-    [hasOptionalApps],
+    () => buildWizardSteps(hasOptionalApps, !cloudScratchCreateSelected),
+    [cloudScratchCreateSelected, hasOptionalApps],
   );
   const wizardStepTotal = wizardSteps.length;
   const wizardStepIndex = (id: "select_apps" | "configure" | "browser_profile") =>
@@ -407,6 +421,9 @@ export function FirstWorkspacePane({
           connectStatus={connectStatus}
           connectingProvider={connectingProvider}
           continueDisabled={configureContinueDisabled}
+          continueLabel={
+            cloudScratchCreateSelected ? "Create workspace" : "Continue"
+          }
           defaultWorkspaceRoot={runtimeStatus?.sandboxRoot ?? null}
           hasUnconnectedIntegrations={hasUnconnectedIntegrations}
           isResolvingIntegrations={isResolvingIntegrations}
@@ -417,15 +434,26 @@ export function FirstWorkspacePane({
           onChooseWorkspaceFolder={() => void chooseWorkspaceFolder()}
           onClearWorkspaceFolder={clearSelectedWorkspaceFolder}
           onConnect={(provider) => void handleConnectProvider(provider)}
-          onContinue={() => setStep("browser_profile")}
+          onContinue={() =>
+            cloudScratchCreateSelected
+              ? void createWorkspace()
+              : setStep("browser_profile")
+          }
           pendingIntegrations={pendingIntegrations}
           selectedMarketplaceTemplate={selectedMarketplaceTemplate}
           selectedTemplateFolder={selectedTemplateFolder}
           selectedWorkspaceFolder={selectedWorkspaceFolder}
           setNewWorkspaceName={setNewWorkspaceName}
+          setWorkspaceCreateLocation={setWorkspaceCreateLocation}
           stepIndex={wizardStepIndex("configure")}
           stepTotal={wizardStepTotal}
+          showCreateLocationSelector={
+            templateSourceMode === "empty" ||
+            templateSourceMode === "empty_onboarding"
+          }
+          showWorkspaceFolderPicker={!cloudScratchCreateSelected}
           templateSourceMode={templateSourceMode}
+          workspaceCreateLocation={workspaceCreateLocation}
           workspaceErrorMessage={workspaceErrorMessage}
         />
       ) : step === "browser_profile" ? (

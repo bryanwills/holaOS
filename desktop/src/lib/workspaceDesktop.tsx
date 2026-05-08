@@ -65,6 +65,7 @@ const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
 const DEFAULT_WORKSPACE_HARNESS: WorkspaceHarnessId = "pi";
 const BOOTSTRAP_IPC_TIMEOUT_MS = 8_000;
 type TemplateSourceMode = "local" | "marketplace" | "empty" | "empty_onboarding";
+type WorkspaceCreateLocation = WorkspaceLocationPayload;
 type LifecycleStepState = "pending" | "current" | "done" | "error";
 type WorkspaceListLoadSource = "auto" | "live" | "cached";
 type WorkspaceBrowserBootstrapMode = "fresh" | "copy_workspace" | "import_browser";
@@ -128,6 +129,8 @@ interface WorkspaceDesktopContextValue {
   isConnectingAppIntegration: boolean;
   templateSourceMode: TemplateSourceMode;
   setTemplateSourceMode: (value: TemplateSourceMode) => void;
+  workspaceCreateLocation: WorkspaceCreateLocation;
+  setWorkspaceCreateLocation: (value: WorkspaceCreateLocation) => void;
   createHarnessOptions: WorkspaceHarnessOption[];
   selectedCreateHarness: WorkspaceHarnessId;
   setSelectedCreateHarness: (value: string) => void;
@@ -285,6 +288,8 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const [appCatalogSource, setAppCatalogSourceState] = useState<"marketplace" | "local">("marketplace");
   const [installingAppId, setInstallingAppId] = useState<string | null>(null);
   const [templateSourceMode, setTemplateSourceModeState] = useState<TemplateSourceMode>("local");
+  const [workspaceCreateLocation, setWorkspaceCreateLocationState] =
+    useState<WorkspaceCreateLocation>("local");
   const [selectedCreateHarness, setSelectedCreateHarnessState] = useState<WorkspaceHarnessId>(DEFAULT_WORKSPACE_HARNESS);
   const [selectedTemplateFolder, setSelectedTemplateFolder] = useState<TemplateFolderSelectionPayload | null>(null);
   const [selectedWorkspaceFolder, setSelectedWorkspaceFolder] = useState<WorkspaceRuntimeFolderSelectionPayload | null>(null);
@@ -427,6 +432,18 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   function setTemplateSourceMode(value: TemplateSourceMode) {
     setWorkspaceErrorMessage("");
     setTemplateSourceModeState(value);
+    if (value !== "empty" && value !== "empty_onboarding") {
+      setWorkspaceCreateLocationState("local");
+    }
+  }
+
+  function setWorkspaceCreateLocation(value: WorkspaceCreateLocation) {
+    setWorkspaceErrorMessage("");
+    setWorkspaceCreateLocationState(value);
+    if (value === "cloud") {
+      setSelectedWorkspaceFolder(null);
+      setBrowserBootstrapModeState("fresh");
+    }
   }
 
   function setBrowserBootstrapMode(value: WorkspaceBrowserBootstrapMode) {
@@ -739,7 +756,15 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     setWorkspaceErrorMessage("");
     try {
       const trimmedWorkspaceName = newWorkspaceName.trim() || "Desktop Workspace";
-      const customWorkspacePath = selectedWorkspaceFolder?.rootPath?.trim() || "";
+      const isCloudCreate =
+        workspaceCreateLocation === "cloud" &&
+        (templateSourceMode === "empty" || templateSourceMode === "empty_onboarding");
+      const customWorkspacePath = isCloudCreate
+        ? ""
+        : selectedWorkspaceFolder?.rootPath?.trim() || "";
+      if (isCloudCreate && !resolvedUserId) {
+        throw new Error("Sign in required to create a remote workspace.");
+      }
       let response: WorkspaceResponsePayload;
       if (templateSourceMode === "marketplace") {
         if (!canUseMarketplaceTemplates) {
@@ -772,7 +797,10 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
         });
       } else if (templateSourceMode === "empty" || templateSourceMode === "empty_onboarding") {
         response = await window.electronAPI.workspace.createWorkspace({
-          holaboss_user_id: resolvedUserId || LOCAL_OSS_TEMPLATE_USER_ID,
+          holaboss_user_id: isCloudCreate
+            ? resolvedUserId
+            : resolvedUserId || LOCAL_OSS_TEMPLATE_USER_ID,
+          location: isCloudCreate ? "cloud" : "local",
           harness: selectedCreateHarness,
           name: trimmedWorkspaceName,
           template_mode: templateSourceMode === "empty_onboarding" ? "empty_onboarding" : "empty",
@@ -798,7 +826,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       setSelectedWorkspaceId(createdWorkspaceId);
 
       let postCreateWarning = "";
-      if (browserBootstrapMode === "copy_workspace") {
+      if (!isCloudCreate && browserBootstrapMode === "copy_workspace") {
         const sourceWorkspaceId = browserBootstrapSourceWorkspaceId.trim();
         if (sourceWorkspaceId) {
           setWorkspaceCreatePhase("copying_browser_profile");
@@ -811,7 +839,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
             postCreateWarning = `Workspace created, but browser profile copy failed: ${normalizeErrorMessage(error)}`;
           }
         }
-      } else if (browserBootstrapMode === "import_browser") {
+      } else if (!isCloudCreate && browserBootstrapMode === "import_browser") {
         setWorkspaceCreatePhase("importing_browser_profile");
         try {
           await window.electronAPI.workspace.importBrowserProfile({
@@ -1095,6 +1123,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       if (!selection.canceled && selection.rootPath) {
         setSelectedTemplateFolder(selection);
         setTemplateSourceModeState("local");
+        setWorkspaceCreateLocationState("local");
       }
     } catch (error) {
       setWorkspaceErrorMessage(normalizeErrorMessage(error));
@@ -1582,6 +1611,8 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       isConnectingAppIntegration,
       templateSourceMode,
       setTemplateSourceMode,
+      workspaceCreateLocation,
+      setWorkspaceCreateLocation,
       createHarnessOptions: WORKSPACE_HARNESS_OPTIONS,
       selectedCreateHarness,
       setSelectedCreateHarness,
@@ -1659,6 +1690,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       pendingAppInstall,
       isConnectingAppIntegration,
       templateSourceMode,
+      workspaceCreateLocation,
       selectedCreateHarness,
       selectedTemplateFolder,
       selectedWorkspaceFolder,
