@@ -105,11 +105,32 @@ test("workspace desktop hydrates workspace summaries from cached or live sources
 test("workspace creation can copy an existing workspace browser profile or import from a browser", async () => {
   const source = await readFile(WORKSPACE_DESKTOP_PATH, "utf8");
 
+  assert.match(source, /type WorkspaceCreateLocation = WorkspaceLocationPayload;/);
+  assert.match(
+    source,
+    /const \[workspaceCreateLocation, setWorkspaceCreateLocationState\] =\s*useState<WorkspaceCreateLocation>\("local"\);/,
+  );
+  assert.match(
+    source,
+    /const isCloudCreate =\s*workspaceCreateLocation === "cloud" &&\s*\(templateSourceMode === "empty" \|\| templateSourceMode === "empty_onboarding"\);/,
+  );
+  assert.match(
+    source,
+    /const customWorkspacePath = isCloudCreate\s*\?\s*""\s*:\s*selectedWorkspaceFolder\?\.rootPath\?\.trim\(\) \|\| "";/,
+  );
+  assert.match(
+    source,
+    /if \(isCloudCreate && !resolvedUserId\) \{\s*throw new Error\("Sign in required to create a remote workspace."\);\s*\}/,
+  );
+  assert.match(
+    source,
+    /location: isCloudCreate \? "cloud" : "local",/,
+  );
   assert.match(source, /type WorkspaceBrowserBootstrapMode = "fresh" \| "copy_workspace" \| "import_browser";/);
   assert.match(source, /const \[browserImportSource, setBrowserImportSourceState\] =\s*useState<BrowserImportSource>\("chrome"\);/);
-  assert.match(source, /if \(browserBootstrapMode === "copy_workspace"\) \{/);
+  assert.match(source, /if \(!isCloudCreate && browserBootstrapMode === "copy_workspace"\) \{/);
   assert.match(source, /workspace\.copyBrowserWorkspaceProfile\(\{/);
-  assert.match(source, /else if \(browserBootstrapMode === "import_browser"\) \{/);
+  assert.match(source, /else if \(!isCloudCreate && browserBootstrapMode === "import_browser"\) \{/);
   assert.match(source, /workspace\.importBrowserProfile\(\{/);
   assert.match(source, /profileDir:\s*browserImportSource === "safari"\s*\?\s*undefined\s*:\s*\(browserImportProfileDir\.trim\(\) \|\| undefined\),/);
   assert.match(source, /setWorkspaceCreatePhase\("copying_browser_profile"\);/);

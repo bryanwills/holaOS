@@ -57,6 +57,22 @@ test("workspace IPC handlers delegate through the local workspace control plane"
   );
   assert.match(
     source,
+    /const templateMode = \(payload\.template_mode \|\| ""\)\.trim\(\)\.toLowerCase\(\);/,
+  );
+  assert.match(
+    source,
+    /const isEmptyWorkspaceCreate =\s*templateMode === "empty" \|\| templateMode === "empty_onboarding";/,
+  );
+  assert.match(
+    source,
+    /if \(!isEmptyWorkspaceCreate && !templateName\) \{/,
+  );
+  assert.match(
+    source,
+    /name: payload\.name,\s*\.\.\.\(templateName \? \{ template_name: templateName \} : \{\}\),/s,
+  );
+  assert.match(
+    source,
     /"workspace:activate"[\s\S]*desktopWorkspaceControlPlane\.activateWorkspaceRecord\(workspaceId\)/,
   );
   assert.match(
@@ -81,7 +97,7 @@ test("workspace IPC handlers delegate through the local workspace control plane"
   );
   assert.match(
     source,
-    /"workspace:getWorkspaceRoot"[\s\S]*resolveLocalWorkspaceRoot\(workspaceId\)/,
+    /"workspace:getWorkspaceRoot"[\s\S]*resolveWorkspaceRoot\(workspaceId\)/,
   );
   assert.match(
     source,

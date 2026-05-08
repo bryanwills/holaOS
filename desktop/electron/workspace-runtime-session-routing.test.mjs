@@ -94,7 +94,15 @@ test("workspace-scoped session lifecycle and IO APIs route through workspace run
   );
   assert.match(
     source,
+    /async function listRuntimeStates\([\s\S]*?if \(items\.length > 0\) \{[\s\S]*?if \(\(await resolveWorkspaceLocation\(workspaceId\)\) === "cloud"\) \{[\s\S]*?return \{ items: \[\], count: 0 \};/,
+  );
+  assert.match(
+    source,
     /async function listAgentSessions\([\s\S]*?requestWorkspaceRuntimeJson<AgentSessionListResponsePayload>\(\s*requestPayload\.workspaceId,[\s\S]*?path: "\/api\/v1\/agent-sessions"/,
+  );
+  assert.match(
+    source,
+    /async function listAgentSessions\([\s\S]*?if \(items\.length > 0\) \{[\s\S]*?if \(\(await resolveWorkspaceLocation\(requestPayload\.workspaceId\)\) === "cloud"\) \{[\s\S]*?return \{ items: \[\], count: 0 \};/,
   );
   assert.match(
     source,
@@ -134,10 +142,17 @@ test("local filesystem access goes through explicit local workspace-root helpers
     source,
     /function localWorkspaceRootFromSession\([\s\S]*?session\.location !== "local"/,
   );
-  assert.match(source, /workspace_root: localWorkspaceRootFromSession\(session\),/);
+  assert.match(
+    source,
+    /const workspaceRoot = location === "local"\s*\?\s*localWorkspaceRootFromSession\(session\)/,
+  );
   assert.match(
     source,
     /workspace_root: resolveLocalWorkspaceRootPath\(\s*await resolveWorkspaceDir\(safeWorkspaceId\),/,
+  );
+  assert.match(
+    source,
+    /async function resolveWorkspaceRoot\([\s\S]*?if \(location === "cloud"\) \{[\s\S]*?return \(cachedSession\?\.workspace_root \|\| "\/workspace"\)\.trim\(\) \|\| "\/workspace";/,
   );
   assert.match(
     source,
@@ -145,7 +160,7 @@ test("local filesystem access goes through explicit local workspace-root helpers
   );
   assert.match(
     source,
-    /async \(_event, workspaceId: string\) =>\s*resolveLocalWorkspaceRoot\(workspaceId\),/,
+    /async \(_event, workspaceId: string\) =>\s*resolveWorkspaceRoot\(workspaceId\),/,
   );
   assert.doesNotMatch(source, /path\.resolve\(workspaceSession\.workspace_root\)/);
 });

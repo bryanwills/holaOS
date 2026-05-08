@@ -12042,9 +12042,14 @@ function isRuntimeHealthcheckStartupFailureMessage(message: string): boolean {
 }
 
 function isTransientRuntimeError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
   return (
     (error instanceof Error &&
-      isRuntimeHealthcheckStartupFailureMessage(error.message)) ||
+      (isRuntimeHealthcheckStartupFailureMessage(error.message) ||
+        message.includes("connection refused") ||
+        message.includes("timed out") ||
+        message.includes("no route to host") ||
+        message.includes("workspace runtime request failed"))) ||
     sdkIsTransientRuntimeError(error)
   );
 }
@@ -12466,6 +12471,22 @@ async function resolveLocalWorkspaceRoot(
   const session = await resolveWorkspaceRuntimeSession(workspaceId, options);
   return localWorkspaceRootFromSession(session);
 }
+
+async function resolveWorkspaceRoot(
+  workspaceId: string,
+  options: { refresh?: boolean } = {},
+): Promise<string> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
+  const location = await resolveWorkspaceLocation(safeWorkspaceId);
+  if (location === "cloud") {
+    const cachedSession = !options.refresh
+      ? workspaceRuntimeSessionCache.get(safeWorkspaceId)
+      : null;
+    return (cachedSession?.workspace_root || "/workspace").trim() || "/workspace";
+  }
+  return resolveLocalWorkspaceRoot(safeWorkspaceId, options);
+}
+
 async function requestWorkspaceRuntimeJson<T>(
   workspaceId: string,
   {
@@ -14769,14 +14790,14 @@ async function activateLocalWorkspaceRecord(
 async function createCloudWorkspace(
   payload: HolabossCreateWorkspacePayload,
 ): Promise<WorkspaceResponsePayload> {
+  const templateMode = (payload.template_mode || "").trim().toLowerCase();
   const templateName = payload.template_name?.trim() || "";
-  if (!templateName) {
+  const isEmptyWorkspaceCreate =
+    templateMode === "empty" || templateMode === "empty_onboarding";
+  if (!isEmptyWorkspaceCreate && !templateName) {
     throw new Error(
       "Remote workspace creation currently requires a marketplace template.",
     );
-  }
-  if ((payload.template_mode || "").trim().toLowerCase() === "empty") {
-    throw new Error("Remote empty-workspace creation is not supported yet.");
   }
   if (payload.template_root_path?.trim()) {
     throw new Error("Remote workspaces cannot be created from a local template path.");
@@ -14791,13 +14812,17 @@ async function createCloudWorkspace(
       path: DESKTOP_RUNTIME_WORKSPACES_PATH,
       payload: {
         name: payload.name,
-        template_name: templateName,
-        template_ref: payload.template_ref?.trim() || undefined,
-        template_commit: payload.template_commit?.trim() || undefined,
-        selected_apps:
-          (payload.template_apps ?? []).filter(
-            (item) => typeof item === "string" && item.trim(),
-          ),
+        ...(templateName ? { template_name: templateName } : {}),
+        ...(templateName
+          ? {
+              template_ref: payload.template_ref?.trim() || undefined,
+              template_commit: payload.template_commit?.trim() || undefined,
+              selected_apps:
+                (payload.template_apps ?? []).filter(
+                  (item) => typeof item === "string" && item.trim(),
+                ),
+            }
+          : {}),
       },
     },
   );
@@ -14938,6 +14963,9 @@ async function listRuntimeStates(
       if (items.length > 0) {
         return { items, count: items.length };
       }
+      if ((await resolveWorkspaceLocation(workspaceId)) === "cloud") {
+        return { items: [], count: 0 };
+      }
     }
     throw error;
   }
@@ -15012,6 +15040,9 @@ async function listAgentSessions(
       );
       if (items.length > 0) {
         return { items, count: items.length };
+      }
+      if ((await resolveWorkspaceLocation(requestPayload.workspaceId)) === "cloud") {
+        return { items: [], count: 0 };
       }
     }
     throw error;
@@ -22260,7 +22291,7 @@ app.whenReady().then(async () => {
     "workspace:getWorkspaceRoot",
     ["main"],
     async (_event, workspaceId: string) =>
-      resolveLocalWorkspaceRoot(workspaceId),
+      resolveWorkspaceRoot(workspaceId),
   );
   handleTrustedIpc(
     "workspace:setOperatorSurfaceContext",
