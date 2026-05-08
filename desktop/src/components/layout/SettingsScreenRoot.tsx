@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   Check,
+  ChevronDown,
   CircleHelp,
   Copy,
   CreditCard,
@@ -9,7 +10,6 @@ import {
   Globe,
   Info,
   Loader2,
-  Package,
   Plug,
   RotateCcw,
   Send,
@@ -35,6 +35,24 @@ import {
 } from "@/components/settings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { WorkspaceIcon } from "@/components/ui/workspace-icon";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 
@@ -92,10 +110,9 @@ const SETTINGS_NAV: ReadonlyArray<SettingsScreenNavEntry<UiSettingsPaneSection>>
   { id: "settings", label: "General", icon: Settings2 },
   { id: "account", label: "Account", icon: User2 },
   { id: "billing", label: "Billing", icon: CreditCard },
-  { id: "providers", label: "AI", icon: Waypoints },
+  { id: "providers", label: "Providers", icon: Waypoints },
   { id: "integrations", label: "Integrations", icon: Plug },
   { id: "submissions", label: "Submissions", icon: Send },
-  { id: "about", label: "About", icon: Info },
 ];
 
 const ABOUT_LINKS = [
@@ -126,13 +143,11 @@ function pageTitle(section: UiSettingsPaneSection): string {
     case "billing":
       return "Billing";
     case "providers":
-      return "AI";
+      return "Providers";
     case "integrations":
       return "Integrations";
     case "submissions":
       return "Submissions";
-    case "about":
-      return "About";
     default:
       return "General";
   }
@@ -152,8 +167,6 @@ function pageDescription(section: UiSettingsPaneSection): string | undefined {
       return "Manage connections to third-party services your apps depend on.";
     case "submissions":
       return "Review templates and apps you've submitted for marketplace listing.";
-    case "about":
-      return undefined;
     default:
       return undefined;
   }
@@ -314,8 +327,8 @@ export function SettingsScreenRoot({
     sizeBytes: 0,
     workspaceName: "",
   });
-  const [diagnosticsWorkspaceId, setDiagnosticsWorkspaceId] = useState("");
   const [diagnosticsPathCopied, setDiagnosticsPathCopied] = useState(false);
+  const [diagnosticsMenuOpen, setDiagnosticsMenuOpen] = useState(false);
   const [appUpdateStatus, setAppUpdateStatus] =
     useState<AppUpdateStatusPayload | null>(null);
   const [appUpdateChannelPending, setAppUpdateChannelPending] = useState(false);
@@ -344,31 +357,6 @@ export function SettingsScreenRoot({
       };
     });
   }, [selectedWorkspace, workspaces]);
-
-  const diagnosticsSelectedWorkspace = useMemo(
-    () =>
-      workspaces.find((workspace) => workspace.id === diagnosticsWorkspaceId) ??
-      (selectedWorkspace?.id === diagnosticsWorkspaceId
-        ? selectedWorkspace
-        : null),
-    [diagnosticsWorkspaceId, selectedWorkspace, workspaces],
-  );
-
-  // Reset diagnostics workspace selection when the active workspace
-  // changes or when the rail is first mounted.
-  useEffect(() => {
-    const selectedId = selectedWorkspace?.id ?? "";
-    const fallbackId = selectedId || diagnosticsWorkspaceOptions[0]?.value || "";
-    setDiagnosticsWorkspaceId((current) => {
-      if (
-        current &&
-        diagnosticsWorkspaceOptions.some((option) => option.value === current)
-      ) {
-        return current;
-      }
-      return fallbackId;
-    });
-  }, [diagnosticsWorkspaceOptions, selectedWorkspace?.id]);
 
   // Subscribe to in-app update status while the settings screen is mounted.
   useEffect(() => {
@@ -400,16 +388,14 @@ export function SettingsScreenRoot({
     }
   }, [appUpdateStatus?.downloaded]);
 
-  async function handleExportDiagnosticsBundle() {
-    const workspaceId = diagnosticsWorkspaceId.trim();
-    if (!workspaceId) {
-      setDiagnosticsExportState((prev) => ({
-        ...prev,
-        status: "error",
-        message: "Choose a workspace before exporting diagnostics.",
-      }));
+  async function handleExportDiagnosticsBundle(workspaceId: string) {
+    const trimmed = workspaceId.trim();
+    if (!trimmed) {
       return;
     }
+    const workspace =
+      workspaces.find((w) => w.id === trimmed) ??
+      (selectedWorkspace?.id === trimmed ? selectedWorkspace : null);
 
     setDiagnosticsPathCopied(false);
     setDiagnosticsExportState((prev) => ({
@@ -419,15 +405,14 @@ export function SettingsScreenRoot({
     }));
     try {
       const result = await window.electronAPI.diagnostics.exportBundle({
-        workspaceId,
+        workspaceId: trimmed,
       });
       setDiagnosticsExportState({
         status: "success",
         message: "",
         bundlePath: result.bundlePath,
         sizeBytes: result.archiveSizeBytes,
-        workspaceName:
-          result.workspaceName ?? diagnosticsSelectedWorkspace?.name ?? "",
+        workspaceName: result.workspaceName ?? workspace?.name ?? "",
       });
     } catch (error) {
       setDiagnosticsExportState((prev) => ({
@@ -499,6 +484,35 @@ export function SettingsScreenRoot({
       activeSection={activeSection}
       onSectionChange={onSectionChange}
       onBackToApp={onBackToApp}
+      railFooter={
+        <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+          {ABOUT_LINKS.map((link) => {
+            const Icon = link.icon;
+            return (
+              <Tooltip key={link.id}>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={() => onOpenExternalUrl(link.href)}
+                      aria-label={link.label}
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <Icon className="size-3.5" />
+                    </Button>
+                  }
+                />
+                <TooltipContent>{link.label}</TooltipContent>
+              </Tooltip>
+            );
+          })}
+          <span className="ml-auto font-mono tabular-nums">
+            v{displayAppVersion}
+          </span>
+        </div>
+      }
     >
       <SettingsPage
         title={pageTitle(activeSection)}
@@ -525,7 +539,7 @@ export function SettingsScreenRoot({
                 <SettingsRow label="holaOS Desktop" description="Version">
                   <Badge
                     variant="outline"
-                    className="border-border bg-background/60 font-mono text-[11px] text-foreground"
+                    className="border-border bg-fg-2 font-mono text-[11px] text-foreground"
                   >
                     v{displayAppVersion}
                   </Badge>
@@ -535,14 +549,14 @@ export function SettingsScreenRoot({
                     a progress bar + dynamic install button that doesn't fit
                     the simple SettingsRow shape. Padding/spacing match the
                     surrounding rows. */}
-                <div aria-live="polite" className="px-4 py-3.5">
+                <div aria-live="polite" className="px-4 py-3">
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 text-sm font-medium text-foreground">
                         <span>Desktop updates</span>
                         <Badge
                           variant="outline"
-                          className={`border-border bg-background/60 text-[11px] ${
+                          className={`border-border bg-fg-2 text-[11px] ${
                             appUpdateState.error
                               ? "text-destructive"
                               : "text-muted-foreground"
@@ -570,12 +584,12 @@ export function SettingsScreenRoot({
                   </div>
 
                   {appUpdateState.progressPercent !== null ? (
-                    <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-border/60">
+                    <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-fg-8">
                       <div
                         className={`h-full rounded-full transition-[width] ${
                           appUpdateState.error
                             ? "bg-destructive"
-                            : "bg-primary/80"
+                            : "bg-primary"
                         }`}
                         style={{
                           width: `${appUpdateState.progressPercent}%`,
@@ -611,7 +625,7 @@ export function SettingsScreenRoot({
                       Beta updates
                       <Badge
                         variant="outline"
-                        className="border-border bg-background/60 text-[11px] text-muted-foreground"
+                        className="border-border bg-fg-2 text-[11px] text-muted-foreground"
                       >
                         {betaChannelEnabled ? "Beta" : "Latest"}
                       </Badge>
@@ -663,7 +677,7 @@ export function SettingsScreenRoot({
                         <span className="flex items-center gap-2">
                           <span
                             aria-hidden="true"
-                            className="size-3 shrink-0 rounded-sm border border-border"
+                            className="size-3.5 shrink-0 rounded-full"
                             style={{ background: swatch }}
                           />
                           {THEME_VARIANT_LABELS[variant]}
@@ -701,78 +715,78 @@ export function SettingsScreenRoot({
                 />
               </SettingsCard>
             </SettingsSection>
-          </>
-        ) : null}
-
-        {activeSection === "about" ? (
-          <>
-            <SettingsSection title="Links">
-              <SettingsCard>
-                {ABOUT_LINKS.map(({ id, label, icon: Icon, href }) => (
-                  <SettingsRow
-                    key={id}
-                    label={label}
-                    leading={<Icon className="size-4 text-muted-foreground" />}
-                    interactive
-                    onClick={() => onOpenExternalUrl(href)}
-                  >
-                    <ExternalLink className="size-4 text-muted-foreground" />
-                  </SettingsRow>
-                ))}
-              </SettingsCard>
-            </SettingsSection>
 
             <SettingsSection title="Diagnostics">
               <SettingsCard>
-                <SettingsMenuSelectRow
-                  label="Workspace"
-                  description={
-                    diagnosticsWorkspaceOptions.length > 0
-                      ? "Choose the workspace to include in the diagnostics bundle."
-                      : hasHydratedWorkspaceList
-                        ? "No workspace is available to export."
-                        : "Loading workspaces."
-                  }
-                  leading={
-                    <FolderOpen className="size-4 text-muted-foreground" />
-                  }
-                  value={diagnosticsWorkspaceId}
-                  onValueChange={setDiagnosticsWorkspaceId}
-                  options={diagnosticsWorkspaceOptions}
-                  disabled={
-                    diagnosticsExportState.status === "exporting" ||
-                    diagnosticsWorkspaceOptions.length === 0
-                  }
-                  placeholder={
-                    hasHydratedWorkspaceList ? "No workspace" : "Loading"
-                  }
-                />
                 <SettingsRow
                   label="Diagnostics bundle"
                   description="Logs, a workspace-scoped database snapshot, and a redacted config. Stays on your device."
-                  leading={<Package className="size-4 text-muted-foreground" />}
                 >
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void handleExportDiagnosticsBundle()}
-                    disabled={
-                      diagnosticsExportState.status === "exporting" ||
-                      !diagnosticsWorkspaceId
-                    }
+                  <Popover
+                    open={diagnosticsMenuOpen}
+                    onOpenChange={setDiagnosticsMenuOpen}
                   >
-                    {diagnosticsExportState.status === "exporting" ? (
-                      <>
-                        <Loader2 className="size-3.5 animate-spin" />
-                        Exporting…
-                      </>
-                    ) : diagnosticsExportState.status === "success" ? (
-                      "Re-export"
-                    ) : (
-                      "Export"
-                    )}
-                  </Button>
+                    <PopoverTrigger
+                      disabled={
+                        diagnosticsExportState.status === "exporting" ||
+                        diagnosticsWorkspaceOptions.length === 0
+                      }
+                      render={
+                        <Button type="button" variant="outline" size="sm">
+                          {diagnosticsExportState.status === "exporting" ? (
+                            <>
+                              <Loader2 className="size-3.5 animate-spin" />
+                              Exporting…
+                            </>
+                          ) : (
+                            <>
+                              {diagnosticsExportState.status === "success"
+                                ? "Re-export"
+                                : "Export"}
+                              <ChevronDown className="size-3.5 text-muted-foreground" />
+                            </>
+                          )}
+                        </Button>
+                      }
+                    />
+                    <PopoverContent
+                      align="end"
+                      className="w-72 p-0"
+                    >
+                      <Command>
+                        {diagnosticsWorkspaceOptions.length > 8 ? (
+                          <CommandInput placeholder="Search workspaces…" />
+                        ) : null}
+                        <CommandList>
+                          <CommandEmpty>
+                            {hasHydratedWorkspaceList
+                              ? "No workspaces available."
+                              : "Loading workspaces…"}
+                          </CommandEmpty>
+                          <CommandGroup
+                            className="p-1"
+                            heading="Export bundle for"
+                          >
+                            {diagnosticsWorkspaceOptions.map((option) => (
+                              <CommandItem
+                                key={option.value}
+                                value={option.value}
+                                keywords={option.keywords}
+                                onSelect={(workspaceId) => {
+                                  setDiagnosticsMenuOpen(false);
+                                  void handleExportDiagnosticsBundle(
+                                    workspaceId,
+                                  );
+                                }}
+                              >
+                                {option.label}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </SettingsRow>
                 {diagnosticsExportState.status === "success" &&
                 diagnosticsExportState.bundlePath ? (

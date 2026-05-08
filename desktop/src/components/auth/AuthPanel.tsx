@@ -7,12 +7,9 @@ import {
   ChevronRight,
   Loader2,
   LogOut,
-  MoreHorizontal,
-  Pencil,
   Plug,
   Plus,
   RefreshCw,
-  ShieldCheck,
   Terminal,
   Unplug,
   X,
@@ -36,14 +33,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { StatusDot } from "@/components/ui/status-dot";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useDesktopAuthSession, type AuthSession } from "@/lib/auth/authClient";
 import { holabossLogoUrl } from "@/lib/assetPaths";
 import { useDesktopBilling } from "@/lib/billing/useDesktopBilling";
@@ -78,8 +73,6 @@ const KNOWN_PROVIDER_ORDER = [
 ] as const;
 const SUBAGENT_MODEL_FOLLOW_COMPOSER = "__subagent_follow_composer__";
 type KnownProviderId = (typeof KNOWN_PROVIDER_ORDER)[number];
-const AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME =
-  "auth-settings-control relative isolate h-9 w-full overflow-hidden rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground shadow-none transition-colors hover:border-border focus-visible:border-border focus-visible:ring-0 focus-visible:ring-transparent aria-invalid:border-border aria-invalid:ring-0";
 const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<
   string,
   Record<string, string>
@@ -1634,8 +1627,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const [webSearchSaveStatus, setWebSearchSaveStatus] = useState<
     "idle" | "saving" | "saved" | "error"
   >("idle");
-  const [showAdvancedRuntimeSettings, setShowAdvancedRuntimeSettings] =
-    useState(false);
   const [expandedProviderId, setExpandedProviderId] =
     useState<KnownProviderId | null>(null);
   const [sandboxId, setSandboxId] = useState("");
@@ -3177,6 +3168,10 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
     const template = KNOWN_PROVIDER_TEMPLATES[providerId];
     const draft = providerDrafts[providerId];
+    const isConnecting = connectingProviderId === providerId;
+    const isDisconnecting = disconnectingProviderId === providerId;
+    const drawerValidation: ValidationState =
+      validationByProvider[providerId] ?? { state: "idle" };
     if (providerId === "holaboss") {
       const supportedModels = holabossSupportedModels(effectiveRuntimeConfig);
       return (
@@ -3233,7 +3228,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             </div>
           </div>
           {renderProviderModelSelection(providerId, draft)}
-          <div className="flex flex-wrap gap-2 pt-1">
+          <div className="flex flex-wrap items-center gap-2 pt-1">
             <Button
               variant="outline"
               size="sm"
@@ -3250,6 +3245,31 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             >
               Cancel
             </Button>
+            <div className="ml-auto flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void handleValidateProvider(providerId)}
+                disabled={drawerValidation.state === "validating"}
+              >
+                <Plug className="size-3.5" />
+                {drawerValidation.state === "validating"
+                  ? "Validating…"
+                  : "Validate"}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                onClick={() =>
+                  void handleDisconnectRuntimeProvider(providerId)
+                }
+                disabled={isSavingRuntimeConfigDocument || isConnecting}
+              >
+                <Unplug className="size-3.5" />
+                {isDisconnecting ? "Disconnecting…" : "Disconnect"}
+              </Button>
+            </div>
           </div>
         </div>
       );
@@ -3284,7 +3304,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           />
         </label>
         {renderProviderModelSelection(providerId, draft)}
-        <div className="flex flex-wrap gap-2 pt-1">
+        <div className="flex flex-wrap items-center gap-2 pt-1">
           <Button
             variant="outline"
             size="sm"
@@ -3301,58 +3321,68 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           >
             Cancel
           </Button>
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void handleValidateProvider(providerId)}
+              disabled={drawerValidation.state === "validating"}
+            >
+              <Plug className="size-3.5" />
+              {drawerValidation.state === "validating"
+                ? "Validating…"
+                : "Validate"}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-destructive hover:text-destructive"
+              onClick={() =>
+                void handleDisconnectRuntimeProvider(providerId)
+              }
+              disabled={isSavingRuntimeConfigDocument || isConnecting}
+            >
+              <Unplug className="size-3.5" />
+              {isDisconnecting ? "Disconnecting…" : "Disconnect"}
+            </Button>
+          </div>
         </div>
       </div>
     );
   }
 
-  function renderProviderRow(providerId: KnownProviderId, isLast: boolean) {
+  function renderProviderRow(providerId: KnownProviderId) {
     const template = KNOWN_PROVIDER_TEMPLATES[providerId];
-    const isHolabossProvider = providerId === "holaboss";
-    const isCodexProvider = providerId === "openai_codex";
     const isConnected = providerConnected(providerId);
     const draftEnabled = providerDraftEnabled(providerId);
-    const isConnecting = connectingProviderId === providerId;
-    const isDisconnecting = disconnectingProviderId === providerId;
     const hasPendingConnection = !isConnected && draftEnabled;
-    const isExpandable =
-      isHolabossProvider || isCodexProvider
-        ? isConnected
-        : draftEnabled || isConnected;
-    const isExpanded = isExpandable && expandedProviderId === providerId;
 
-    // Status badge derivation. Live validation state takes priority —
-    // when the user has just clicked Validate, we want them to see the
-    // probe outcome, not the static "Connected" tag. Fall through to
-    // the connection-derived status otherwise.
-    //
-    // We don't badge "Default" anymore: the user already picks the
-    // default chat model in the Defaults section above, so re-stating
-    // it on the provider row is just visual noise.
+    // Live validation state takes priority — when the user has just
+    // clicked Validate we want them to see the probe outcome.
+    // We don't badge a static "Connected" anymore: the row's presence
+    // in the connected list already conveys that. Only states that add
+    // signal beyond "yes, it's listed here" earn a chip.
     const validation: ValidationState = validationByProvider[providerId] ?? {
       state: "idle",
     };
     let statusTone: SettingsStatusTone | null = null;
     let statusLabel = "";
+    let statusTooltip: string | null = null;
     if (validation.state === "validating") {
       statusTone = "warning";
       statusLabel = "Validating…";
     } else if (validation.state === "valid") {
       statusTone = "success";
-      statusLabel = `Valid · ${validation.latencyMs}ms`;
+      statusLabel = "Valid";
+      statusTooltip = `Probe responded in ${validation.latencyMs}ms`;
     } else if (validation.state === "invalid") {
       statusTone = "destructive";
-      statusLabel = `Invalid · ${validation.latencyMs}ms`;
-    } else if (isConnected) {
-      statusTone = "success";
-      statusLabel = "Connected";
+      statusLabel = "Invalid";
+      statusTooltip = `Probe failed after ${validation.latencyMs}ms`;
     } else if (hasPendingConnection) {
       statusTone = "warning";
       statusLabel = "Configuring";
     }
-    // Badge styling — use shadcn Badge with tone-specific className.
-    // Stays consistent with every other Badge in the dialog (account
-    // status, runtime status) and avoids a parallel custom component.
     const badgeClass =
       statusTone === "success"
         ? "border-success/40 bg-success/10 text-success"
@@ -3360,90 +3390,41 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           ? "border-destructive/30 bg-destructive/10 text-destructive"
           : statusTone === "warning"
             ? "border-warning/40 bg-warning/10 text-warning"
-            : "border-border bg-muted/40 text-muted-foreground";
+            : "border-border bg-fg-2 text-muted-foreground";
+
+    const statusBadge = statusTone ? (
+      <Badge variant="outline" className={`${badgeClass} text-xs`}>
+        {statusLabel}
+      </Badge>
+    ) : null;
 
     return (
-      <div key={providerId} className={isLast ? "" : "border-b border-border"}>
-        <div className="flex items-center gap-3 px-3 py-2">
+      <SettingsRow
+        key={providerId}
+        interactive
+        onClick={() => setExpandedProviderId(providerId)}
+        leading={
           <ProviderBrandIcon
             providerId={providerId}
             className="size-5 shrink-0"
           />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <div className="text-sm font-medium text-foreground">
-                {template.label}
-              </div>
-              {statusTone ? (
-                <Badge
-                  variant="outline"
-                  className={`${badgeClass} text-xs`}
-                >
-                  {statusLabel}
-                </Badge>
-              ) : null}
-            </div>
-          </div>
-
-          {/* Connected providers get a single kebab trigger that opens
-              all per-provider actions in a dropdown. Three side-by-side
-              buttons (Edit / Validate / Disconnect) made the row read like
-              a toolbar instead of a list item; this matches craft-agents-
-              oss and feels native to the surrounding settings.
-              Non-connected branches are unreachable here — the parent
-              renders only `connectedProviderIds`. */}
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={`${template.label} actions`}
-                  disabled={isSavingRuntimeConfigDocument}
-                >
-                  <MoreHorizontal className="size-4 text-muted-foreground" />
-                </Button>
-              }
-            />
-            <DropdownMenuContent align="end" className="min-w-[180px]">
-              <DropdownMenuItem
-                onClick={() => setExpandedProviderId(providerId)}
-              >
-                <Pencil className="size-3.5" />
-                {isHolabossProvider ? "Configure" : "Edit"}
-              </DropdownMenuItem>
-              {!isHolabossProvider ? (
-                <DropdownMenuItem
-                  onClick={() => void handleValidateProvider(providerId)}
-                  disabled={validation.state === "validating"}
-                >
-                  <Plug className="size-3.5" />
-                  {validation.state === "validating"
-                    ? "Validating…"
-                    : "Validate connection"}
-                </DropdownMenuItem>
-              ) : null}
-              {!isHolabossProvider ? (
-                <DropdownMenuItem
-                  variant="destructive"
-                  onClick={() =>
-                    void handleDisconnectRuntimeProvider(providerId)
-                  }
-                  disabled={isSavingRuntimeConfigDocument || isConnecting}
-                >
-                  <Unplug className="size-3.5" />
-                  {isDisconnecting ? "Disconnecting…" : "Disconnect"}
-                </DropdownMenuItem>
-              ) : null}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-
-        {/* Provider drawer used to render inline here. It now opens in a
-            modal Dialog (see ProviderEditDialog at the bottom of
-            runtimeProviderSettings) so the row stays compact and the
-            edit flow gets focused vertical space. */}
-      </div>
+        }
+        label={
+          <span className="flex items-center gap-2">
+            <span>{template.label}</span>
+            {statusBadge && statusTooltip ? (
+              <Tooltip>
+                <TooltipTrigger render={statusBadge} />
+                <TooltipContent>{statusTooltip}</TooltipContent>
+              </Tooltip>
+            ) : (
+              statusBadge
+            )}
+          </span>
+        }
+      >
+        <ChevronRight className="size-4 text-muted-foreground" />
+      </SettingsRow>
     );
   }
 
@@ -3579,103 +3560,74 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       ) : null}
 
       <SettingsSection
-        title="Defaults"
-        description="What the agent uses out of the box. Workspaces can override these later."
-      >
-        <SettingsCard>
-          {defaultChatModelOptions.length > 0 ? (
-            <>
-              <SettingsMenuSelectRow
-                label="Default chat model"
-                description="Used for new sessions and whenever the composer stays on Auto."
-                value={defaultChatModelMatched ? defaultChatModelToken : ""}
-                onValueChange={handleDefaultChatModelChange}
-                options={defaultChatModelOptions}
-                placeholder="Pick a model"
-              />
-              <SettingsMenuSelectRow
-                label="Subagent model"
-                description="Optional override for hidden subagent runs. Leave it on Follow composer to use the current composer model."
-                value={subagentModelValue}
-                onValueChange={handleSubagentModelChange}
-                options={subagentModelOptions}
-                placeholder="Pick a model"
-              />
-            </>
-          ) : (
-            <>
-              <SettingsRow
-                label="Default chat model"
-                description="Connect a provider below to choose your default model."
-              />
-              <SettingsRow
-                label="Subagent model"
-                description="Connect a provider below to choose your subagent model."
-              />
-            </>
-          )}
-        </SettingsCard>
-      </SettingsSection>
-
-      <SettingsSection
         title="Model providers"
         description="Connect the providers you want the agent to be able to use."
       >
         {connectedProviderIds.length > 0 ? (
-          <div className="overflow-hidden rounded-xl border border-border bg-card">
-            {connectedProviderIds.map((providerId, index) =>
-              renderProviderRow(
-                providerId,
-                index === connectedProviderIds.length - 1,
-              ),
+          <SettingsCard>
+            {connectedProviderIds.map((providerId) =>
+              renderProviderRow(providerId),
             )}
-          </div>
+          </SettingsCard>
         ) : (
-          // Empty state: card-shaped CTA. Cleaner than a full provider list
-          // that's mostly disconnected; mirrors craft-agents-oss's connections
-          // empty state.
-          <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-border bg-card px-6 py-8 text-center">
-            <div className="text-sm font-medium text-foreground">
-              No providers connected
+          <SettingsCard>
+            <div className="flex flex-col items-center justify-center gap-3 px-6 py-10 text-center">
+              <div className="text-sm font-medium text-foreground">
+                No providers connected
+              </div>
+              <div className="max-w-sm text-xs leading-5 text-muted-foreground">
+                Pick one to give the agent access to a model. You can add more
+                later.
+              </div>
+              {availableProviderIds.length > 0 ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button size="sm" className="w-xs">
+                        <Plus className="size-3.5" />
+                        Add provider
+                      </Button>
+                    }
+                  />
+                  <DropdownMenuContent
+                    align="center"
+                  >
+                    {availableProviderIds.map((providerId) => {
+                      const template = KNOWN_PROVIDER_TEMPLATES[providerId];
+                      return (
+                        <DropdownMenuItem
+                          key={providerId}
+                          onClick={() => handleAddProvider(providerId)}
+                        >
+                          <span className="grid size-5 shrink-0 place-items-center rounded-md border border-border bg-background">
+                            <ProviderBrandIcon providerId={providerId} />
+                          </span>
+                          <span>{template.label}</span>
+                        </DropdownMenuItem>
+                      );
+                    })}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
             </div>
-            <div className="max-w-sm text-xs leading-5 text-muted-foreground">
-              Pick one to give the agent access to a model. You can add more
-              later.
-            </div>
-          </div>
+          </SettingsCard>
         )}
 
-        {/* Add-provider row — sits below the list and previews available
-            providers as a stacked-logo group. The whole row is one click
-            target that opens the picker dropdown. Hidden when every
-            provider is already connected. */}
-        {availableProviderIds.length > 0 ? (
+        {/* Slim Add-provider row, only when at least one provider is
+            already connected (otherwise the empty-state card hosts the
+            CTA). Styled to match the SettingsCard surface above so it
+            reads as a continuation of the list. */}
+        {connectedProviderIds.length > 0 && availableProviderIds.length > 0 ? (
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
                 <button
                   type="button"
-                  className="group flex w-full items-center justify-between gap-3 rounded-xl border border-border bg-card px-3 py-2 transition-colors hover:bg-accent"
+                  className="flex w-full items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-accent"
                 >
-                  <span className="flex items-center gap-2 text-sm font-medium text-foreground">
-                    <Plus className="size-4 text-muted-foreground" />
-                    Add provider
-                  </span>
-                  <span className="flex items-center -space-x-1.5">
-                    {availableProviderIds.slice(0, 4).map((providerId) => (
-                      <span
-                        key={providerId}
-                        className="grid size-6 shrink-0 place-items-center rounded-full bg-background ring-2 ring-card"
-                      >
-                        <ProviderBrandIcon providerId={providerId} />
-                      </span>
-                    ))}
-                    {availableProviderIds.length > 4 ? (
-                      <span className="grid size-6 shrink-0 place-items-center rounded-full bg-muted text-[10px] font-medium text-muted-foreground ring-2 ring-card">
-                        +{availableProviderIds.length - 4}
-                      </span>
-                    ) : null}
-                  </span>
+                  <Plus className="size-4 text-muted-foreground" />
+                  <span className="flex-1">Add provider</span>
+                  <ChevronDown className="size-4 text-muted-foreground" />
                 </button>
               }
             />
@@ -3698,6 +3650,32 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           </DropdownMenu>
         ) : null}
       </SettingsSection>
+
+      {defaultChatModelOptions.length > 0 ? (
+        <SettingsSection
+          title="Defaults"
+          description="What the agent uses out of the box. Workspaces can override these later."
+        >
+          <SettingsCard>
+            <SettingsMenuSelectRow
+              label="Default chat model"
+              description="Used for new sessions and whenever the composer stays on Auto."
+              value={defaultChatModelMatched ? defaultChatModelToken : ""}
+              onValueChange={handleDefaultChatModelChange}
+              options={defaultChatModelOptions}
+              placeholder="Pick a model"
+            />
+            <SettingsMenuSelectRow
+              label="Subagent model"
+              description="Optional override for hidden subagent runs. Leave it on Follow composer to use the current composer model."
+              value={subagentModelValue}
+              onValueChange={handleSubagentModelChange}
+              options={subagentModelOptions}
+              placeholder="Pick a model"
+            />
+          </SettingsCard>
+        </SettingsSection>
+      ) : null}
 
       <SettingsSection
         title="Web search"
@@ -3793,359 +3771,232 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         </SettingsCard>
       </SettingsSection>
 
-      <SettingsSection title="Advanced settings">
+      <SettingsSection
+        title="Background tasks"
+        description="Used for memory recall and evolve tasks."
+      >
         <SettingsCard>
-          <SettingsRow
-            label="Provider routing"
-            description="Pick providers for background tasks, recall embeddings, and image generation"
-            interactive
-            onClick={() => setShowAdvancedRuntimeSettings(true)}
-          >
-            <ChevronRight className="size-4 text-muted-foreground" />
-          </SettingsRow>
+          <SettingsMenuSelectRow
+            label="Provider"
+            value={backgroundTasksDraft.providerId}
+            onValueChange={(value) =>
+              applyBackgroundTaskProviderSelection(
+                backgroundTaskProviderDraftId(value),
+              )
+            }
+            options={backgroundProviderOptions.map((providerId) => {
+              const label = backgroundTaskProviderLabel(providerId);
+              const isConnected = connectedProviderIds.includes(providerId);
+              return {
+                value: providerId,
+                label: (
+                  <span className="flex items-center gap-2">
+                    <ProviderBrandIcon
+                      providerId={providerId}
+                      className="size-4 shrink-0"
+                    />
+                    <span className="truncate">{label}</span>
+                    {!isConnected ? (
+                      <span className="text-xs text-muted-foreground">
+                        · not connected
+                      </span>
+                    ) : null}
+                  </span>
+                ),
+                keywords: [label, providerId],
+              };
+            })}
+            disabled={backgroundProviderOptions.length === 0}
+            placeholder="Pick a provider"
+          />
+          <SettingsMenuSelectRow
+            label="Model"
+            value={backgroundTasksDraft.model}
+            onValueChange={(value) =>
+              updateBackgroundTasksDraft({ model: value })
+            }
+            options={backgroundTaskModelOptions.map((modelId) => ({
+              value: modelId,
+              label: modelId,
+              keywords: [modelId],
+            }))}
+            disabled={
+              !backgroundTasksDraft.providerId ||
+              backgroundTaskModelOptions.length === 0
+            }
+            placeholder={backgroundTaskModelPlaceholder(
+              backgroundTasksDraft.providerId,
+              effectiveRuntimeConfig,
+            )}
+          />
         </SettingsCard>
+        {backgroundTasksDraft.providerId && !backgroundProviderConnected ? (
+          <p className="px-1 text-xs leading-5 text-muted-foreground">
+            Selected provider is not connected. Background tasks stay disabled
+            until you reconnect it or choose another provider.
+          </p>
+        ) : null}
+        {backgroundTasksDraft.providerId &&
+        !backgroundTasksDraft.model.trim() ? (
+          <p className="px-1 text-xs leading-5 text-muted-foreground">
+            Select a model to enable background tasks.
+          </p>
+        ) : null}
       </SettingsSection>
 
-      {/* Provider routing — opens in a centered dialog so the routing
-          widgets get focused vertical space without taking over the whole
-          window. Same fade-zoom motion as SettingsDialog. */}
-      <DialogPrimitive.Root
-        open={showAdvancedRuntimeSettings}
-        onOpenChange={(next) => {
-          if (!next) setShowAdvancedRuntimeSettings(false);
-        }}
+      <SettingsSection
+        title="Recall embeddings"
+        description="Used to preselect memory candidates for recall."
       >
-        <DialogPrimitive.Portal>
-          <DialogPrimitive.Backdrop className="fixed inset-0 z-[600] bg-background/60 backdrop-blur-md data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 duration-200" />
-          <DialogPrimitive.Popup className="fixed top-1/2 left-1/2 z-[600] flex w-[min(680px,calc(100vw-32px))] max-h-[min(720px,calc(100vh-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-background/85 backdrop-blur-2xl backdrop-saturate-150 shadow-xl outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[0.97] data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-[0.98] duration-200 ease-out">
-            <header className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
-              <div className="min-w-0">
-                <DialogPrimitive.Title className="text-base font-medium text-foreground">
-                  Provider routing
-                </DialogPrimitive.Title>
-                <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                  Pick providers for background tasks, recall embeddings, and
-                  image generation.
-                </div>
-              </div>
-              <DialogPrimitive.Close
-                render={
-                  <Button variant="ghost" size="icon-sm" aria-label="Close">
-                    <X size={14} />
-                  </Button>
-                }
-              />
-            </header>
-            <div className="flex-1 overflow-y-auto p-5">
-              <div className="grid gap-4">
-                  <div className="rounded-xl bg-card ring-1 ring-border p-3">
-                    <div className="text-sm font-medium text-foreground">
-                      Background tasks
-                    </div>
-                    <div className="mt-1 text-sm text-muted-foreground">
-                      Used for memory recall and evolve tasks.
-                    </div>
-                    <div className="mt-3 grid gap-2">
-                      <label className="grid gap-1">
-                        <span className="text-xs uppercase text-muted-foreground">
-                          Provider
-                        </span>
-                        <Select
-                          value={backgroundTasksDraft.providerId}
-                          onValueChange={(value) =>
-                            applyBackgroundTaskProviderSelection(
-                              backgroundTaskProviderDraftId(value ?? ""),
-                            )
-                          }
-                          disabled={backgroundProviderOptions.length === 0}
-                        >
-                          <SelectTrigger
-                            className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}
-                          >
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {backgroundProviderOptions.map((providerId) => {
-                              const isConnected =
-                                connectedProviderIds.includes(providerId);
-                              const label = isConnected
-                                ? backgroundTaskProviderLabel(providerId)
-                                : `${backgroundTaskProviderLabel(providerId)} (not connected)`;
-                              return (
-                                <SelectItem key={providerId} value={providerId}>
-                                  {label}
-                                </SelectItem>
-                              );
-                            })}
-                          </SelectContent>
-                        </Select>
-                      </label>
+        <SettingsCard>
+          <SettingsMenuSelectRow
+            label="Provider"
+            value={recallEmbeddingsDraft.providerId}
+            onValueChange={(value) =>
+              applyRecallEmbeddingsProviderSelection(
+                recallEmbeddingsProviderDraftId(value),
+              )
+            }
+            options={recallEmbeddingsProviderOptions.map((providerId) => {
+              const label = recallEmbeddingsProviderLabel(providerId);
+              const isConnected =
+                connectedRecallEmbeddingProviderIds.includes(providerId);
+              return {
+                value: providerId,
+                label: (
+                  <span className="flex items-center gap-2">
+                    <ProviderBrandIcon
+                      providerId={providerId}
+                      className="size-4 shrink-0"
+                    />
+                    <span className="truncate">{label}</span>
+                    {!isConnected ? (
+                      <span className="text-xs text-muted-foreground">
+                        · not connected
+                      </span>
+                    ) : null}
+                  </span>
+                ),
+                keywords: [label, providerId],
+              };
+            })}
+            disabled={recallEmbeddingsProviderOptions.length === 0}
+            placeholder="Pick a provider"
+          />
+          <SettingsMenuSelectRow
+            label="Model"
+            value={recallEmbeddingsDraft.model}
+            onValueChange={(value) =>
+              updateRecallEmbeddingsDraft({ model: value })
+            }
+            options={recallEmbeddingsModelOptions.map((modelId) => ({
+              value: modelId,
+              label: modelId,
+              keywords: [modelId],
+            }))}
+            disabled={
+              !recallEmbeddingsDraft.providerId ||
+              recallEmbeddingsModelOptions.length === 0
+            }
+            placeholder={recallEmbeddingsModelPlaceholder(
+              recallEmbeddingsDraft.providerId,
+              effectiveRuntimeConfig,
+            )}
+          />
+        </SettingsCard>
+        <p className="px-1 text-xs leading-5 text-muted-foreground">
+          Embedding indexing stays off the user input path. Until embeddings
+          have been indexed separately, recall continues to use the staged
+          path.
+        </p>
+        {recallEmbeddingsDraft.providerId &&
+        !recallEmbeddingsProviderConnected ? (
+          <p className="px-1 text-xs leading-5 text-muted-foreground">
+            Selected provider is not connected. Vector recall stays disabled
+            until you reconnect it or choose another provider.
+          </p>
+        ) : null}
+        {recallEmbeddingsDraft.providerId &&
+        !recallEmbeddingsDraft.model.trim() ? (
+          <p className="px-1 text-xs leading-5 text-muted-foreground">
+            Select a model to enable vector recall.
+          </p>
+        ) : null}
+      </SettingsSection>
 
-                      <label className="grid gap-1">
-                        <span className="text-xs uppercase text-muted-foreground">
-                          Model
-                        </span>
-                        <Select
-                          value={backgroundTasksDraft.model || undefined}
-                          onValueChange={(value) =>
-                            updateBackgroundTasksDraft({ model: value ?? "" })
-                          }
-                          disabled={
-                            !backgroundTasksDraft.providerId ||
-                            backgroundTaskModelOptions.length === 0
-                          }
-                        >
-                          <SelectTrigger
-                            className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}
-                          >
-                            <SelectValue
-                              placeholder={backgroundTaskModelPlaceholder(
-                                backgroundTasksDraft.providerId,
-                                effectiveRuntimeConfig,
-                              )}
-                            />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {backgroundTaskModelOptions.map((modelId) => (
-                              <SelectItem key={modelId} value={modelId}>
-                                {modelId}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </label>
-
-                      {backgroundTasksDraft.providerId &&
-                      !backgroundProviderConnected ? (
-                        <div className="rounded-xl bg-card ring-1 ring-border px-3 py-2 text-sm text-muted-foreground">
-                          Selected provider is not connected. Background tasks
-                          stay disabled until you reconnect it or choose another
-                          provider.
-                        </div>
-                      ) : null}
-                      {backgroundTasksDraft.providerId &&
-                      !backgroundTasksDraft.model.trim() ? (
-                        <div className="rounded-xl bg-card ring-1 ring-border px-3 py-2 text-sm text-muted-foreground">
-                          Select a model to enable background tasks.
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl bg-card ring-1 ring-border p-3">
-                    <div className="text-sm font-medium text-foreground">
-                      Recall embeddings
-                    </div>
-                    <div className="mt-1 text-sm text-muted-foreground">
-                      Used to preselect memory candidates for recall.
-                    </div>
-                    <div className="mt-2 rounded-xl bg-card ring-1 ring-border px-3 py-2 text-sm text-muted-foreground">
-                      Embedding indexing stays off the user input path. Until
-                      embeddings have been indexed separately, recall continues
-                      to use the staged path.
-                    </div>
-                    <div className="mt-3 grid gap-2">
-                      <label className="grid gap-1">
-                        <span className="text-xs uppercase text-muted-foreground">
-                          Provider
-                        </span>
-                        <Select
-                          value={recallEmbeddingsDraft.providerId}
-                          onValueChange={(value) =>
-                            applyRecallEmbeddingsProviderSelection(
-                              recallEmbeddingsProviderDraftId(value ?? ""),
-                            )
-                          }
-                          disabled={
-                            recallEmbeddingsProviderOptions.length === 0
-                          }
-                        >
-                          <SelectTrigger
-                            className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}
-                          >
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {recallEmbeddingsProviderOptions.map(
-                              (providerId) => {
-                                const isConnected =
-                                  connectedRecallEmbeddingProviderIds.includes(
-                                    providerId,
-                                  );
-                                const label = isConnected
-                                  ? recallEmbeddingsProviderLabel(providerId)
-                                  : `${recallEmbeddingsProviderLabel(providerId)} (not connected)`;
-                                return (
-                                  <SelectItem
-                                    key={providerId}
-                                    value={providerId}
-                                  >
-                                    {label}
-                                  </SelectItem>
-                                );
-                              },
-                            )}
-                          </SelectContent>
-                        </Select>
-                      </label>
-
-                      <label className="grid gap-1">
-                        <span className="text-xs uppercase text-muted-foreground">
-                          Model
-                        </span>
-                        <Select
-                          value={recallEmbeddingsDraft.model || undefined}
-                          onValueChange={(value) =>
-                            updateRecallEmbeddingsDraft({ model: value ?? "" })
-                          }
-                          disabled={
-                            !recallEmbeddingsDraft.providerId ||
-                            recallEmbeddingsModelOptions.length === 0
-                          }
-                        >
-                          <SelectTrigger
-                            className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}
-                          >
-                            <SelectValue
-                              placeholder={recallEmbeddingsModelPlaceholder(
-                                recallEmbeddingsDraft.providerId,
-                                effectiveRuntimeConfig,
-                              )}
-                            />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {recallEmbeddingsModelOptions.map((modelId) => (
-                              <SelectItem key={modelId} value={modelId}>
-                                {modelId}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </label>
-
-                      {recallEmbeddingsDraft.providerId &&
-                      !recallEmbeddingsProviderConnected ? (
-                        <div className="rounded-xl bg-card ring-1 ring-border px-3 py-2 text-sm text-muted-foreground">
-                          Selected provider is not connected. Vector recall
-                          stays disabled until you reconnect it or choose
-                          another provider.
-                        </div>
-                      ) : null}
-                      {recallEmbeddingsDraft.providerId &&
-                      !recallEmbeddingsDraft.model.trim() ? (
-                        <div className="rounded-xl bg-card ring-1 ring-border px-3 py-2 text-sm text-muted-foreground">
-                          Select a model to enable vector recall.
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl bg-card ring-1 ring-border p-3">
-                    <div className="text-sm font-medium text-foreground">
-                      Image generation
-                    </div>
-                    <div className="mt-1 text-sm text-muted-foreground">
-                      Used when the agent generates new images into the
-                      workspace.
-                    </div>
-                    <div className="mt-3 grid gap-2">
-                      <label className="grid gap-1">
-                        <span className="text-xs uppercase text-muted-foreground">
-                          Provider
-                        </span>
-                        <Select
-                          value={imageGenerationDraft.providerId}
-                          onValueChange={(value) =>
-                            applyImageGenerationProviderSelection(
-                              imageGenerationProviderDraftId(value ?? ""),
-                            )
-                          }
-                          disabled={imageGenerationProviderOptions.length === 0}
-                        >
-                          <SelectTrigger
-                            className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}
-                          >
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {imageGenerationProviderOptions.map(
-                              (providerId) => {
-                                const isConnected =
-                                  connectedImageProviderIds.includes(
-                                    providerId,
-                                  );
-                                const label = isConnected
-                                  ? imageGenerationProviderLabel(providerId)
-                                  : `${imageGenerationProviderLabel(providerId)} (not connected)`;
-                                return (
-                                  <SelectItem
-                                    key={providerId}
-                                    value={providerId}
-                                  >
-                                    {label}
-                                  </SelectItem>
-                                );
-                              },
-                            )}
-                          </SelectContent>
-                        </Select>
-                      </label>
-
-                      <label className="grid gap-1">
-                        <span className="text-xs uppercase text-muted-foreground">
-                          Model
-                        </span>
-                        <Select
-                          value={imageGenerationDraft.model || undefined}
-                          onValueChange={(value) =>
-                            updateImageGenerationDraft({ model: value ?? "" })
-                          }
-                          disabled={
-                            !imageGenerationDraft.providerId ||
-                            imageGenerationModelOptions.length === 0
-                          }
-                        >
-                          <SelectTrigger
-                            className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}
-                          >
-                            <SelectValue
-                              placeholder={imageGenerationModelPlaceholder(
-                                imageGenerationDraft.providerId,
-                                effectiveRuntimeConfig,
-                              )}
-                            />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {imageGenerationModelOptions.map((modelId) => (
-                              <SelectItem key={modelId} value={modelId}>
-                                {modelId}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </label>
-
-                      {imageGenerationDraft.providerId &&
-                      !imageGenerationProviderConnected ? (
-                        <div className="rounded-xl bg-card ring-1 ring-border px-3 py-2 text-sm text-muted-foreground">
-                          Selected provider is not connected. Image generation
-                          stays disabled until you reconnect it or choose
-                          another provider.
-                        </div>
-                      ) : null}
-                      {imageGenerationDraft.providerId &&
-                      !imageGenerationDraft.model.trim() ? (
-                        <div className="rounded-xl bg-card ring-1 ring-border px-3 py-2 text-sm text-muted-foreground">
-                          Select a model to enable image generation.
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-              </div>
-          </DialogPrimitive.Popup>
-        </DialogPrimitive.Portal>
-      </DialogPrimitive.Root>
+      <SettingsSection
+        title="Image generation"
+        description="Used when the agent generates new images into the workspace."
+      >
+        <SettingsCard>
+          <SettingsMenuSelectRow
+            label="Provider"
+            value={imageGenerationDraft.providerId}
+            onValueChange={(value) =>
+              applyImageGenerationProviderSelection(
+                imageGenerationProviderDraftId(value),
+              )
+            }
+            options={imageGenerationProviderOptions.map((providerId) => {
+              const label = imageGenerationProviderLabel(providerId);
+              const isConnected =
+                connectedImageProviderIds.includes(providerId);
+              return {
+                value: providerId,
+                label: (
+                  <span className="flex items-center gap-2">
+                    <ProviderBrandIcon
+                      providerId={providerId}
+                      className="size-4 shrink-0"
+                    />
+                    <span className="truncate">{label}</span>
+                    {!isConnected ? (
+                      <span className="text-xs text-muted-foreground">
+                        · not connected
+                      </span>
+                    ) : null}
+                  </span>
+                ),
+                keywords: [label, providerId],
+              };
+            })}
+            disabled={imageGenerationProviderOptions.length === 0}
+            placeholder="Pick a provider"
+          />
+          <SettingsMenuSelectRow
+            label="Model"
+            value={imageGenerationDraft.model}
+            onValueChange={(value) =>
+              updateImageGenerationDraft({ model: value })
+            }
+            options={imageGenerationModelOptions.map((modelId) => ({
+              value: modelId,
+              label: modelId,
+              keywords: [modelId],
+            }))}
+            disabled={
+              !imageGenerationDraft.providerId ||
+              imageGenerationModelOptions.length === 0
+            }
+            placeholder={imageGenerationModelPlaceholder(
+              imageGenerationDraft.providerId,
+              effectiveRuntimeConfig,
+            )}
+          />
+        </SettingsCard>
+        {imageGenerationDraft.providerId && !imageGenerationProviderConnected ? (
+          <p className="px-1 text-xs leading-5 text-muted-foreground">
+            Selected provider is not connected. Image generation stays
+            disabled until you reconnect it or choose another provider.
+          </p>
+        ) : null}
+        {imageGenerationDraft.providerId &&
+        !imageGenerationDraft.model.trim() ? (
+          <p className="px-1 text-xs leading-5 text-muted-foreground">
+            Select a model to enable image generation.
+          </p>
+        ) : null}
+      </SettingsSection>
 
       {/* Provider edit — same dialog pattern, gated by expandedProviderId.
           renderProviderDrawerContent stays untouched; it just renders into
@@ -4195,13 +4046,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
     return (
       <section className="grid w-full gap-6">
-        <SettingsSection title="Session">
-          <SettingsCard>
-            {/* Header row stays a custom layout — avatar + multi-line label
-                + multi-button trailing actions doesn't compress into the
-                generic SettingsRow shape. Padding (px-4 py-3) matches the
-                primitive so it lines up with the rows below. */}
-            <div className="flex items-center justify-between gap-4 px-4 py-3">
+        <SettingsCard>
+            <div className="flex items-center justify-between gap-3 px-4 py-3">
               <div className="flex min-w-0 flex-1 items-center gap-3">
                 <div className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-full bg-muted text-muted-foreground ring-1 ring-border">
                   <UserAvatar user={sessionAvatarUser(session)} />
@@ -4209,7 +4055,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 <div className="flex min-w-0 flex-1 flex-col">
                   <div className="truncate text-sm font-medium text-foreground">
                     {isSignedIn
-                      ? sessionDisplayName(session) || "Your account"
+                      ? sessionDisplayName(session) ||
+                        sessionEmail(session).split("@")[0] ||
+                        "Your account"
                       : "Your account"}
                   </div>
                   {isSignedIn && sessionEmail(session) ? (
@@ -4227,6 +4075,51 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               <div className="flex shrink-0 items-center gap-1">
                 {isSignedIn ? (
                   <>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Badge
+                            variant="outline"
+                            className={`gap-1 text-[11px] ${badgeClassName}`}
+                          >
+                            <StatusDot
+                              variant={
+                                statusTone === "error"
+                                  ? "destructive"
+                                  : statusTone === "ready"
+                                    ? "success"
+                                    : statusTone === "syncing"
+                                      ? "warning"
+                                      : "muted"
+                              }
+                            />
+                            <span>{statusBadgeLabel}</span>
+                          </Badge>
+                        }
+                      />
+                      <TooltipContent>
+                        <div className="grid gap-0.5 text-xs">
+                          <div>
+                            <span className="text-muted-foreground">
+                              Account ·{" "}
+                            </span>
+                            {sessionState.isPending
+                              ? "Checking…"
+                              : authError
+                                ? "Error"
+                                : "Signed in"}
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">
+                              Runtime ·{" "}
+                            </span>
+                            {runtimeBindingReady
+                              ? "Ready on this desktop"
+                              : "Setup in progress"}
+                          </div>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
                     <Button
                       variant="ghost"
                       size="icon-sm"
@@ -4245,7 +4138,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                       size="icon-sm"
                       aria-label="Sign out"
                       onClick={() => void handleSignOut()}
-                      disabled={!isSignedIn}
                     >
                       <LogOut size={14} />
                     </Button>
@@ -4262,48 +4154,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               </div>
             </div>
 
-            <SettingsRow label="Status">
-              <Badge
-                variant="outline"
-                className={
-                  statusTone === "error"
-                    ? "border-destructive/40 bg-destructive/10 text-[11px] text-destructive"
-                    : statusTone === "ready"
-                      ? "border-success/40 bg-success/10 text-[11px] text-success"
-                      : statusTone === "syncing"
-                        ? "border-warning/40 bg-warning/10 text-[11px] text-warning"
-                        : "border-border bg-background/60 text-[11px] text-muted-foreground"
-                }
-              >
-                <ShieldCheck size={12} />
-                <span>{statusBadgeLabel}</span>
-              </Badge>
-            </SettingsRow>
-
-            <SettingsRow label="Runtime">
-              <Badge
-                variant="outline"
-                className="border-border bg-background/60 text-[11px] text-muted-foreground"
-              >
-                <StatusDot
-                  variant={
-                    runtimeBindingReady
-                      ? "success"
-                      : isSignedIn
-                        ? "warning"
-                        : "muted"
-                  }
-                />
-                <span>
-                  {runtimeBindingReady
-                    ? "Ready on this desktop"
-                    : isSignedIn
-                      ? "Setup in progress"
-                      : "Unavailable"}
-                </span>
-              </Badge>
-            </SettingsRow>
-
             {(authMessage || authError) && (
               <div className="flex items-start gap-2 px-4 py-3 text-xs leading-5">
                 {authError ? (
@@ -4319,7 +4169,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               </div>
             )}
           </SettingsCard>
-        </SettingsSection>
 
         <BillingSummaryCard
           overview={billingState.overview}
@@ -4381,7 +4230,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 <div className="min-w-0">
                   <div className="text-base font-medium text-foreground">
                     {isSignedIn
-                      ? sessionDisplayName(session) || "Your account"
+                      ? sessionDisplayName(session) ||
+                        sessionEmail(session).split("@")[0] ||
+                        "Your account"
                       : "Your account"}
                   </div>
                   <div className="mt-0.5 truncate text-sm text-muted-foreground">
