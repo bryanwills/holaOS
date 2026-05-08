@@ -5406,6 +5406,7 @@ function AppShellContent() {
                                       surface: "file",
                                       resourceId: path,
                                     });
+                                    setSpaceWorkspacePanelCollapsed(false);
                                   }}
                                 />
                               ) : spaceExplorerMode === "applications" ? (
