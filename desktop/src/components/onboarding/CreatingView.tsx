@@ -7,12 +7,14 @@ interface CreatingViewProps {
   /** Outer section class — kept for API parity with the wizard shell. */
   sectionClassName: string;
   creatingViaMarketplace: boolean;
+  workspaceCreateLocation?: WorkspaceLocationPayload;
   /** Reserved for parity with previous API; the new shell renders chrome. */
   showUserButton?: boolean;
   panelVariant?: boolean;
   browserBootstrapMode?: "fresh" | "copy_workspace" | "import_browser";
   workspaceCreatePhase?:
     | "creating_workspace"
+    | "waiting_for_cloud_runtime"
     | "copying_browser_profile"
     | "importing_browser_profile"
     | "finalizing";
@@ -21,16 +23,22 @@ interface CreatingViewProps {
 export function CreatingView({
   sectionClassName,
   creatingViaMarketplace,
+  workspaceCreateLocation = "local",
   panelVariant: _panelVariant = false,
   browserBootstrapMode = "fresh",
   workspaceCreatePhase = "creating_workspace",
 }: CreatingViewProps) {
+  const cloudCreate = workspaceCreateLocation === "cloud";
   const title = creatingViaMarketplace
     ? "Launching your workspace"
+    : cloudCreate
+      ? "Launching your cloud workspace"
     : "Preparing your workspace";
   const detail = creatingViaMarketplace
     ? "Spinning up a sandbox and importing your template. This usually takes under a minute."
-    : "Preparing the local runtime and importing your template.";
+    : cloudCreate
+      ? "Creating the remote workspace, starting its runtime, and waiting until it is fully ready."
+      : "Preparing the local runtime and importing your template.";
   const steps = creatingViaMarketplace
     ? [
         "Launching sandbox",
@@ -41,6 +49,12 @@ export function CreatingView({
             : "Configuring workspace",
         "Opening desktop",
       ]
+    : cloudCreate
+      ? [
+          "Creating workspace",
+          "Starting remote runtime",
+          "Opening workspace",
+        ]
     : [
         "Preparing runtime",
         browserBootstrapMode === "copy_workspace"
@@ -55,6 +69,8 @@ export function CreatingView({
   useEffect(() => {
     if (workspaceCreatePhase === "creating_workspace") {
       setActiveStep(0);
+    } else if (workspaceCreatePhase === "waiting_for_cloud_runtime") {
+      setActiveStep(1);
     } else if (
       workspaceCreatePhase === "copying_browser_profile" ||
       workspaceCreatePhase === "importing_browser_profile"

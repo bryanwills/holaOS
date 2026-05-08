@@ -582,6 +582,70 @@ interface FilePreviewChangePayload {
   absolutePath: string;
 }
 
+interface CloudWorkspaceSnapshotFilePayload {
+  path: string;
+  size: number;
+  modified: string;
+}
+
+interface CloudWorkspaceSnapshotPayload {
+  workspace_id: string;
+  file_count: number;
+  total_size: number;
+  files: CloudWorkspaceSnapshotFilePayload[];
+  extension_counts?: Record<string, number>;
+  previews?: Record<string, string>;
+  git?: Record<string, unknown>;
+}
+
+interface CloudWorkspaceFilePayload {
+  path: string;
+  content: string;
+  encoding: "utf-8" | "base64";
+}
+
+type CloudWorkspaceFileMutationRequest =
+  | {
+      action: "create";
+      kind: FileSystemCreateKind;
+      parent_path: string | null;
+    }
+  | {
+      action: "import";
+      destination_directory_path: string;
+      entries: Array<
+        | {
+            kind: "directory";
+            relative_path: string;
+          }
+        | {
+            kind: "file";
+            relative_path: string;
+            content_base64: string;
+          }
+      >;
+    }
+  | {
+      action: "rename";
+      path: string;
+      next_name: string;
+    }
+  | {
+      action: "move" | "copy";
+      source_path: string;
+      destination_directory_path: string;
+    }
+  | {
+      action: "delete";
+      path: string;
+    };
+
+interface CloudWorkspaceFileMutationResponse {
+  path?: string | null;
+  paths?: string[] | null;
+  deleted?: boolean | null;
+}
+
 interface BrowserBoundsPayload {
   x: number;
   y: number;
@@ -9483,7 +9547,7 @@ async function requestDesktopControlPlaneJson<T>({
   payload,
   params,
 }: {
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "DELETE";
   path: string;
   payload?: unknown;
   params?: Record<string, string | number | boolean | null | undefined>;
@@ -13573,6 +13637,10 @@ function rememberCloudWorkspaceRecord(
   return normalized;
 }
 
+function forgetCloudWorkspaceRecord(workspaceId: string): void {
+  cloudWorkspaceRecordCache.delete(workspaceId);
+}
+
 function replaceCachedCloudWorkspaceRecords(
   items: WorkspaceRecordPayload[],
 ): WorkspaceListResponsePayload {
@@ -13669,7 +13737,7 @@ async function resolveWorkspaceLocation(
 async function listWorkspaces(): Promise<WorkspaceListResponsePayload> {
   const [localResponse, cloudResponse] = await Promise.all([
     listLocalWorkspaces().catch(() => listWorkspacesFromLocalDb()),
-    listCloudWorkspaces().catch(() => emptyWorkspaceListResponse()),
+    listCloudWorkspaces().catch(() => listCachedCloudWorkspaces()),
   ]);
   return mergeWorkspaceListResponses(localResponse, cloudResponse);
 }
@@ -15118,6 +15186,21 @@ async function deleteLocalWorkspace(
   return withWorkspaceResponseLocation(response);
 }
 
+async function deleteCloudWorkspace(
+  workspaceId: string,
+): Promise<WorkspaceResponsePayload> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
+  const response =
+    await requestDesktopControlPlaneJson<WorkspaceResponsePayload>({
+      method: "DELETE",
+      path:
+        `${DESKTOP_RUNTIME_WORKSPACES_PATH}/${encodeURIComponent(safeWorkspaceId)}`,
+    });
+  forgetCloudWorkspaceRecord(safeWorkspaceId);
+  forgetWorkspaceRuntimeSession(safeWorkspaceId);
+  return withCloudWorkspaceResponseLocation(response);
+}
+
 async function relocateWorkspace(
   workspaceId: string,
   newPath: string,
@@ -15205,10 +15288,9 @@ async function deleteWorkspace(
 ): Promise<WorkspaceResponsePayload> {
   const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
   const location = await resolveWorkspaceLocation(safeWorkspaceId);
-  if (location === "cloud") {
-    throw new Error("Remote workspace deletion is not supported yet.");
-  }
-  return deleteLocalWorkspace(safeWorkspaceId, keepFiles);
+  return location === "cloud"
+    ? deleteCloudWorkspace(safeWorkspaceId)
+    : deleteLocalWorkspace(safeWorkspaceId, keepFiles);
 }
 
 async function activateWorkspaceRecord(
@@ -18721,10 +18803,9 @@ function applyPreviewSheetEditsToWorksheet(
   }
 }
 
-async function writeCsvTablePreview(
-  absolutePath: string,
+async function buildCsvTablePreviewBuffer(
   sheet: FilePreviewTableSheetPayload,
-): Promise<void> {
+): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet(sheet.name || "Sheet 1");
   const sourceRows = sourceRowsFromTablePreviewSheet(sheet);
@@ -18740,14 +18821,13 @@ async function writeCsvTablePreview(
       rowDelimiter: "\r\n",
     },
   });
-  await fs.writeFile(absolutePath, Buffer.from(outputBuffer as ArrayBuffer));
+  return Buffer.from(outputBuffer as ArrayBuffer);
 }
 
-async function writeWorkbookTablePreview(
-  absolutePath: string,
+async function buildWorkbookTablePreviewBuffer(
   buffer: Buffer,
   tableSheets: FilePreviewTableSheetPayload[],
-): Promise<void> {
+): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(
     buffer as unknown as Parameters<ExcelJS.Workbook["xlsx"]["load"]>[0],
@@ -18762,7 +18842,25 @@ async function writeWorkbookTablePreview(
   }
 
   const outputBuffer = await workbook.xlsx.writeBuffer();
-  await fs.writeFile(absolutePath, Buffer.from(outputBuffer as ArrayBuffer));
+  return Buffer.from(outputBuffer as ArrayBuffer);
+}
+
+async function writeCsvTablePreview(
+  absolutePath: string,
+  sheet: FilePreviewTableSheetPayload,
+): Promise<void> {
+  await fs.writeFile(absolutePath, await buildCsvTablePreviewBuffer(sheet));
+}
+
+async function writeWorkbookTablePreview(
+  absolutePath: string,
+  buffer: Buffer,
+  tableSheets: FilePreviewTableSheetPayload[],
+): Promise<void> {
+  await fs.writeFile(
+    absolutePath,
+    await buildWorkbookTablePreviewBuffer(buffer, tableSheets),
+  );
 }
 
 async function buildWorkbookPreviewSheets(
@@ -19184,10 +19282,457 @@ function assertWorkspaceExplorerPathModifiable(
   }
 }
 
+function normalizeOptionalWorkspaceId(
+  workspaceId?: string | null,
+): string {
+  return typeof workspaceId === "string" ? workspaceId.trim() : "";
+}
+
+function isPathWithinPosixRoot(rootPath: string, targetPath: string): boolean {
+  const relativePath = path.posix.relative(rootPath, targetPath);
+  return (
+    relativePath === "" ||
+    (!relativePath.startsWith("..") && !path.posix.isAbsolute(relativePath))
+  );
+}
+
+function normalizeCloudSnapshotFilePath(rawPath: string): string | null {
+  const normalized = rawPath
+    .trim()
+    .replace(/[\\/]+/g, "/")
+    .replace(/^\/+|\/+$/g, "");
+  if (!normalized) {
+    return null;
+  }
+  const segments = normalized.split("/").filter(Boolean);
+  if (
+    segments.length === 0 ||
+    segments.some((segment) => segment === "." || segment === "..")
+  ) {
+    return null;
+  }
+  return segments.join("/");
+}
+
+function describeProtectedCloudWorkspaceExplorerPath(
+  workspaceRoot: string,
+  absolutePath: string,
+): "workspace.yaml" | "AGENTS.md" | "skills" | null {
+  const relativePath = path.posix.relative(workspaceRoot, absolutePath);
+  if (
+    !relativePath ||
+    relativePath.startsWith("..") ||
+    path.posix.isAbsolute(relativePath)
+  ) {
+    return null;
+  }
+
+  const normalizedRelativePath = relativePath
+    .trim()
+    .replace(/^\/+|\/+$/g, "")
+    .toLowerCase();
+  if (!normalizedRelativePath) {
+    return null;
+  }
+  if (normalizedRelativePath === "workspace.yaml") {
+    return "workspace.yaml";
+  }
+  if (normalizedRelativePath === "agents.md") {
+    return "AGENTS.md";
+  }
+  if (normalizedRelativePath === "skills") {
+    return "skills";
+  }
+  return null;
+}
+
+function encodeWorkspaceRuntimeFilePath(relativePath: string): string {
+  return normalizeCloudSnapshotFilePath(relativePath)!
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+async function resolveCloudWorkspaceScopedExplorerPath(
+  targetPath?: string | null,
+  workspaceId?: string | null,
+): Promise<{
+  absolutePath: string;
+  workspaceRoot: string;
+  relativePath: string | null;
+}> {
+  const normalizedWorkspaceId = normalizeOptionalWorkspaceId(workspaceId);
+  if (!normalizedWorkspaceId) {
+    throw new Error("workspaceId is required for cloud workspace file access.");
+  }
+
+  const workspaceRoot = path.posix.resolve(
+    "/",
+    (await resolveWorkspaceRoot(normalizedWorkspaceId)).trim() || "/workspace",
+  );
+  const trimmedTargetPath =
+    typeof targetPath === "string" ? targetPath.trim() : "";
+  const absolutePath = trimmedTargetPath
+    ? path.posix.resolve(
+        path.posix.isAbsolute(trimmedTargetPath)
+          ? trimmedTargetPath
+          : path.posix.join(workspaceRoot, trimmedTargetPath),
+      )
+    : workspaceRoot;
+
+  if (!isPathWithinPosixRoot(workspaceRoot, absolutePath)) {
+    throw new Error(`Target path escapes workspace root: ${trimmedTargetPath}`);
+  }
+
+  const relativePath = path.posix.relative(workspaceRoot, absolutePath);
+  return {
+    absolutePath,
+    workspaceRoot,
+    relativePath: relativePath ? relativePath : null,
+  };
+}
+
+async function getCloudWorkspaceSnapshot(
+  workspaceId: string,
+): Promise<CloudWorkspaceSnapshotPayload> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
+  return requestWorkspaceRuntimeJson<CloudWorkspaceSnapshotPayload>(
+    safeWorkspaceId,
+    {
+      method: "GET",
+      path: `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}/snapshot`,
+      timeoutMs: 30000,
+      retryTransientErrors: true,
+    },
+  );
+}
+
+async function readCloudWorkspaceFilePayload(
+  workspaceId: string,
+  relativePath: string,
+): Promise<CloudWorkspaceFilePayload> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
+  return requestWorkspaceRuntimeJson<CloudWorkspaceFilePayload>(
+    safeWorkspaceId,
+    {
+      method: "GET",
+      path:
+        `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}/files/` +
+        encodeWorkspaceRuntimeFilePath(relativePath),
+      timeoutMs: 30000,
+      retryTransientErrors: true,
+    },
+  );
+}
+
+async function writeCloudWorkspaceFilePayload(
+  workspaceId: string,
+  relativePath: string,
+  contentBase64: string,
+): Promise<void> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
+  await requestWorkspaceRuntimeJson<Record<string, unknown>>(safeWorkspaceId, {
+    method: "PUT",
+    path:
+      `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}/files/` +
+      encodeWorkspaceRuntimeFilePath(relativePath),
+    payload: {
+      content_base64: contentBase64,
+      executable: false,
+    },
+    timeoutMs: 30000,
+    retryTransientErrors: true,
+  });
+}
+
+async function mutateCloudWorkspaceFiles(
+  workspaceId: string,
+  payload: CloudWorkspaceFileMutationRequest,
+): Promise<CloudWorkspaceFileMutationResponse> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
+  return requestDesktopControlPlaneJson<CloudWorkspaceFileMutationResponse>({
+    method: "POST",
+    path:
+      `/api/v1/desktop-runtime/workspaces/${encodeURIComponent(safeWorkspaceId)}` +
+      "/files/mutate",
+    payload,
+  });
+}
+
+function cloudWorkspaceAbsolutePathFromRelativePath(
+  workspaceRoot: string,
+  relativePath?: string | null,
+): string {
+  const normalizedRelativePath =
+    typeof relativePath === "string"
+      ? normalizeCloudSnapshotFilePath(relativePath)
+      : null;
+  return normalizedRelativePath
+    ? path.posix.join(workspaceRoot, normalizedRelativePath)
+    : workspaceRoot;
+}
+
+function buildCloudWorkspaceDirectoryPayload(
+  snapshot: CloudWorkspaceSnapshotPayload,
+  currentPath: string,
+  workspaceRoot: string,
+): DirectoryPayload {
+  const normalizedCurrent = path.posix.normalize(currentPath);
+  const normalizedRoot = path.posix.normalize(workspaceRoot);
+  const currentRelative = path.posix.relative(normalizedRoot, normalizedCurrent);
+  const currentSegments = currentRelative ? currentRelative.split("/").filter(Boolean) : [];
+  const hideWorkspaceManagedRootEntries = normalizedCurrent === normalizedRoot;
+  const entriesByAbsolutePath = new Map<string, DirectoryEntryPayload>();
+
+  for (const file of snapshot.files ?? []) {
+    const normalizedFilePath = normalizeCloudSnapshotFilePath(file.path);
+    if (!normalizedFilePath) {
+      continue;
+    }
+    const segments = normalizedFilePath.split("/");
+    if (segments.some((segment) => segment.startsWith("."))) {
+      continue;
+    }
+    const matchesCurrentDirectory = currentSegments.every(
+      (segment, index) => segments[index] === segment,
+    );
+    if (!matchesCurrentDirectory || segments.length <= currentSegments.length) {
+      continue;
+    }
+
+    const remainingSegments = segments.slice(currentSegments.length);
+    const childName = remainingSegments[0] ?? "";
+    if (!childName || childName.startsWith(".")) {
+      continue;
+    }
+    const absolutePath = path.posix.join(normalizedCurrent, childName);
+    if (
+      hideWorkspaceManagedRootEntries &&
+      remainingSegments.length > 1 &&
+      childName === "apps"
+    ) {
+      continue;
+    }
+    if (
+      hideWorkspaceManagedRootEntries &&
+      describeProtectedCloudWorkspaceExplorerPath(
+        workspaceRoot,
+        absolutePath,
+      )
+    ) {
+      continue;
+    }
+
+    const existing = entriesByAbsolutePath.get(absolutePath);
+    if (remainingSegments.length === 1) {
+      entriesByAbsolutePath.set(absolutePath, {
+        name: childName,
+        absolutePath,
+        isDirectory: false,
+        size: file.size,
+        modifiedAt: file.modified,
+      });
+      continue;
+    }
+
+    if (!existing) {
+      entriesByAbsolutePath.set(absolutePath, {
+        name: childName,
+        absolutePath,
+        isDirectory: true,
+        size: 0,
+        modifiedAt: file.modified,
+      });
+      continue;
+    }
+
+    if (Date.parse(file.modified) > Date.parse(existing.modifiedAt)) {
+      entriesByAbsolutePath.set(absolutePath, {
+        ...existing,
+        modifiedAt: file.modified,
+      });
+    }
+  }
+
+  const entries = [...entriesByAbsolutePath.values()].sort((a, b) => {
+    if (a.isDirectory !== b.isDirectory) {
+      return a.isDirectory ? -1 : 1;
+    }
+    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  });
+  const parentPath =
+    normalizedCurrent === normalizedRoot
+      ? null
+      : path.posix.dirname(normalizedCurrent);
+  return {
+    currentPath: normalizedCurrent,
+    parentPath,
+    entries,
+  };
+}
+
 async function readFilePreview(
   targetPath: string,
   workspaceId?: string | null,
 ): Promise<FilePreviewPayload> {
+  const normalizedWorkspaceId = normalizeOptionalWorkspaceId(workspaceId);
+  if (
+    normalizedWorkspaceId &&
+    (await resolveWorkspaceLocation(normalizedWorkspaceId)) === "cloud"
+  ) {
+    const { absolutePath, relativePath } =
+      await resolveCloudWorkspaceScopedExplorerPath(
+        targetPath,
+        normalizedWorkspaceId,
+      );
+    if (!relativePath) {
+      throw new Error("Target path is a directory.");
+    }
+
+    const remoteFile = await readCloudWorkspaceFilePayload(
+      normalizedWorkspaceId,
+      relativePath,
+    );
+    const buffer =
+      remoteFile.encoding === "base64"
+        ? Buffer.from(remoteFile.content, "base64")
+        : Buffer.from(remoteFile.content, "utf-8");
+    const { extension, kind, mimeType } = getFilePreviewKind(absolutePath);
+    const basePayload: FilePreviewPayload = {
+      absolutePath,
+      name: path.posix.basename(absolutePath),
+      extension,
+      kind,
+      mimeType,
+      size: buffer.byteLength,
+      modifiedAt: new Date().toISOString(),
+      isEditable: kind === "text",
+    };
+
+    if (kind === "table") {
+      if (buffer.byteLength > MAX_TABLE_PREVIEW_BYTES) {
+        return {
+          ...basePayload,
+          kind: "unsupported",
+          isEditable: false,
+          unsupportedReason: "Spreadsheet is too large to preview inline.",
+        };
+      }
+      try {
+        const tableSheets = await buildTablePreviewSheets(buffer, extension);
+        if (tableSheets.length === 0) {
+          return {
+            ...basePayload,
+            kind: "unsupported",
+            isEditable: false,
+            unsupportedReason: "No sheet data could be extracted from this file.",
+          };
+        }
+        return {
+          ...basePayload,
+          kind: "table",
+          isEditable:
+            extension !== ".xls" &&
+            !tableSheets.previewOnly &&
+            tableSheets.every((sheet) => !sheet.truncated),
+          tableSheets,
+        };
+      } catch {
+        return {
+          ...basePayload,
+          kind: "unsupported",
+          isEditable: false,
+          unsupportedReason:
+            "Spreadsheet could not be parsed for inline preview.",
+        };
+      }
+    }
+
+    if (kind === "presentation") {
+      if (buffer.byteLength > MAX_PRESENTATION_PREVIEW_BYTES) {
+        return {
+          ...basePayload,
+          kind: "unsupported",
+          isEditable: false,
+          unsupportedReason: "Presentation is too large to preview inline.",
+        };
+      }
+      try {
+        const {
+          presentationSlides,
+          presentationWidth,
+          presentationHeight,
+        } = await buildPresentationPreview(buffer);
+        if (presentationSlides.length === 0) {
+          return {
+            ...basePayload,
+            kind: "unsupported",
+            isEditable: false,
+            unsupportedReason:
+              "No slide content could be extracted from this presentation.",
+          };
+        }
+        return {
+          ...basePayload,
+          kind: "presentation",
+          presentationSlides,
+          presentationWidth,
+          presentationHeight,
+        };
+      } catch {
+        return {
+          ...basePayload,
+          kind: "unsupported",
+          isEditable: false,
+          unsupportedReason:
+            "Presentation could not be parsed for inline preview.",
+        };
+      }
+    }
+
+    if (kind === "text") {
+      if (buffer.byteLength > MAX_TEXT_PREVIEW_BYTES) {
+        return {
+          ...basePayload,
+          kind: "unsupported",
+          isEditable: false,
+          unsupportedReason: "Text file is too large to preview inline.",
+        };
+      }
+      return {
+        ...basePayload,
+        content: buffer.toString("utf-8"),
+      };
+    }
+
+    if (kind === "image") {
+      if (buffer.byteLength > MAX_IMAGE_PREVIEW_BYTES) {
+        return {
+          ...basePayload,
+          kind: "unsupported",
+          isEditable: false,
+          unsupportedReason: "Image is too large to preview inline.",
+        };
+      }
+      return {
+        ...basePayload,
+        dataUrl: `data:${mimeType};base64,${buffer.toString("base64")}`,
+      };
+    }
+
+    if (kind === "pdf") {
+      return {
+        ...basePayload,
+        dataUrl: `data:${mimeType};base64,${buffer.toString("base64")}`,
+      };
+    }
+
+    return {
+      ...basePayload,
+      unsupportedReason: "Preview is not available for this file type yet.",
+    };
+  }
+
   const { absolutePath } = await resolveWorkspaceScopedExplorerPath(
     targetPath,
     workspaceId,
@@ -19348,6 +19893,28 @@ async function writeTextFile(
   content: string,
   workspaceId?: string | null,
 ): Promise<FilePreviewPayload> {
+  const normalizedWorkspaceId = normalizeOptionalWorkspaceId(workspaceId);
+  if (
+    normalizedWorkspaceId &&
+    (await resolveWorkspaceLocation(normalizedWorkspaceId)) === "cloud"
+  ) {
+    const { absolutePath, relativePath } =
+      await resolveCloudWorkspaceScopedExplorerPath(
+        targetPath,
+        normalizedWorkspaceId,
+      );
+    if (!relativePath) {
+      throw new Error("Target path is a directory.");
+    }
+    await writeCloudWorkspaceFilePayload(
+      normalizedWorkspaceId,
+      relativePath,
+      Buffer.from(content, "utf-8").toString("base64"),
+    );
+    emitFilePreviewChanged({ absolutePath });
+    return readFilePreview(absolutePath, workspaceId);
+  }
+
   const { absolutePath } = await resolveWorkspaceScopedExplorerPath(
     targetPath,
     workspaceId,
@@ -19361,6 +19928,61 @@ async function writeTableFile(
   tableSheets: unknown,
   workspaceId?: string | null,
 ): Promise<FilePreviewPayload> {
+  const normalizedWorkspaceId = normalizeOptionalWorkspaceId(workspaceId);
+  if (
+    normalizedWorkspaceId &&
+    (await resolveWorkspaceLocation(normalizedWorkspaceId)) === "cloud"
+  ) {
+    const { absolutePath, relativePath } =
+      await resolveCloudWorkspaceScopedExplorerPath(
+        targetPath,
+        normalizedWorkspaceId,
+      );
+    if (!relativePath) {
+      throw new Error("Target path is a directory.");
+    }
+
+    const { extension, kind } = getFilePreviewKind(absolutePath);
+    if (kind !== "table") {
+      throw new Error("Target file is not a spreadsheet preview.");
+    }
+    if (extension === ".xls") {
+      throw new Error("Legacy .xls files are preview-only in the inline editor.");
+    }
+
+    const normalizedTableSheets = normalizeWritableTableSheets(tableSheets);
+    if (normalizedTableSheets.length === 0) {
+      throw new Error(
+        "Spreadsheet preview did not include any editable sheet data.",
+      );
+    }
+    if (normalizedTableSheets.some((sheet) => sheet.truncated)) {
+      throw new Error("Spreadsheet is too large to edit inline.");
+    }
+
+    const remoteFile = await readCloudWorkspaceFilePayload(
+      normalizedWorkspaceId,
+      relativePath,
+    );
+    const inputBuffer =
+      remoteFile.encoding === "base64"
+        ? Buffer.from(remoteFile.content, "base64")
+        : Buffer.from(remoteFile.content, "utf-8");
+    const outputBuffer = extension === ".csv"
+      ? await buildCsvTablePreviewBuffer(normalizedTableSheets[0])
+      : await buildWorkbookTablePreviewBuffer(
+          inputBuffer,
+          normalizedTableSheets,
+        );
+    await writeCloudWorkspaceFilePayload(
+      normalizedWorkspaceId,
+      relativePath,
+      outputBuffer.toString("base64"),
+    );
+    emitFilePreviewChanged({ absolutePath });
+    return readFilePreview(absolutePath, workspaceId);
+  }
+
   const { absolutePath } = await resolveWorkspaceScopedExplorerPath(
     targetPath,
     workspaceId,
@@ -19402,6 +20024,21 @@ async function watchFilePreviewPath(
   targetPath: string,
   workspaceId?: string | null,
 ): Promise<FilePreviewWatchSubscriptionPayload> {
+  const normalizedWorkspaceId = normalizeOptionalWorkspaceId(workspaceId);
+  if (
+    normalizedWorkspaceId &&
+    (await resolveWorkspaceLocation(normalizedWorkspaceId)) === "cloud"
+  ) {
+    const { absolutePath } = await resolveCloudWorkspaceScopedExplorerPath(
+      targetPath,
+      normalizedWorkspaceId,
+    );
+    return {
+      subscriptionId: `file-preview-watch:${randomUUID()}`,
+      absolutePath,
+    };
+  }
+
   const { absolutePath } = await resolveWorkspaceScopedExplorerPath(
     targetPath,
     workspaceId,
@@ -19599,6 +20236,29 @@ async function createExplorerPath(
   kind: FileSystemCreateKind,
   workspaceId?: string | null,
 ): Promise<FileSystemMutationPayload> {
+  const normalizedWorkspaceId = normalizeOptionalWorkspaceId(workspaceId);
+  if (
+    normalizedWorkspaceId &&
+    (await resolveWorkspaceLocation(normalizedWorkspaceId)) === "cloud"
+  ) {
+    const { workspaceRoot, relativePath: parentRelativePath } =
+      await resolveCloudWorkspaceScopedExplorerPath(
+        parentPath,
+        normalizedWorkspaceId,
+      );
+    const response = await mutateCloudWorkspaceFiles(normalizedWorkspaceId, {
+      action: "create",
+      kind,
+      parent_path: parentRelativePath,
+    });
+    return {
+      absolutePath: cloudWorkspaceAbsolutePathFromRelativePath(
+        workspaceRoot,
+        response.path,
+      ),
+    };
+  }
+
   const { absolutePath: parentAbsolutePath, workspaceRoot } =
     await resolveWorkspaceScopedExplorerPath(parentPath, workspaceId);
   const parentStat = await fs.stat(parentAbsolutePath);
@@ -19751,6 +20411,39 @@ async function importExternalExplorerEntries(
   workspaceId?: string | null,
 ): Promise<ExplorerExternalImportResultPayload> {
   const normalizedEntries = normalizeExplorerImportEntries(entries);
+  const normalizedWorkspaceId = normalizeOptionalWorkspaceId(workspaceId);
+  if (
+    normalizedWorkspaceId &&
+    (await resolveWorkspaceLocation(normalizedWorkspaceId)) === "cloud"
+  ) {
+    const { workspaceRoot, relativePath: destinationRelativePath } =
+      await resolveCloudWorkspaceScopedExplorerPath(
+        destinationDirectoryPath,
+        normalizedWorkspaceId,
+      );
+    const response = await mutateCloudWorkspaceFiles(normalizedWorkspaceId, {
+      action: "import",
+      destination_directory_path: destinationRelativePath ?? "",
+      entries: normalizedEntries.map((entry) =>
+        entry.kind === "directory"
+          ? {
+              kind: "directory" as const,
+              relative_path: entry.relativePath,
+            }
+          : {
+              kind: "file" as const,
+              relative_path: entry.relativePath,
+              content_base64: Buffer.from(entry.content).toString("base64"),
+            },
+      ),
+    });
+    return {
+      absolutePaths: (response.paths ?? []).map((relativePath) =>
+        cloudWorkspaceAbsolutePathFromRelativePath(workspaceRoot, relativePath),
+      ),
+    };
+  }
+
   const { absolutePath: destinationAbsolutePath, workspaceRoot } =
     await resolveWorkspaceScopedExplorerPath(
       destinationDirectoryPath,
@@ -19847,6 +20540,35 @@ async function renameExplorerPath(
     throw new Error("Name must not contain path separators.");
   }
 
+  const normalizedWorkspaceId = normalizeOptionalWorkspaceId(workspaceId);
+  if (
+    normalizedWorkspaceId &&
+    (await resolveWorkspaceLocation(normalizedWorkspaceId)) === "cloud"
+  ) {
+    const { absolutePath, workspaceRoot, relativePath } =
+      await resolveCloudWorkspaceScopedExplorerPath(
+        targetPath,
+        normalizedWorkspaceId,
+      );
+    if (!relativePath) {
+      throw new Error("Workspace root cannot be renamed.");
+    }
+    assertWorkspaceExplorerPathModifiable(workspaceRoot, absolutePath);
+    const response = await mutateCloudWorkspaceFiles(normalizedWorkspaceId, {
+      action: "rename",
+      path: relativePath,
+      next_name: trimmedName,
+    });
+    const nextAbsolutePath = cloudWorkspaceAbsolutePathFromRelativePath(
+      workspaceRoot,
+      response.path,
+    );
+    await rewriteExplorerBookmarksAfterPathChange(absolutePath, nextAbsolutePath);
+    return {
+      absolutePath: nextAbsolutePath,
+    };
+  }
+
   const { absolutePath, workspaceRoot } =
     await resolveWorkspaceScopedExplorerPath(targetPath, workspaceId);
 
@@ -19881,6 +20603,52 @@ async function moveExplorerPath(
   destinationDirectoryPath: string,
   workspaceId?: string | null,
 ): Promise<FileSystemMutationPayload> {
+  const normalizedWorkspaceId = normalizeOptionalWorkspaceId(workspaceId);
+  if (
+    normalizedWorkspaceId &&
+    (await resolveWorkspaceLocation(normalizedWorkspaceId)) === "cloud"
+  ) {
+    const {
+      absolutePath: sourceAbsolutePath,
+      workspaceRoot,
+      relativePath: sourceRelativePath,
+    } = await resolveCloudWorkspaceScopedExplorerPath(
+      sourcePath,
+      normalizedWorkspaceId,
+    );
+    const {
+      absolutePath: destinationAbsolutePath,
+      relativePath: destinationRelativePath,
+    } = await resolveCloudWorkspaceScopedExplorerPath(
+      destinationDirectoryPath,
+      normalizedWorkspaceId,
+    );
+    if (!sourceRelativePath) {
+      throw new Error("Workspace root cannot be moved.");
+    }
+    assertWorkspaceExplorerPathModifiable(workspaceRoot, sourceAbsolutePath);
+    assertWorkspaceExplorerPathModifiable(
+      workspaceRoot,
+      destinationAbsolutePath,
+    );
+    const response = await mutateCloudWorkspaceFiles(normalizedWorkspaceId, {
+      action: "move",
+      source_path: sourceRelativePath,
+      destination_directory_path: destinationRelativePath ?? "",
+    });
+    const nextAbsolutePath = cloudWorkspaceAbsolutePathFromRelativePath(
+      workspaceRoot,
+      response.path,
+    );
+    await rewriteExplorerBookmarksAfterPathChange(
+      sourceAbsolutePath,
+      nextAbsolutePath,
+    );
+    return {
+      absolutePath: nextAbsolutePath,
+    };
+  }
+
   const { absolutePath: sourceAbsolutePath, workspaceRoot } =
     await resolveWorkspaceScopedExplorerPath(sourcePath, workspaceId);
   const { absolutePath: destinationAbsolutePath } =
@@ -19944,6 +20712,46 @@ async function copyExplorerPath(
   destinationDirectoryPath: string,
   workspaceId?: string | null,
 ): Promise<FileSystemMutationPayload> {
+  const normalizedWorkspaceId = normalizeOptionalWorkspaceId(workspaceId);
+  if (
+    normalizedWorkspaceId &&
+    (await resolveWorkspaceLocation(normalizedWorkspaceId)) === "cloud"
+  ) {
+    const {
+      absolutePath: sourceAbsolutePath,
+      workspaceRoot,
+      relativePath: sourceRelativePath,
+    } = await resolveCloudWorkspaceScopedExplorerPath(
+      sourcePath,
+      normalizedWorkspaceId,
+    );
+    const {
+      absolutePath: destinationAbsolutePath,
+      relativePath: destinationRelativePath,
+    } = await resolveCloudWorkspaceScopedExplorerPath(
+      destinationDirectoryPath,
+      normalizedWorkspaceId,
+    );
+    if (!sourceRelativePath) {
+      throw new Error("Workspace root cannot be copied.");
+    }
+    assertWorkspaceExplorerPathModifiable(
+      workspaceRoot,
+      destinationAbsolutePath,
+    );
+    const response = await mutateCloudWorkspaceFiles(normalizedWorkspaceId, {
+      action: "copy",
+      source_path: sourceRelativePath,
+      destination_directory_path: destinationRelativePath ?? "",
+    });
+    return {
+      absolutePath: cloudWorkspaceAbsolutePathFromRelativePath(
+        workspaceRoot,
+        response.path,
+      ),
+    };
+  }
+
   const { absolutePath: sourceAbsolutePath, workspaceRoot } =
     await resolveWorkspaceScopedExplorerPath(sourcePath, workspaceId);
   const { absolutePath: destinationAbsolutePath } =
@@ -19996,6 +20804,33 @@ async function deleteExplorerPath(
   targetPath: string,
   workspaceId?: string | null,
 ): Promise<{ deleted: boolean }> {
+  const normalizedWorkspaceId = normalizeOptionalWorkspaceId(workspaceId);
+  if (
+    normalizedWorkspaceId &&
+    (await resolveWorkspaceLocation(normalizedWorkspaceId)) === "cloud"
+  ) {
+    const { absolutePath, workspaceRoot, relativePath } =
+      await resolveCloudWorkspaceScopedExplorerPath(
+        targetPath,
+        normalizedWorkspaceId,
+      );
+    if (!relativePath) {
+      throw new Error("Workspace root cannot be deleted.");
+    }
+    assertWorkspaceExplorerPathModifiable(workspaceRoot, absolutePath);
+    const response = await mutateCloudWorkspaceFiles(normalizedWorkspaceId, {
+      action: "delete",
+      path: relativePath,
+    });
+    const nextBookmarks = fileBookmarks.filter(
+      (bookmark) => !isSameOrDescendantPath(absolutePath, bookmark.targetPath),
+    );
+    if (nextBookmarks.length !== fileBookmarks.length) {
+      await persistUpdatedFileBookmarks(nextBookmarks);
+    }
+    return { deleted: response.deleted === true };
+  }
+
   const { absolutePath, workspaceRoot } =
     await resolveWorkspaceScopedExplorerPath(targetPath, workspaceId);
 
@@ -20028,6 +20863,16 @@ async function revealExplorerPath(
   targetPath: string,
   workspaceId?: string | null,
 ): Promise<{ revealed: boolean }> {
+  const normalizedWorkspaceId = normalizeOptionalWorkspaceId(workspaceId);
+  if (
+    normalizedWorkspaceId &&
+    (await resolveWorkspaceLocation(normalizedWorkspaceId)) === "cloud"
+  ) {
+    throw new Error(
+      "Cloud workspace files cannot be revealed in the host file manager.",
+    );
+  }
+
   const { absolutePath } = await resolveWorkspaceScopedExplorerPath(
     targetPath,
     workspaceId,
@@ -20044,6 +20889,16 @@ async function exportExplorerPathToFile(
   workspaceId: string | null | undefined,
   payload?: { content?: string; suggestedName?: string },
 ): Promise<{ path: string | null; canceled: boolean }> {
+  const normalizedWorkspaceId = normalizeOptionalWorkspaceId(workspaceId);
+  if (
+    normalizedWorkspaceId &&
+    (await resolveWorkspaceLocation(normalizedWorkspaceId)) === "cloud"
+  ) {
+    throw new Error(
+      "Cloud workspace file export is not supported from the desktop explorer yet.",
+    );
+  }
+
   const { absolutePath } = await resolveWorkspaceScopedExplorerPath(
     targetPath,
     workspaceId,
@@ -20083,6 +20938,24 @@ async function listDirectory(
   targetPath?: string | null,
   workspaceId?: string | null,
 ): Promise<DirectoryPayload> {
+  const normalizedWorkspaceId = normalizeOptionalWorkspaceId(workspaceId);
+  if (
+    normalizedWorkspaceId &&
+    (await resolveWorkspaceLocation(normalizedWorkspaceId)) === "cloud"
+  ) {
+    const { absolutePath, workspaceRoot } =
+      await resolveCloudWorkspaceScopedExplorerPath(
+        targetPath,
+        normalizedWorkspaceId,
+      );
+    const snapshot = await getCloudWorkspaceSnapshot(normalizedWorkspaceId);
+    return buildCloudWorkspaceDirectoryPayload(
+      snapshot,
+      absolutePath,
+      workspaceRoot,
+    );
+  }
+
   const { absolutePath: resolvedPath, workspaceRoot } =
     await resolveWorkspaceScopedExplorerPath(targetPath, workspaceId);
   await fs.mkdir(resolvedPath, { recursive: true });

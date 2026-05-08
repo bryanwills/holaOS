@@ -64,6 +64,9 @@ const ONBOARDING_ACTIVE_STATUSES = new Set(["pending", "awaiting_confirmation", 
 const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
 const DEFAULT_WORKSPACE_HARNESS: WorkspaceHarnessId = "pi";
 const BOOTSTRAP_IPC_TIMEOUT_MS = 8_000;
+const CLOUD_WORKSPACE_READY_POLL_INTERVAL_MS = 3_000;
+const CLOUD_WORKSPACE_READY_TIMEOUT_MS = 10 * 60 * 1_000;
+const PENDING_CLOUD_WORKSPACE_RECORD_TTL_MS = 2 * 60 * 1_000;
 type TemplateSourceMode = "local" | "marketplace" | "empty" | "empty_onboarding";
 type WorkspaceCreateLocation = WorkspaceLocationPayload;
 type LifecycleStepState = "pending" | "current" | "done" | "error";
@@ -71,6 +74,7 @@ type WorkspaceListLoadSource = "auto" | "live" | "cached";
 type WorkspaceBrowserBootstrapMode = "fresh" | "copy_workspace" | "import_browser";
 type WorkspaceCreatePhase =
   | "creating_workspace"
+  | "waiting_for_cloud_runtime"
   | "copying_browser_profile"
   | "importing_browser_profile"
   | "finalizing";
@@ -257,6 +261,40 @@ function withBootstrapTimeout<T>(promise: Promise<T>, label: string): Promise<T>
   });
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function cloudWorkspaceStartupFailed(lifecycle: WorkspaceLifecyclePayload): string | null {
+  if (lifecycle.ready) {
+    return null;
+  }
+  const phase = (lifecycle.phase || "").trim().toLowerCase();
+  const workspaceStatus = (lifecycle.workspace.status || "").trim().toLowerCase();
+  if (phase !== "error" && workspaceStatus !== "error") {
+    return null;
+  }
+  return (
+    lifecycle.phase_detail ||
+    lifecycle.reason ||
+    lifecycle.workspace.error_message ||
+    "Remote workspace provisioning failed."
+  );
+}
+
+function isRetryableCloudWorkspaceStartupError(error: unknown): boolean {
+  const message = normalizeErrorMessage(error).toLowerCase();
+  return (
+    message.includes("connection refused") ||
+    message.includes("timed out") ||
+    message.includes("no exit frame received") ||
+    message.includes("service already exists") ||
+    message.includes("workspace runtime request failed")
+  );
+}
+
 function normalizedOnboardingStatus(workspace: WorkspaceRecordPayload | null): string {
   return (workspace?.onboarding_status || "").trim().toLowerCase();
 }
@@ -324,6 +362,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const [isResolvingIntegrations, setIsResolvingIntegrations] = useState(false);
   const [pendingAppInstall, setPendingAppInstall] = useState<{ appId: string; provider: string } | null>(null);
   const [isConnectingAppIntegration, setIsConnectingAppIntegration] = useState(false);
+  const pendingCloudWorkspaceRecordsRef = useRef(new Map<string, number>());
   // Composio toolkit metadata (name + logo + categories) keyed by toolkit
   // slug. Single source of truth for app display name + icon across the
   // shell — both the marketplace gallery and the workspace sidebar look
@@ -514,6 +553,109 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     });
   }
 
+  function rememberWorkspaceRecord(workspace: WorkspaceRecordPayload) {
+    setWorkspaces((current) => {
+      const existingIndex = current.findIndex((item) => item.id === workspace.id);
+      if (existingIndex === -1) {
+        return [workspace, ...current];
+      }
+      const next = [...current];
+      next[existingIndex] = { ...next[existingIndex], ...workspace };
+      return next;
+    });
+  }
+
+  function mergePendingCloudWorkspaceRecords(
+    nextWorkspaces: WorkspaceRecordPayload[],
+  ): WorkspaceRecordPayload[] {
+    const pendingCloudWorkspaceRecords = pendingCloudWorkspaceRecordsRef.current;
+    if (pendingCloudWorkspaceRecords.size === 0) {
+      return nextWorkspaces;
+    }
+
+    const now = Date.now();
+    for (const [workspaceId, expiresAt] of pendingCloudWorkspaceRecords) {
+      if (expiresAt <= now) {
+        pendingCloudWorkspaceRecords.delete(workspaceId);
+      }
+    }
+    if (pendingCloudWorkspaceRecords.size === 0) {
+      return nextWorkspaces;
+    }
+
+    const nextWorkspaceIds = new Set(
+      nextWorkspaces.map((workspace) => workspace.id.trim()).filter(Boolean),
+    );
+    for (const workspaceId of nextWorkspaceIds) {
+      pendingCloudWorkspaceRecords.delete(workspaceId);
+    }
+
+    const optimisticCloudWorkspaces = workspaces.filter((workspace) => {
+      const workspaceId = workspace.id.trim();
+      return (
+        workspace.location === "cloud" &&
+        workspaceId &&
+        pendingCloudWorkspaceRecords.has(workspaceId) &&
+        !nextWorkspaceIds.has(workspaceId)
+      );
+    });
+    if (optimisticCloudWorkspaces.length === 0) {
+      return nextWorkspaces;
+    }
+
+    return [...optimisticCloudWorkspaces, ...nextWorkspaces];
+  }
+
+  async function waitForCloudWorkspaceReady(
+    workspaceId: string,
+  ): Promise<WorkspaceLifecyclePayload> {
+    const deadline = Date.now() + CLOUD_WORKSPACE_READY_TIMEOUT_MS;
+    let hasOpenedCloudWorkspace = false;
+    let lastTransientErrorMessage = "";
+
+    while (Date.now() < deadline) {
+      try {
+        if (!hasOpenedCloudWorkspace) {
+          const session = await window.electronAPI.workspace.openWorkspace(workspaceId);
+          rememberWorkspaceRecord(session.lifecycle.workspace);
+          const failureMessage = cloudWorkspaceStartupFailed(session.lifecycle);
+          if (failureMessage) {
+            throw new Error(failureMessage);
+          }
+          if (session.lifecycle.ready) {
+            return session.lifecycle;
+          }
+          hasOpenedCloudWorkspace = true;
+        } else {
+          const lifecycle = await window.electronAPI.workspace.getWorkspaceLifecycle(workspaceId);
+          rememberWorkspaceRecord(lifecycle.workspace);
+          const failureMessage = cloudWorkspaceStartupFailed(lifecycle);
+          if (failureMessage) {
+            throw new Error(failureMessage);
+          }
+          if (lifecycle.ready) {
+            return lifecycle;
+          }
+        }
+        lastTransientErrorMessage = "";
+      } catch (error) {
+        if (!isRetryableCloudWorkspaceStartupError(error)) {
+          throw error;
+        }
+        lastTransientErrorMessage = normalizeErrorMessage(error);
+      }
+
+      await sleep(CLOUD_WORKSPACE_READY_POLL_INTERVAL_MS);
+    }
+
+    const timeoutSuffix = lastTransientErrorMessage
+      ? ` Last error: ${lastTransientErrorMessage}`
+      : "";
+    throw new Error(
+      `Timed out waiting for the remote workspace to become ready.${timeoutSuffix}`,
+    );
+  }
+
   async function refreshInstalledApps() {
     if (!selectedWorkspaceId || !selectedWorkspaceExists) {
       setInstalledApps([]);
@@ -697,7 +839,9 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     const workspaceResponse = workspaceListSource === "live"
       ? await window.electronAPI.workspace.listWorkspaces()
       : await window.electronAPI.workspace.listWorkspacesCached();
-    const nextWorkspaces = workspaceResponse.items;
+    const nextWorkspaces = workspaceListSource === "live"
+      ? mergePendingCloudWorkspaceRecords(workspaceResponse.items)
+      : workspaceResponse.items;
     const shouldKeepPreviousWorkspaces = !allowEmpty && nextWorkspaces.length === 0 && workspaces.length > 0;
     const resolvedWorkspaces = shouldKeepPreviousWorkspaces ? workspaces : nextWorkspaces;
 
@@ -821,12 +965,21 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       }
       setNewWorkspaceName("");
       setSelectedWorkspaceFolder(null);
-      await loadWorkspaceData({ preserveSelection: false, allowEmpty: true });
       const createdWorkspaceId = response.workspace.id;
-      setSelectedWorkspaceId(createdWorkspaceId);
+      if (isCloudCreate) {
+        pendingCloudWorkspaceRecordsRef.current.set(
+          createdWorkspaceId,
+          Date.now() + PENDING_CLOUD_WORKSPACE_RECORD_TTL_MS,
+        );
+      }
+      rememberWorkspaceRecord(response.workspace);
 
       let postCreateWarning = "";
-      if (!isCloudCreate && browserBootstrapMode === "copy_workspace") {
+      if (isCloudCreate) {
+        setWorkspaceCreatePhase("waiting_for_cloud_runtime");
+        const lifecycle = await waitForCloudWorkspaceReady(createdWorkspaceId);
+        rememberWorkspaceRecord(lifecycle.workspace);
+      } else if (browserBootstrapMode === "copy_workspace") {
         const sourceWorkspaceId = browserBootstrapSourceWorkspaceId.trim();
         if (sourceWorkspaceId) {
           setWorkspaceCreatePhase("copying_browser_profile");
@@ -855,6 +1008,9 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
         }
       }
 
+      await loadWorkspaceData({ preserveSelection: true, allowEmpty: true });
+      setSelectedWorkspaceId(createdWorkspaceId);
+
       if (postCreateWarning) {
         setWorkspaceErrorMessage(postCreateWarning);
       }
@@ -882,6 +1038,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     setDeletingWorkspaceId(trimmedWorkspaceId);
     setWorkspaceErrorMessage("");
     try {
+      pendingCloudWorkspaceRecordsRef.current.delete(trimmedWorkspaceId);
       if (selectedWorkspaceId === trimmedWorkspaceId) {
         const fallbackWorkspaceId =
           workspaces.find((workspace) => workspace.id !== trimmedWorkspaceId)?.id ??

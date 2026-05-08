@@ -356,6 +356,7 @@ export function FirstWorkspacePane({
       panelVariant={isPanelVariant}
       sectionClassName={sectionClassName}
       showUserButton={!isPanelVariant}
+      workspaceCreateLocation={workspaceCreateLocation}
       workspaceCreatePhase={workspaceCreatePhase}
     />
   ) : (

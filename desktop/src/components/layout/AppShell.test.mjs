@@ -346,7 +346,7 @@ test("app shell restores the last internal display and otherwise keeps the curre
   );
   assert.match(
     source,
-    /useEffect\(\(\) => \{\s*if \(!selectedWorkspaceId\) \{\s*setSpaceExplorerMode\("browser"\);\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*const nextDisplayView =\s*lastRestorableSpaceFileDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\];\s*if \(!nextDisplayView\) \{\s*setSpaceExplorerMode\("browser"\);\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*setSpaceDisplayView\(nextDisplayView\);\s*syncFileExplorerFocusWithDisplayView\(nextDisplayView\);\s*\}, \[selectedWorkspaceId, syncFileExplorerFocusWithDisplayView\]\);/,
+    /useEffect\(\(\) => \{\s*if \(!selectedWorkspaceId\) \{\s*setSpaceExplorerMode\("browser"\);\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*const cloudWorkspaceSelected = selectedWorkspace\?\.location === "cloud";\s*const nextDisplayView =\s*lastRestorableSpaceFileDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\];\s*if \(!nextDisplayView\) \{\s*setSpaceExplorerMode\(cloudWorkspaceSelected \? "files" : "browser"\);\s*setSpaceDisplayView\(\s*cloudWorkspaceSelected \? \{ type: "empty" \} : \{ type: "browser" \},\s*\);\s*return;\s*\}\s*setSpaceDisplayView\(nextDisplayView\);\s*syncFileExplorerFocusWithDisplayView\(nextDisplayView\);\s*\}, \[selectedWorkspace, selectedWorkspaceId, syncFileExplorerFocusWithDisplayView\]\);/,
   );
   assert.match(
     source,
@@ -451,7 +451,7 @@ test("app shell routes runtime notifications by window state and workspace visib
   assert.doesNotMatch(source, /force: true/);
   assert.match(
     source,
-    /await window\.electronAPI\.workspace\.updateNotification\(item\.id,\s*\{\s*state: "dismissed",\s*\}\);/,
+    /await window\.electronAPI\.workspace\.updateNotification\(\s*item\.workspace_id,\s*item\.id,\s*\{\s*state: "dismissed",\s*\}\s*\);/,
   );
 });
 
@@ -514,7 +514,7 @@ test("app shell no longer reserves a separate safe pane region for update toasts
   assert.doesNotMatch(source, /anchoredToastStackStyle/);
   assert.match(
     source,
-    /const shouldSuspendBrowserNativeView =\s*workspaceSwitcherOpen \|\|[\s\S]*settingsDialogOpen \|\|[\s\S]*taskProposalDetailsDialogOpen \|\|[\s\S]*chatImagePreviewOpen \|\|[\s\S]*createWorkspacePanelOpen \|\|[\s\S]*publishOpen;/,
+    /const shouldSuspendBrowserNativeView =\s*workspaceSwitcherOpen \|\|[\s\S]*settingsDialogRendered \|\|[\s\S]*taskProposalDetailsDialogOpen \|\|[\s\S]*chatImagePreviewOpen \|\|[\s\S]*workspaceAppsDialogOpen \|\|[\s\S]*createWorkspacePanelOpen \|\|[\s\S]*publishOpen;/,
   );
   assert.doesNotMatch(
     source,
@@ -878,6 +878,39 @@ test("app shell routes agent-originated browser opens into the agent browser spa
   assert.match(source, /\.setActiveWorkspace\(targetWorkspaceId, "user"\)/);
   assert.match(source, /const handleOpenLinkInNewAppBrowserTab = useCallback\(/);
   assert.match(source, /\.then\(\(\) => window\.electronAPI\.browser\.newTab\(normalizedUrl\)\)/);
+});
+
+test("app shell disables desktop browser surfaces for cloud workspaces", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /const selectedWorkspaceUsesCloudRuntime = selectedWorkspace\?\.location === "cloud";/,
+  );
+  assert.match(
+    source,
+    /FIXED_SPACE_ORDER\.filter\(\s*\(paneId\) =>\s*!\(paneId === "browser" && selectedWorkspaceUsesCloudRuntime\) &&\s*spaceVisibility\[paneId\],\s*\)/,
+  );
+  assert.match(
+    source,
+    /\.filter\(\s*\(\{ value \}\) =>\s*value !== "browser"\s*\|\|\s*!selectedWorkspaceUsesCloudRuntime,\s*\)/,
+  );
+  assert.match(
+    source,
+    /if \(selectedWorkspace\?\.location === "cloud"\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /if \(\s*!selectedWorkspaceId \|\|\s*!normalizedSessionId \|\|\s*selectedWorkspace\?\.location === "cloud"\s*\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /if \(!normalizedUrl \|\| selectedWorkspace\?\.location === "cloud"\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /if \(selectedWorkspace\?\.location !== "cloud"\) \{\s*return;\s*\}[\s\S]*setSpaceVisibility\(\(current\) =>\s*current\.browser \? \{ \.\.\.current, browser: false \} : current,\s*\);/,
+  );
 });
 
 test("app shell reports active non-browser operator surfaces back to Electron", async () => {

@@ -116,6 +116,74 @@ test("workspace creation can copy an existing workspace browser profile or impor
   );
   assert.match(
     source,
+    /const CLOUD_WORKSPACE_READY_POLL_INTERVAL_MS = 3_000;/,
+  );
+  assert.match(
+    source,
+    /const CLOUD_WORKSPACE_READY_TIMEOUT_MS = 10 \* 60 \* 1_000;/,
+  );
+  assert.match(
+    source,
+    /const PENDING_CLOUD_WORKSPACE_RECORD_TTL_MS = 2 \* 60 \* 1_000;/,
+  );
+  assert.match(
+    source,
+    /const pendingCloudWorkspaceRecordsRef = useRef\(new Map<string, number>\(\)\);/,
+  );
+  assert.match(
+    source,
+    /type WorkspaceCreatePhase =[\s\S]*\| "waiting_for_cloud_runtime"/,
+  );
+  assert.match(
+    source,
+    /function isRetryableCloudWorkspaceStartupError\(error: unknown\): boolean \{/,
+  );
+  assert.match(
+    source,
+    /async function waitForCloudWorkspaceReady\(\s*workspaceId: string,\s*\): Promise<WorkspaceLifecyclePayload> \{/,
+  );
+  assert.match(
+    source,
+    /function mergePendingCloudWorkspaceRecords\(\s*nextWorkspaces: WorkspaceRecordPayload\[\],\s*\): WorkspaceRecordPayload\[\] \{/,
+  );
+  assert.match(
+    source,
+    /for \(const \[workspaceId, expiresAt\] of pendingCloudWorkspaceRecords\) \{\s*if \(expiresAt <= now\) \{\s*pendingCloudWorkspaceRecords\.delete\(workspaceId\);/,
+  );
+  assert.match(
+    source,
+    /const nextWorkspaces = workspaceListSource === "live"\s*\?\s*mergePendingCloudWorkspaceRecords\(workspaceResponse\.items\)\s*:\s*workspaceResponse\.items;/,
+  );
+  assert.match(
+    source,
+    /const session = await window\.electronAPI\.workspace\.openWorkspace\(workspaceId\);/,
+  );
+  assert.match(
+    source,
+    /const lifecycle = await window\.electronAPI\.workspace\.getWorkspaceLifecycle\(workspaceId\);/,
+  );
+  assert.match(
+    source,
+    /setWorkspaceCreatePhase\("waiting_for_cloud_runtime"\);/,
+  );
+  assert.match(
+    source,
+    /const lifecycle = await waitForCloudWorkspaceReady\(createdWorkspaceId\);/,
+  );
+  assert.match(
+    source,
+    /pendingCloudWorkspaceRecordsRef\.current\.set\(\s*createdWorkspaceId,\s*Date\.now\(\) \+ PENDING_CLOUD_WORKSPACE_RECORD_TTL_MS,\s*\);/,
+  );
+  assert.match(
+    source,
+    /await loadWorkspaceData\(\{ preserveSelection: true, allowEmpty: true \}\);/,
+  );
+  assert.match(
+    source,
+    /setSelectedWorkspaceId\(createdWorkspaceId\);/,
+  );
+  assert.match(
+    source,
     /const customWorkspacePath = isCloudCreate\s*\?\s*""\s*:\s*selectedWorkspaceFolder\?\.rootPath\?\.trim\(\) \|\| "";/,
   );
   assert.match(
@@ -128,9 +196,9 @@ test("workspace creation can copy an existing workspace browser profile or impor
   );
   assert.match(source, /type WorkspaceBrowserBootstrapMode = "fresh" \| "copy_workspace" \| "import_browser";/);
   assert.match(source, /const \[browserImportSource, setBrowserImportSourceState\] =\s*useState<BrowserImportSource>\("chrome"\);/);
-  assert.match(source, /if \(!isCloudCreate && browserBootstrapMode === "copy_workspace"\) \{/);
+  assert.match(source, /browserBootstrapMode === "copy_workspace"/);
   assert.match(source, /workspace\.copyBrowserWorkspaceProfile\(\{/);
-  assert.match(source, /else if \(!isCloudCreate && browserBootstrapMode === "import_browser"\) \{/);
+  assert.match(source, /browserBootstrapMode === "import_browser"/);
   assert.match(source, /workspace\.importBrowserProfile\(\{/);
   assert.match(source, /profileDir:\s*browserImportSource === "safari"\s*\?\s*undefined\s*:\s*\(browserImportProfileDir\.trim\(\) \|\| undefined\),/);
   assert.match(source, /setWorkspaceCreatePhase\("copying_browser_profile"\);/);

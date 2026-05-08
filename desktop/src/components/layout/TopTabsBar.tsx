@@ -172,11 +172,29 @@ export function TopTabsBar({
     return workspaces.filter((workspace) => {
       return (
         workspace.name.toLowerCase().includes(query) ||
+        workspace.id.toLowerCase().includes(query) ||
+        (workspace.location || "").toLowerCase().includes(query) ||
         workspace.status.toLowerCase().includes(query) ||
         (workspace.harness || "").toLowerCase().includes(query)
       );
     });
   }, [workspaceQuery, workspaces]);
+
+  const workspaceShortId = useCallback((workspaceId: string) => {
+    return workspaceId.trim().slice(0, 8);
+  }, []);
+
+  const workspaceSwitcherMetaLabel = useCallback(
+    (workspace: WorkspaceRecordPayload) => {
+      const parts = [
+        workspace.location === "cloud" ? "Cloud" : "Local",
+        workspace.status,
+        workspaceShortId(workspace.id),
+      ].filter((value) => Boolean((value || "").trim()));
+      return parts.join(" • ");
+    },
+    [workspaceShortId],
+  );
 
   const handleTitleBarDoubleClick = (event: MouseEvent<HTMLElement>) => {
     if (!integratedTitleBar) {
@@ -544,7 +562,12 @@ export function TopTabsBar({
                             className="flex min-w-0 flex-1 items-center gap-2 px-1 text-left text-sm font-medium disabled:cursor-not-allowed"
                           >
                             <WorkspaceIcon workspace={workspace} size="md" />
-                            <span className="truncate">{workspace.name}</span>
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate">{workspace.name}</div>
+                              <div className="truncate text-[11px] font-normal text-muted-foreground">
+                                {workspaceSwitcherMetaLabel(workspace)}
+                              </div>
+                            </div>
                             {folderMissing ? (
                               <StatusDot
                                 variant="warning"

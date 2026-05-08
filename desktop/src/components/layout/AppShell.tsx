@@ -2159,6 +2159,9 @@ function AppShellContent() {
         ) {
           return;
         }
+        if (selectedWorkspace?.location === "cloud") {
+          return;
+        }
 
         const targetBrowserSpace = payload.space === "agent" ? "agent" : "user";
         const normalizedSessionId =
@@ -2230,7 +2233,7 @@ function AppShellContent() {
       mounted = false;
       unsubscribe();
     };
-  }, []);
+  }, [selectedWorkspace, selectedWorkspaceId]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) {
@@ -2617,7 +2620,11 @@ function AppShellContent() {
   const handleJumpToSessionBrowser = useCallback(
     (sessionId: string, requestKey: number) => {
       const normalizedSessionId = sessionId.trim();
-      if (!selectedWorkspaceId || !normalizedSessionId) {
+      if (
+        !selectedWorkspaceId ||
+        !normalizedSessionId ||
+        selectedWorkspace?.location === "cloud"
+      ) {
         return;
       }
       revealBrowserPane("agent");
@@ -2626,7 +2633,12 @@ function AppShellContent() {
         .catch(() => undefined);
       consumeChatBrowserJumpRequest(normalizedSessionId, requestKey);
     },
-    [consumeChatBrowserJumpRequest, revealBrowserPane, selectedWorkspaceId],
+    [
+      consumeChatBrowserJumpRequest,
+      revealBrowserPane,
+      selectedWorkspace,
+      selectedWorkspaceId,
+    ],
   );
 
   const hasPendingAgentJump = useMemo(
@@ -2656,7 +2668,7 @@ function AppShellContent() {
   const handleOpenLinkInAppBrowser = useCallback(
     (url: string, workspaceIdOverride?: string | null) => {
       const normalizedUrl = url.trim();
-      if (!normalizedUrl) {
+      if (!normalizedUrl || selectedWorkspace?.location === "cloud") {
         return;
       }
 
@@ -2670,13 +2682,13 @@ function AppShellContent() {
         .then(() => window.electronAPI.browser.navigate(normalizedUrl))
         .catch(() => undefined);
     },
-    [revealBrowserPane, selectedWorkspaceId],
+    [revealBrowserPane, selectedWorkspace, selectedWorkspaceId],
   );
 
   const handleOpenLinkInNewAppBrowserTab = useCallback(
     (url: string, workspaceIdOverride?: string | null) => {
       const normalizedUrl = url.trim();
-      if (!normalizedUrl) {
+      if (!normalizedUrl || selectedWorkspace?.location === "cloud") {
         return;
       }
 
@@ -2690,7 +2702,7 @@ function AppShellContent() {
         .then(() => window.electronAPI.browser.newTab(normalizedUrl))
         .catch(() => undefined);
     },
-    [revealBrowserPane, selectedWorkspaceId],
+    [revealBrowserPane, selectedWorkspace, selectedWorkspaceId],
   );
 
   const handleOpenCreateWorkspacePanel = useCallback(() => {
@@ -4124,19 +4136,54 @@ function AppShellContent() {
       return;
     }
 
+    const cloudWorkspaceSelected = selectedWorkspace?.location === "cloud";
     const nextDisplayView =
       lastRestorableSpaceFileDisplayViewByWorkspaceRef.current[
         selectedWorkspaceId
       ];
     if (!nextDisplayView) {
-      setSpaceExplorerMode("browser");
-      setSpaceDisplayView({ type: "browser" });
+      setSpaceExplorerMode(cloudWorkspaceSelected ? "files" : "browser");
+      setSpaceDisplayView(
+        cloudWorkspaceSelected ? { type: "empty" } : { type: "browser" },
+      );
       return;
     }
 
     setSpaceDisplayView(nextDisplayView);
     syncFileExplorerFocusWithDisplayView(nextDisplayView);
-  }, [selectedWorkspaceId, syncFileExplorerFocusWithDisplayView]);
+  }, [selectedWorkspace, selectedWorkspaceId, syncFileExplorerFocusWithDisplayView]);
+
+  useEffect(() => {
+    if (selectedWorkspace?.location !== "cloud") {
+      return;
+    }
+    setSpaceVisibility((current) =>
+      current.browser ? { ...current, browser: false } : current,
+    );
+    if (spaceExplorerMode === "browser") {
+      setSpaceExplorerMode("files");
+    }
+    if (spaceDisplayView.type === "browser") {
+      const fallbackDisplayView: RestorableSpaceFileDisplayView | { type: "empty" } =
+        selectedWorkspaceId
+        ? (
+            lastRestorableSpaceFileDisplayViewByWorkspaceRef.current[
+              selectedWorkspaceId
+            ] ?? { type: "empty" }
+          )
+        : { type: "empty" };
+      setSpaceDisplayView(fallbackDisplayView);
+      if (fallbackDisplayView.type === "internal") {
+        syncFileExplorerFocusWithDisplayView(fallbackDisplayView);
+      }
+    }
+  }, [
+    selectedWorkspaceId,
+    selectedWorkspace,
+    spaceDisplayView,
+    spaceExplorerMode,
+    syncFileExplorerFocusWithDisplayView,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4358,10 +4405,15 @@ function AppShellContent() {
   const activeApp = getWorkspaceAppDefinition(activeAppId, installedApps);
   const hasWorkspaces = workspaces.length > 0;
   const hasSelectedWorkspace = Boolean(selectedWorkspace);
+  const selectedWorkspaceUsesCloudRuntime = selectedWorkspace?.location === "cloud";
 
   const visibleSpacePaneIds =
     hasWorkspaces && spaceMode
-      ? FIXED_SPACE_ORDER.filter((paneId) => spaceVisibility[paneId])
+      ? FIXED_SPACE_ORDER.filter(
+          (paneId) =>
+            !(paneId === "browser" && selectedWorkspaceUsesCloudRuntime) &&
+            spaceVisibility[paneId],
+        )
       : [];
   const flexSpacePaneId = visibleSpacePaneIds.includes("agent")
     ? "agent"
@@ -5266,7 +5318,13 @@ function AppShellContent() {
                                 icon: LayoutGrid,
                               },
                             ] as const
-                          ).map(({ value, label, icon: Icon }) => {
+                          )
+                            .filter(
+                              ({ value }) =>
+                                value !== "browser" ||
+                                !selectedWorkspaceUsesCloudRuntime,
+                            )
+                            .map(({ value, label, icon: Icon }) => {
                             const isActive = spaceExplorerMode === value;
                             return (
                               <Tooltip>

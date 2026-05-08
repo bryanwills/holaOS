@@ -24,13 +24,17 @@ test("first workspace pane passes panel variant through to the creating view", a
   const source = await readFile(firstWorkspacePanePath, "utf8");
 
   assert.match(source, /<CreatingView[\s\S]*panelVariant=\{isPanelVariant\}/);
+  assert.match(source, /<CreatingView[\s\S]*workspaceCreateLocation=\{workspaceCreateLocation\}/);
 });
 
 test("first workspace onboarding splits configure and browser profile into staged flow", async () => {
   const source = await readFile(firstWorkspacePanePath, "utf8");
 
   assert.match(source, /type OnboardingStep =[\s\S]*\| "browser_profile"/);
-  assert.match(source, /onContinue=\{\(\) => setStep\("browser_profile"\)\}/);
+  assert.match(
+    source,
+    /onContinue=\{\(\) =>\s*cloudScratchCreateSelected\s*\?\s*void createWorkspace\(\)\s*:\s*setStep\("browser_profile"\)\s*\}/,
+  );
   assert.match(
     source,
     /<BrowserProfileStep[\s\S]*onBack=\{\(\) => setStep\("configure"\)\}/,
@@ -45,7 +49,11 @@ test("creating view adapts progress text for copy/import browser bootstrap modes
     source,
     /browserBootstrapMode\?: "fresh" \| "copy_workspace" \| "import_browser";/,
   );
+  assert.match(source, /workspaceCreateLocation\?: WorkspaceLocationPayload;/);
   assert.match(source, /workspaceCreatePhase\?:/);
+  assert.match(source, /"waiting_for_cloud_runtime"/);
+  assert.match(source, /"Launching your cloud workspace"/);
+  assert.match(source, /"Starting remote runtime"/);
   assert.match(source, /"Copying browser profile"/);
   assert.match(source, /"Importing browser data"/);
 });

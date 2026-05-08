@@ -49,6 +49,15 @@ test("workspace IPC handlers delegate through the local workspace control plane"
   );
   assert.match(
     source,
+    /async function listCloudWorkspaces\(\): Promise<WorkspaceListResponsePayload> \{[\s\S]*const withLocation = withCloudWorkspaceListLocation\(response\);[\s\S]*return replaceCachedCloudWorkspaceRecords\(withLocation\.items\);/,
+  );
+  assert.match(source, /function forgetCloudWorkspaceRecord\(workspaceId: string\): void \{\s*cloudWorkspaceRecordCache\.delete\(workspaceId\);\s*\}/);
+  assert.match(
+    source,
+    /async function listWorkspaces\(\): Promise<WorkspaceListResponsePayload> \{[\s\S]*listCloudWorkspaces\(\)\.catch\(\(\) => listCachedCloudWorkspaces\(\)\)/,
+  );
+  assert.match(
+    source,
     /async function openLocalWorkspace\(\s*workspaceId: string,\s*\): Promise<WorkspaceOpenSessionPayload> \{[\s\S]*const session = await resolveWorkspaceRuntimeSession\(safeWorkspaceId, \{\s*refresh: true,\s*\}\);[\s\S]*await requestWorkspaceRuntimeJson<Record<string, unknown>>\(safeWorkspaceId, \{\s*method: "POST",\s*path: "\/api\/v1\/apps\/ensure-running"/,
   );
   assert.match(
@@ -70,6 +79,14 @@ test("workspace IPC handlers delegate through the local workspace control plane"
   assert.match(
     source,
     /name: payload\.name,\s*\.\.\.\(templateName \? \{ template_name: templateName \} : \{\}\),/s,
+  );
+  assert.match(
+    source,
+    /async function deleteCloudWorkspace\(\s*workspaceId: string,\s*\): Promise<WorkspaceResponsePayload> \{[\s\S]*method: "DELETE"[\s\S]*forgetCloudWorkspaceRecord\(safeWorkspaceId\);[\s\S]*forgetWorkspaceRuntimeSession\(safeWorkspaceId\);/,
+  );
+  assert.match(
+    source,
+    /async function deleteWorkspace\(\s*workspaceId: string,\s*keepFiles\?: boolean,\s*\): Promise<WorkspaceResponsePayload> \{[\s\S]*return location === "cloud"\s*\? deleteCloudWorkspace\(safeWorkspaceId\)\s*: deleteLocalWorkspace\(safeWorkspaceId, keepFiles\);/,
   );
   assert.match(
     source,

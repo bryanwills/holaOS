@@ -99,12 +99,15 @@ test("desktop file preview supports PowerPoint presentation kinds", async () => 
 test("desktop file explorer enforces the selected workspace root as a filesystem boundary", async () => {
   const source = await readFile(mainSourcePath, "utf8");
 
+  assert.match(source, /async function resolveCloudWorkspaceScopedExplorerPath\(/);
   assert.match(source, /async function resolveWorkspaceScopedExplorerPath\(/);
   assert.match(source, /async function createExplorerPath\(/);
   assert.match(source, /async function renameExplorerPath\(/);
   assert.match(source, /async function moveExplorerPath\(/);
   assert.match(source, /async function deleteExplorerPath\(/);
-  assert.match(source, /await resolveWorkspaceDir\(normalizedWorkspaceId\)/);
+  assert.match(source, /const workspaceRoot = await resolveLocalWorkspaceRoot\(normalizedWorkspaceId\);/);
+  assert.match(source, /workspaceId is required for cloud workspace file access\./);
+  assert.match(source, /path\.posix\.relative\(rootPath, targetPath\)/);
   assert.match(source, /const relativePath = path\.relative\(rootPath, targetPath\);/);
   assert.match(source, /throw new Error\(`Target path escapes workspace root: \$\{trimmedTargetPath\}`\);/);
   assert.match(source, /throw new Error\("Created path escapes workspace root\."\);/);
@@ -150,6 +153,8 @@ test("desktop file explorer enforces the selected workspace root as a filesystem
   assert.match(source, /function normalizeExplorerImportRelativePath\(/);
   assert.match(source, /function normalizeExplorerImportEntries\(/);
   assert.match(source, /async function importExternalExplorerEntries\(/);
+  assert.match(source, /async function mutateCloudWorkspaceFiles\(/);
+  assert.match(source, /function cloudWorkspaceAbsolutePathFromRelativePath\(/);
   assert.match(source, /assertWorkspaceExplorerPathModifiable\(workspaceRoot, absolutePath\);/);
   assert.match(source, /assertWorkspaceExplorerPathModifiable\(workspaceRoot, sourceAbsolutePath\);/);
   assert.match(source, /assertWorkspaceExplorerPathModifiable\(workspaceRoot, destinationAbsolutePath\);/);
@@ -180,7 +185,15 @@ test("desktop file explorer enforces the selected workspace root as a filesystem
   );
   assert.match(
     source,
+    /async function readFilePreview\([\s\S]*resolveWorkspaceLocation\(normalizedWorkspaceId\)\) === "cloud"[\s\S]*readCloudWorkspaceFilePayload\([\s\S]*return readFilePreview\(absolutePath, workspaceId\);/,
+  );
+  assert.match(
+    source,
     /async function writeTextFile\([\s\S]*const \{ absolutePath \} = await resolveWorkspaceScopedExplorerPath\([\s\S]*await fs\.writeFile\(absolutePath, content, "utf-8"\);[\s\S]*return readFilePreview\(absolutePath, workspaceId\);/,
+  );
+  assert.match(
+    source,
+    /async function writeTextFile\([\s\S]*resolveWorkspaceLocation\(normalizedWorkspaceId\)\) === "cloud"[\s\S]*writeCloudWorkspaceFilePayload\([\s\S]*return readFilePreview\(absolutePath, workspaceId\);/,
   );
   assert.match(
     source,
@@ -188,7 +201,15 @@ test("desktop file explorer enforces the selected workspace root as a filesystem
   );
   assert.match(
     source,
+    /async function writeTableFile\([\s\S]*resolveWorkspaceLocation\(normalizedWorkspaceId\)\) === "cloud"[\s\S]*readCloudWorkspaceFilePayload\([\s\S]*writeCloudWorkspaceFilePayload\([\s\S]*return readFilePreview\(absolutePath, workspaceId\);/,
+  );
+  assert.match(
+    source,
     /"fs:watchFile"[\s\S]*async \(_event, targetPath: string, workspaceId\?: string \| null\) =>\s*watchFilePreviewPath\(targetPath, workspaceId\)/,
+  );
+  assert.match(
+    source,
+    /async function watchFilePreviewPath\([\s\S]*resolveWorkspaceLocation\(normalizedWorkspaceId\)\) === "cloud"[\s\S]*subscriptionId: `file-preview-watch:\$\{randomUUID\(\)\}`,[\s\S]*absolutePath,/,
   );
   assert.match(
     source,
@@ -218,6 +239,42 @@ test("desktop file explorer enforces the selected workspace root as a filesystem
   assert.match(
     source,
     /await fs\.cp\(sourceAbsolutePath, nextAbsolutePath, \{\s*recursive: sourceStat\.isDirectory\(\),[\s\S]*preserveTimestamps: true,[\s\S]*verbatimSymlinks: true,[\s\S]*\}\);/,
+  );
+  assert.match(
+    source,
+    /async function listDirectory\([\s\S]*resolveWorkspaceLocation\(normalizedWorkspaceId\)\) === "cloud"[\s\S]*getCloudWorkspaceSnapshot\(normalizedWorkspaceId\)[\s\S]*buildCloudWorkspaceDirectoryPayload\(/,
+  );
+  assert.match(
+    source,
+    /async function createExplorerPath\([\s\S]*resolveWorkspaceLocation\(normalizedWorkspaceId\)\) === "cloud"[\s\S]*mutateCloudWorkspaceFiles\(normalizedWorkspaceId,\s*\{\s*action: "create"/,
+  );
+  assert.match(
+    source,
+    /async function importExternalExplorerEntries\([\s\S]*resolveWorkspaceLocation\(normalizedWorkspaceId\)\) === "cloud"[\s\S]*mutateCloudWorkspaceFiles\(normalizedWorkspaceId,\s*\{\s*action: "import"/,
+  );
+  assert.match(
+    source,
+    /async function renameExplorerPath\([\s\S]*resolveWorkspaceLocation\(normalizedWorkspaceId\)\) === "cloud"[\s\S]*mutateCloudWorkspaceFiles\(normalizedWorkspaceId,\s*\{\s*action: "rename"/,
+  );
+  assert.match(
+    source,
+    /async function moveExplorerPath\([\s\S]*resolveWorkspaceLocation\(normalizedWorkspaceId\)\) === "cloud"[\s\S]*mutateCloudWorkspaceFiles\(normalizedWorkspaceId,\s*\{\s*action: "move"/,
+  );
+  assert.match(
+    source,
+    /async function copyExplorerPath\([\s\S]*resolveWorkspaceLocation\(normalizedWorkspaceId\)\) === "cloud"[\s\S]*mutateCloudWorkspaceFiles\(normalizedWorkspaceId,\s*\{\s*action: "copy"/,
+  );
+  assert.match(
+    source,
+    /async function deleteExplorerPath\([\s\S]*resolveWorkspaceLocation\(normalizedWorkspaceId\)\) === "cloud"[\s\S]*mutateCloudWorkspaceFiles\(normalizedWorkspaceId,\s*\{\s*action: "delete"/,
+  );
+  assert.match(
+    source,
+    /Cloud workspace files cannot be revealed in the host file manager\./,
+  );
+  assert.match(
+    source,
+    /Cloud workspace file export is not supported from the desktop explorer yet\./,
   );
   assert.match(
     source,
