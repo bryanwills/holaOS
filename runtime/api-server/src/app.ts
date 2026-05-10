@@ -955,6 +955,23 @@ function requireHealthyWorkspaceFolder(
   }
 }
 
+function sendStructuredWorkspaceStoreError(reply: FastifyReply, error: unknown): boolean {
+  const err = error as Error & { code?: string; workspacePath?: string };
+  if (
+    err?.code === "workspace_folder_missing" ||
+    err?.code === "workspace_identity_write_failed" ||
+    err?.code === "workspace_identity_write_busy"
+  ) {
+    reply.code(409).send({
+      detail: err.message,
+      code: err.code,
+      workspace_path: err.workspacePath ?? null
+    });
+    return true;
+  }
+  return false;
+}
+
 function agentSessionPayload(
   record: AgentSessionRecord,
   runtimeStore?: Pick<RuntimeStateStore, "getSubagentRunByChildSession"> | null,
@@ -4282,6 +4299,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         requestedBy: optionalString(request.body.requested_by)
       });
     } catch (error) {
+      if (sendStructuredWorkspaceStoreError(reply, error)) {
+        return;
+      }
       if (error instanceof RuntimeAgentToolsServiceError) {
         return sendError(reply, error.statusCode, error.message);
       }
@@ -5637,6 +5657,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         )
       });
     } catch (error) {
+      if (sendStructuredWorkspaceStoreError(reply, error)) {
+        return;
+      }
       return sendError(reply, 400, error instanceof Error ? error.message : "failed to create workspace");
     }
   });
@@ -5756,6 +5779,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         try {
           relocated = store.relocateWorkspace(params.workspaceId, nextPath);
         } catch (error) {
+          if (sendStructuredWorkspaceStoreError(reply, error)) {
+            return;
+          }
           const msg = error instanceof Error ? error.message : "workspace relocation failed";
           // "workspace X not found" → 404, everything else → 400 (validation).
           if (/not found/.test(msg)) {
@@ -5786,6 +5812,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         )
       };
     } catch (error) {
+      if (sendStructuredWorkspaceStoreError(reply, error)) {
+        return;
+      }
       return sendError(reply, 404, error instanceof Error ? error.message.replace(/^workspace .* not found$/, "workspace not found") : "workspace not found");
     }
   });
