@@ -748,13 +748,13 @@ function shouldShowNativeRuntimeNotification(
   notification: RuntimeNotificationRecordPayload,
   isWindowMinimized: boolean,
 ): boolean {
+  if (isSystemCronjobNotification(notification)) {
+    return true;
+  }
   if (!isWindowMinimized) {
     return false;
   }
-  return (
-    notification.source_type === "main_session" ||
-    isSystemCronjobNotification(notification)
-  );
+  return notification.source_type === "main_session";
 }
 
 function shouldDismissVisibleRuntimeNotification(
@@ -1542,6 +1542,8 @@ function AppShellContent() {
     useState(loadBrowserPaneWidth);
   const [controlCenterCardsPerRow, setControlCenterCardsPerRow] =
     useState<ControlCenterCardsPerRow>(loadControlCenterCardsPerRow);
+  const [desktopNotificationsEnabled, setDesktopNotificationsEnabled] =
+    useState(true);
   const [isUtilityPaneResizing, setIsUtilityPaneResizing] = useState(false);
   const [operationsDrawerOpen, setOperationsDrawerOpen] = useState(
     loadOperationsDrawerOpen,
@@ -2394,6 +2396,7 @@ function AppShellContent() {
             body: item.message,
             workspaceId: item.workspace_id,
             sessionId: notificationTargetSessionId(item),
+            force: isSystemCronjobNotification(item),
           });
           if (shown) {
             consumeControlCenterComposerSubmissionSuppression();
@@ -2524,6 +2527,15 @@ function AppShellContent() {
         } catch {
           // Ignore transient shell URL open failures.
         }
+        return;
+      }
+      // Fallback: no session, no URL (typical for cronjob reminders) — at
+      // least switch to the originating workspace so the click does something
+      // visible.
+      const fallbackWorkspaceId = notification.workspace_id.trim();
+      if (fallbackWorkspaceId) {
+        setSelectedWorkspaceId(fallbackWorkspaceId);
+        setActiveShellView("space");
       }
     },
     [
@@ -2606,6 +2618,37 @@ function AppShellContent() {
     },
     [dismissTaskProposalToast, handleDismissNotification],
   );
+
+  const inboxNotifications = useMemo(
+    () => notifications.filter((item) => item.state === "unread"),
+    [notifications],
+  );
+  const inboxWorkspacesById = useMemo(() => {
+    const map = new Map<string, WorkspaceRecordPayload>();
+    for (const workspace of workspaces) {
+      map.set(workspace.id.trim(), workspace);
+    }
+    return map;
+  }, [workspaces]);
+  const handleMarkAllInboxNotificationsRead = useCallback(async () => {
+    if (!window.electronAPI || inboxNotifications.length === 0) return;
+    // Optimistically clear locally so the badge / popover update without
+    // waiting on the round-trip; refreshNotifications below reconciles with
+    // the server's truth.
+    for (const item of inboxNotifications) {
+      dismissNotificationToast(item.id);
+    }
+    await Promise.allSettled(
+      inboxNotifications.map((item) =>
+        window.electronAPI!.workspace.updateNotification(
+          item.workspace_id,
+          item.id,
+          { state: "dismissed" },
+        ),
+      ),
+    );
+    await refreshNotifications();
+  }, [dismissNotificationToast, inboxNotifications, refreshNotifications]);
 
   useEffect(() => {
     void refreshNotifications();
@@ -3705,6 +3748,58 @@ function AppShellContent() {
   );
 
   useEffect(() => {
+    const unsubscribe = window.electronAPI.ui.onNotificationActivated(
+      ({ workspaceId }) => {
+        if (!workspaceId) return;
+        handleEnterWorkspace(workspaceId);
+      },
+    );
+    return unsubscribe;
+  }, [handleEnterWorkspace]);
+
+  useEffect(() => {
+    const unread = notifications.reduce(
+      (count, item) => (item.state === "unread" ? count + 1 : count),
+      0,
+    );
+    void window.electronAPI.ui.setBadgeCount(unread);
+  }, [notifications]);
+
+  useEffect(() => {
+    return () => {
+      void window.electronAPI.ui.setBadgeCount(0);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.electronAPI.ui
+      .getNotificationsEnabled()
+      .then((enabled) => {
+        if (!cancelled) {
+          setDesktopNotificationsEnabled(enabled);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleDesktopNotificationsChange = useCallback(
+    (enabled: boolean) => {
+      setDesktopNotificationsEnabled(enabled);
+      void window.electronAPI.ui
+        .setNotificationsEnabled(enabled)
+        .then((persisted) => {
+          setDesktopNotificationsEnabled(persisted);
+        })
+        .catch(() => undefined);
+    },
+    [],
+  );
+
+  useEffect(() => {
     if (startupWorkspaceSelectionHandledRef.current) {
       return;
     }
@@ -4195,12 +4290,6 @@ function AppShellContent() {
     setSpaceDisplayView(spaceDisplayView);
   }, [selectedWorkspaceId, spaceDisplayView]);
 
-  useEffect(() => {
-    if (spaceBrowserFullscreen && spaceDisplayView.type !== "browser") {
-      setSpaceBrowserFullscreen(false);
-    }
-  }, [spaceBrowserFullscreen, spaceDisplayView.type]);
-
   const toggleSpaceBrowserFullscreen = useCallback(() => {
     setSpaceBrowserFullscreen((prev) => {
       const next = !prev;
@@ -4210,6 +4299,29 @@ function AppShellContent() {
       return next;
     });
   }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "\\") return;
+      const meta = event.metaKey || event.ctrlKey;
+      if (!meta || event.altKey || event.shiftKey) return;
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        const tag = target.tagName;
+        if (
+          tag === "INPUT" ||
+          tag === "TEXTAREA" ||
+          target.isContentEditable
+        ) {
+          return;
+        }
+      }
+      event.preventDefault();
+      toggleSpaceBrowserFullscreen();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [toggleSpaceBrowserFullscreen]);
 
   useEffect(() => {
     if (!selectedWorkspaceId) {
@@ -4826,7 +4938,6 @@ function AppShellContent() {
           layoutSyncKey={spaceDisplayLayoutSyncKey}
           embedded
           fullscreen={spaceBrowserFullscreen}
-          onToggleFullscreen={toggleSpaceBrowserFullscreen}
         />
       );
     }
@@ -5278,6 +5389,20 @@ function AppShellContent() {
               desktopPlatform={desktopPlatform}
               runtimeStatus={runtimeStatus}
               controlCenterActive={controlCenterMode}
+              chatPanelHidden={spaceBrowserFullscreen}
+              showChatPanelToggle={spaceMode && !controlCenterMode}
+              onToggleChatPanel={toggleSpaceBrowserFullscreen}
+              inboxNotifications={inboxNotifications}
+              inboxWorkspacesById={inboxWorkspacesById}
+              onActivateInboxNotification={(id) =>
+                void handleActivateDisplayedNotification(id)
+              }
+              onDismissInboxNotification={(id) =>
+                void handleCloseDisplayedNotification(id)
+              }
+              onMarkAllInboxNotificationsRead={() =>
+                void handleMarkAllInboxNotificationsRead()
+              }
               onOpenControlCenter={handleOpenControlCenter}
               onWorkspaceSwitcherVisibilityChange={setWorkspaceSwitcherOpen}
               onOpenWorkspaceCreatePanel={handleOpenCreateWorkspacePanel}
@@ -5318,7 +5443,6 @@ function AppShellContent() {
             workspaces={workspaces}
             selectedWorkspaceId={selectedWorkspaceId}
             cardsPerRow={controlCenterCardsPerRow}
-            composerModel={currentComposerSelectedModel(runtimeConfig)}
             orderedWorkspaceIds={controlCenterWorkspaceCardOrder}
             highlightedWorkspaceIds={controlCenterHighlightedWorkspaceIds}
             onSelectWorkspace={handleSelectControlCenterWorkspace}
@@ -5680,6 +5804,8 @@ function AppShellContent() {
             onThemeVariantChange={handleThemeVariantChange}
             workspaceCardsPerRow={controlCenterCardsPerRow}
             onWorkspaceCardsPerRowChange={setControlCenterCardsPerRow}
+            desktopNotificationsEnabled={desktopNotificationsEnabled}
+            onDesktopNotificationsChange={handleDesktopNotificationsChange}
             onOpenExternalUrl={handleOpenExternalUrl}
             submissionsFocusId={submissionsFocusId}
           />

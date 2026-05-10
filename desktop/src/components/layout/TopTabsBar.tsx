@@ -7,6 +7,8 @@ import {
   LayoutGrid,
   Loader2,
   Minus,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   Search,
   Settings,
@@ -26,6 +28,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { CreditsPill } from "@/components/billing/CreditsPill";
+import { NotificationInbox } from "@/components/layout/NotificationInbox";
 import { RuntimeStatusIndicator } from "@/components/layout/RuntimeStatusIndicator";
 import { Button } from "@/components/ui/button";
 import { StatusDot } from "@/components/ui/status-dot";
@@ -61,6 +64,14 @@ interface TopTabsBarProps {
   desktopPlatform?: string | null;
   runtimeStatus?: RuntimeStatusPayload | null;
   controlCenterActive?: boolean;
+  chatPanelHidden?: boolean;
+  showChatPanelToggle?: boolean;
+  onToggleChatPanel?: () => void;
+  inboxNotifications?: RuntimeNotificationRecordPayload[];
+  inboxWorkspacesById?: Map<string, WorkspaceRecordPayload>;
+  onActivateInboxNotification?: (notificationId: string) => void;
+  onDismissInboxNotification?: (notificationId: string) => void;
+  onMarkAllInboxNotificationsRead?: () => void;
   onOpenControlCenter?: () => void;
   onWorkspaceSwitcherVisibilityChange?: (open: boolean) => void;
   onOpenWorkspaceCreatePanel?: () => void;
@@ -76,6 +87,14 @@ export function TopTabsBar({
   desktopPlatform = null,
   runtimeStatus = null,
   controlCenterActive = false,
+  chatPanelHidden = false,
+  showChatPanelToggle = false,
+  onToggleChatPanel,
+  inboxNotifications,
+  inboxWorkspacesById,
+  onActivateInboxNotification,
+  onDismissInboxNotification,
+  onMarkAllInboxNotificationsRead,
   onOpenControlCenter,
   onWorkspaceSwitcherVisibilityChange,
   onOpenWorkspaceCreatePanel,
@@ -85,6 +104,7 @@ export function TopTabsBar({
   onOpenExternalUrl,
   onPublish,
 }: TopTabsBarProps) {
+  const [inboxOpen, setInboxOpen] = useState(false);
   // Mac stoplight compensation now flows through StoplightContext (set in
   // AppShell); the hook returns true only on darwin AND when the provider
   // says we have an integrated title bar. We still keep the platform prop
@@ -396,6 +416,57 @@ export function TopTabsBar({
             />
           ) : null}
           <RuntimeStatusIndicator status={runtimeStatus} />
+          {inboxNotifications &&
+          inboxWorkspacesById &&
+          onActivateInboxNotification &&
+          onDismissInboxNotification &&
+          onMarkAllInboxNotificationsRead ? (
+            <NotificationInbox
+              open={inboxOpen}
+              onOpenChange={setInboxOpen}
+              notifications={inboxNotifications}
+              workspacesById={inboxWorkspacesById}
+              onActivate={(id) => {
+                setInboxOpen(false);
+                onActivateInboxNotification(id);
+              }}
+              onDismiss={onDismissInboxNotification}
+              onMarkAllRead={() => {
+                onMarkAllInboxNotificationsRead();
+                setInboxOpen(false);
+              }}
+            />
+          ) : null}
+          {showChatPanelToggle && onToggleChatPanel ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={
+                      chatPanelHidden ? "Show chat panel" : "Hide chat panel"
+                    }
+                    aria-pressed={chatPanelHidden}
+                    onClick={() => onToggleChatPanel()}
+                    className={
+                      chatPanelHidden
+                        ? "text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    }
+                  >
+                    {chatPanelHidden ? <PanelRightOpen /> : <PanelRightClose />}
+                  </Button>
+                }
+              />
+              <TooltipContent side="bottom">
+                {chatPanelHidden ? "Show chat panel" : "Hide chat panel"}
+                <span className="ml-1.5 text-muted-foreground">
+                  {desktopPlatform === "darwin" ? "⌘\\" : "Ctrl+\\"}
+                </span>
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
           <DropdownMenu>
             <DropdownMenuTrigger
               ref={userButtonRef}
