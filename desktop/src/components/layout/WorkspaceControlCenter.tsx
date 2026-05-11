@@ -387,6 +387,15 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
   const lastSignaledCompletionKeyRef = useRef("");
   const lastTerminalRunOutcomeRef = useRef<"completed" | "failed" | null>(null);
   const disposedRef = useRef(false);
+  // Tracks whether the initial snapshot fetch has happened. Used to keep
+  // the Loading state off on subsequent refreshSnapshot effect re-runs
+  // (those happen when one of the useCallback deps is unstable across
+  // renders); without this, the snapshot effect would flash "Loading…"
+  // every time the parent re-renders enough to invalidate a callback,
+  // including when the IntersectionObserver-driven visibility change
+  // upstream cascades far enough — visible to the user as a one-frame
+  // flicker in the chat area when a card scrolls into view.
+  const hasFetchedInitialSnapshotRef = useRef(false);
 
   const workspaceUnavailable = workspace.folder_state === "missing";
   const handleEnterWorkspace = useCallback(() => {
@@ -691,7 +700,12 @@ const WorkspaceControlCenterCard = memo(function WorkspaceControlCenterCard({
 
   useEffect(() => {
     disposedRef.current = false;
-    void refreshSnapshot({ attachStream: true, showLoading: true }).catch(
+    // Only show the Loading placeholder for the very first fetch. Any
+    // subsequent re-runs of this effect (deps churn) refresh silently —
+    // the previous messages stay visible while fresh data loads in.
+    const showLoading = !hasFetchedInitialSnapshotRef.current;
+    hasFetchedInitialSnapshotRef.current = true;
+    void refreshSnapshot({ attachStream: true, showLoading }).catch(
       (error) => {
         if (disposedRef.current) {
           return;
