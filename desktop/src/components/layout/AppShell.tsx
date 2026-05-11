@@ -14,6 +14,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -1530,6 +1531,16 @@ function AppShellContent() {
   const [spaceAgentPaneWidth, setSpaceAgentPaneWidth] = useState(
     SPACE_AGENT_PANE_WIDTH,
   );
+  // Live width of the space layout row, fed by the ResizeObserver below.
+  // Used to derive explicit pixel widths for the display / agent panes
+  // (instead of toggling flex-1 ↔ width:Xpx, which the browser can't
+  // smoothly interpolate — see Tier 2 design notes).
+  const [spaceLayoutHostWidth, setSpaceLayoutHostWidth] = useState(0);
+  // True while the space-pane width transition is mid-flight. Flips
+  // true on collapse/fullscreen toggle, back to false ~230ms later.
+  // ChatPane reads this to pin its inner column width — preventing
+  // text re-wrap during the outer animation.
+  const [isSpacePaneAnimating, setIsSpacePaneAnimating] = useState(false);
   const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(
     null,
   );
@@ -4867,6 +4878,7 @@ function AppShellContent() {
           onComposerDraftTextChange={handleChatComposerDraftTextChange}
           scheduleEditContext={chatScheduleEditContext}
           onScheduleEditContextDismiss={() => setChatScheduleEditContext(null)}
+          isPaneAnimating={isSpacePaneAnimating}
         />
       );
     }
@@ -4962,6 +4974,7 @@ function AppShellContent() {
     triggerRemoteTaskProposal,
     chooseWorkspaceRelocationFolder,
     deleteWorkspace,
+    isSpacePaneAnimating,
   ]);
 
   const spaceDisplayLayoutSyncKey = `${spaceExplorerMode}:${spaceBrowserSpace}:${filesPaneWidth}:${spaceAgentPaneWidth}:${spaceBrowserFullscreen ? "fs" : "split"}`;
@@ -5132,6 +5145,12 @@ function AppShellContent() {
     let frame: number | null = null;
     const flush = () => {
       frame = null;
+      const measuredHostWidth = Math.round(
+        utilityPaneHostRef.current?.getBoundingClientRect().width ?? 0,
+      );
+      setSpaceLayoutHostWidth((prev) =>
+        prev === measuredHostWidth ? prev : measuredHostWidth,
+      );
       setSpaceAgentPaneWidth((current) => clampSpaceAgentPaneWidth(current));
       if (hasVisibleSpacePanes) {
         syncUtilityPaneWidths();
@@ -5166,6 +5185,75 @@ function AppShellContent() {
     hasVisibleSpacePanes,
     spaceMode,
     syncUtilityPaneWidths,
+  ]);
+
+  // Synchronous initial measurement so the first paint after spaceMode
+  // mounts already has the correct pixel widths — without this the panes
+  // would flash through a width:0 layout before the ResizeObserver fires.
+  useLayoutEffect(() => {
+    if (!spaceMode) return;
+    const host = utilityPaneHostRef.current;
+    if (!host) return;
+    const width = Math.round(host.getBoundingClientRect().width);
+    setSpaceLayoutHostWidth((prev) => (prev === width ? prev : width));
+  }, [spaceMode]);
+
+  // Skip the initial mount — there's no transition to mask there.
+  // The state itself is declared earlier (alongside spaceLayoutHostWidth)
+  // so the agentContent useMemo can pass it down to ChatPane.
+  const spacePaneAnimatingFirstRunRef = useRef(true);
+  useEffect(() => {
+    if (spacePaneAnimatingFirstRunRef.current) {
+      spacePaneAnimatingFirstRunRef.current = false;
+      return;
+    }
+    setIsSpacePaneAnimating(true);
+    // 230ms = the 200ms width transition + a small grace window so the
+    // freeze releases after the browser has settled the final layout.
+    const timer = window.setTimeout(() => {
+      setIsSpacePaneAnimating(false);
+    }, 230);
+    return () => window.clearTimeout(timer);
+  }, [effectiveSpaceWorkspacePanelCollapsed, spaceBrowserFullscreen]);
+
+  // Width of the resize handle in the space layout row (matches the
+  // `w-2` class on the separator div below).
+  const SPACE_DISPLAY_HANDLE_WIDTH = 8;
+  // Sum of the explorer rail + the handle slot. Both stay constant
+  // through the collapse/expand transition, so the display and agent
+  // panes share `hostWidth - reserved` between them.
+  const spaceLayoutReservedWidth =
+    SPACE_EXPLORER_RAIL_WIDTH + SPACE_DISPLAY_HANDLE_WIDTH;
+  // Pixel widths for the display and agent panes. Computing them as
+  // explicit values (instead of toggling `flex-1` ↔ `width:Xpx`) lets
+  // the browser interpolate width smoothly — the root cause fix for
+  // the choppy collapse/expand animation.
+  const spaceLayoutDerivedWidths = useMemo(() => {
+    const host = spaceLayoutHostWidth;
+    if (host <= 0) {
+      return null;
+    }
+    const remaining = Math.max(0, host - spaceLayoutReservedWidth);
+    if (spaceBrowserFullscreen) {
+      return { displayWidth: remaining, agentWidth: 0 };
+    }
+    if (effectiveSpaceWorkspacePanelCollapsed) {
+      return { displayWidth: 0, agentWidth: remaining };
+    }
+    const agentWidth = Math.max(
+      MIN_AGENT_CONTENT_WIDTH,
+      Math.min(spaceAgentPaneWidth, remaining - SPACE_DISPLAY_MIN_WIDTH),
+    );
+    return {
+      displayWidth: Math.max(0, remaining - agentWidth),
+      agentWidth,
+    };
+  }, [
+    effectiveSpaceWorkspacePanelCollapsed,
+    spaceAgentPaneWidth,
+    spaceBrowserFullscreen,
+    spaceLayoutHostWidth,
+    spaceLayoutReservedWidth,
   ]);
 
   const startSpaceDisplayResize = useCallback(
@@ -5509,13 +5597,7 @@ function AppShellContent() {
                   >
                     <section
                       id="space-workspace-panel"
-                      className={`flex min-h-0 min-w-0 ${
-                        spaceBrowserFullscreen
-                          ? "flex-1"
-                          : effectiveSpaceWorkspacePanelCollapsed
-                            ? "mr-1.5 shrink-0"
-                            : "flex-1"
-                      } overflow-hidden rounded-xl border border-border bg-card shadow-md backdrop-blur-sm transition-[margin] duration-200 ease-out`}
+                      className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-card shadow-md backdrop-blur-sm"
                     >
                       <div
                         className="shrink-0 overflow-hidden border-r border-border bg-card"
@@ -5734,56 +5816,52 @@ function AppShellContent() {
                       </div>
 
                       <div
-                        className={`min-h-0 min-w-0 overflow-hidden transition-all duration-200 ease-out ${
-                          spaceBrowserFullscreen
-                            ? "flex-1"
-                            : effectiveSpaceWorkspacePanelCollapsed
-                              ? "w-0 flex-none"
-                              : "flex-1"
-                        }`}
-                        style={
-                          spaceBrowserFullscreen
-                            ? { minWidth: 0 }
-                            : effectiveSpaceWorkspacePanelCollapsed
-                              ? { minWidth: 0 }
-                              : { minWidth: `${SPACE_DISPLAY_MIN_WIDTH}px` }
-                        }
+                        className="min-h-0 min-w-0 flex-1 overflow-hidden"
+                        style={{ minWidth: 0 }}
                       >
                         {spaceDisplayContent}
                       </div>
                     </section>
 
-                    {!effectiveSpaceWorkspacePanelCollapsed &&
-                    !spaceBrowserFullscreen ? (
+                    {!spaceBrowserFullscreen ? (
                       <div
                         role="separator"
                         aria-label="Resize display pane"
                         aria-orientation="vertical"
-                        onPointerDown={startSpaceDisplayResize}
-                        className="group relative z-10 flex w-2 shrink-0 cursor-col-resize touch-none items-center justify-center"
+                        aria-hidden={effectiveSpaceWorkspacePanelCollapsed}
+                        onPointerDown={
+                          effectiveSpaceWorkspacePanelCollapsed
+                            ? undefined
+                            : startSpaceDisplayResize
+                        }
+                        className={`group relative z-10 flex w-2 shrink-0 items-center justify-center transition-opacity duration-200 ease-out ${
+                          effectiveSpaceWorkspacePanelCollapsed
+                            ? "pointer-events-none cursor-default opacity-0"
+                            : "cursor-col-resize touch-none opacity-100"
+                        }`}
                       >
                         <div className="pointer-events-none absolute left-1/2 top-1/2 h-14 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/8 opacity-0 transition duration-150 group-hover:opacity-100" />
                       </div>
                     ) : null}
 
                     <div
-                      className={`min-h-0 rounded-xl transition-all duration-200 ease-out ${
-                        spaceBrowserFullscreen
-                          ? "w-0 shrink-0 overflow-hidden"
-                          : effectiveSpaceWorkspacePanelCollapsed
-                            ? "flex-1"
-                            : "shrink-0"
+                      className={`min-h-0 shrink-0 overflow-hidden rounded-xl ${
+                        isUtilityPaneResizing
+                          ? ""
+                          : "transition-[width] duration-200 ease-out"
                       }`}
-                      style={
-                        spaceBrowserFullscreen
-                          ? { width: 0, minWidth: 0 }
-                          : effectiveSpaceWorkspacePanelCollapsed
-                            ? { minWidth: `${MIN_AGENT_CONTENT_WIDTH}px` }
-                            : {
-                                width: `${spaceAgentPaneWidth}px`,
-                                minWidth: `${MIN_AGENT_CONTENT_WIDTH}px`,
-                              }
-                      }
+                      style={{
+                        // Explicit pixel width in every state so the browser
+                        // interpolates `width` smoothly; toggling flex-1 ↔
+                        // width:Xpx caused the choppy collapse animation.
+                        width: spaceLayoutDerivedWidths
+                          ? `${spaceLayoutDerivedWidths.agentWidth}px`
+                          : `${spaceAgentPaneWidth}px`,
+                        minWidth: spaceBrowserFullscreen
+                          ? 0
+                          : `${MIN_AGENT_CONTENT_WIDTH}px`,
+                        contain: "layout style",
+                      }}
                       aria-hidden={spaceBrowserFullscreen}
                     >
                       {agentContent}

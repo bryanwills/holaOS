@@ -2522,6 +2522,11 @@ interface ChatPaneProps {
    *  (cron, instruction, description). Cleared on send / dismiss. */
   scheduleEditContext?: CronjobRecordPayload | null;
   onScheduleEditContextDismiss?: () => void;
+  /** True while the outer pane is mid-width-transition. When set,
+   *  ChatPane freezes its inner content column to its pre-transition
+   *  width so message text doesn't re-wrap during the animation —
+   *  re-wrap is the source of the "messages drift up" motion. */
+  isPaneAnimating?: boolean;
 }
 
 export function ChatPane({
@@ -2554,6 +2559,7 @@ export function ChatPane({
   onComposerDraftTextChange,
   scheduleEditContext = null,
   onScheduleEditContextDismiss,
+  isPaneAnimating = false,
 }: ChatPaneProps) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const authSessionState = useDesktopAuthSession();
@@ -2768,6 +2774,13 @@ export function ChatPane({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerBlockRef = useRef<HTMLDivElement>(null);
+  // When the outer pane is mid-width-transition, freeze the inner
+  // content column to its pre-transition pixel width so message text
+  // doesn't re-wrap mid-animation. Re-wrap is what makes messages
+  // appear to drift up as content height shrinks under a wider column.
+  const [frozenColumnWidth, setFrozenColumnWidth] = useState<number | null>(
+    null,
+  );
   const composerIsComposingRef = useRef(false);
   const shouldAutoScrollRef = useRef(true);
   // When a prefill arrives (e.g. routing back from Automations), the
@@ -7129,6 +7142,31 @@ export function ChatPane({
     : "Ask anything";
   const showHistoryRestoreScreen = isLoadingHistory || isHistoryViewportPending;
 
+  // Sample the current column width synchronously when the outer pane
+  // starts animating, hold that value as inline width while the
+  // animation runs, then release. Reading bounding rect once per
+  // transition (not per frame) keeps the freeze cheap.
+  useLayoutEffect(() => {
+    if (!isPaneAnimating) {
+      setFrozenColumnWidth(null);
+      return;
+    }
+    const source = messagesContentRef.current ?? composerBlockRef.current;
+    if (!source) return;
+    const width = Math.round(source.getBoundingClientRect().width);
+    if (width > 0) {
+      setFrozenColumnWidth(width);
+    }
+  }, [isPaneAnimating]);
+
+  const frozenColumnStyle = useMemo(
+    () =>
+      frozenColumnWidth !== null
+        ? ({ width: `${frozenColumnWidth}px`, maxWidth: "none" } as const)
+        : undefined,
+    [frozenColumnWidth],
+  );
+
   useEffect(() => {
     if (!hasMessages) {
       setComposerBlockHeight(0);
@@ -7140,18 +7178,41 @@ export function ChatPane({
       return;
     }
 
-    const updateComposerBlockHeight = () => {
-      setComposerBlockHeight(
-        Math.round(composerBlock.getBoundingClientRect().height),
-      );
+    // Coalesce observations into one rAF-bucketed update and bail on
+    // identical heights. Outer-pane width transitions fire this observer
+    // every frame; without dedup we re-render the entire chat tree
+    // ~12 times per 200ms, which is the main source of jank during the
+    // ChatPane ↔ WorkPane expand/collapse animation.
+    let frame: number | null = null;
+    const flush = (next: number) => {
+      setComposerBlockHeight((prev) => (prev === next ? prev : next));
     };
 
-    updateComposerBlockHeight();
-    const resizeObserver = new ResizeObserver(() => {
-      updateComposerBlockHeight();
+    const initialHeight = Math.round(
+      composerBlock.getBoundingClientRect().height,
+    );
+    flush(initialHeight);
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      // contentRect comes from the observer's cached layout — reading
+      // it doesn't force a sync reflow the way getBoundingClientRect()
+      // does inside the listener.
+      const next = Math.round(entry.contentRect.height);
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+      }
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        flush(next);
+      });
     });
     resizeObserver.observe(composerBlock);
     return () => {
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+      }
       resizeObserver.disconnect();
     };
   }, [hasMessages]);
@@ -7402,6 +7463,7 @@ export function ChatPane({
                   className={`mx-auto flex min-w-0 w-full ${CHAT_LAYOUT.contentMaxWidth} flex-col gap-2 pl-4 pr-7 pb-3 pt-5 ${
                     showHistoryRestoreScreen ? "invisible" : ""
                   }`}
+                  style={frozenColumnStyle}
                 >
                   {hasLoaderHeader ? (
                     <div className="flex justify-center">
@@ -7610,6 +7672,7 @@ export function ChatPane({
               className={`mx-auto w-full shrink-0 ${CHAT_LAYOUT.contentMaxWidth} ${CHAT_LAYOUT.contentPaddingX} pb-6 pt-3 ${
                 showHistoryRestoreScreen ? "invisible" : ""
               }`}
+              style={frozenColumnStyle}
             >
               <form onSubmit={onSubmit} className="w-full">
                 <div className="space-y-3">
