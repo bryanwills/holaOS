@@ -1649,6 +1649,14 @@ function AppShellContent() {
   const lastRestorableSpaceAppDisplayViewByWorkspaceRef = useRef<
     Record<string, RestorableSpaceAppDisplayView>
   >({});
+  // Marks the workspace id for which the next workspace-change cycle should
+  // *not* reset spaceDisplayView — the caller is about to (or just did) set
+  // displayView explicitly, so the workspace-change effect at #space-display-
+  // view-restore must defer to that intent. Cleared after the effect honors
+  // it. See handleOpenControlCenterWorkspaceOutput for the canonical caller.
+  const explicitSpaceDisplayViewRequestedForWorkspaceRef = useRef<string | null>(
+    null,
+  );
   const spaceDisplayResizeStateRef = useRef<{
     startWidth: number;
     startX: number;
@@ -4342,6 +4350,20 @@ function AppShellContent() {
       return;
     }
 
+    // If the click handler that just triggered this workspace switch
+    // explicitly set spaceDisplayView (e.g. opening a file from a Control
+    // Center card), honor that intent — don't restore from cache or reset
+    // to browser. Otherwise this effect races the click handler and wipes
+    // the just-set view (the "first-visit workspace, click file, preview
+    // doesn't open" bug).
+    if (
+      explicitSpaceDisplayViewRequestedForWorkspaceRef.current ===
+      selectedWorkspaceId
+    ) {
+      explicitSpaceDisplayViewRequestedForWorkspaceRef.current = null;
+      return;
+    }
+
     const nextDisplayView =
       lastRestorableSpaceFileDisplayViewByWorkspaceRef.current[
         selectedWorkspaceId
@@ -4529,6 +4551,12 @@ function AppShellContent() {
         } catch {
           workspaceInstalledAppIds = new Set<string>();
         }
+        // Mark before the workspace switch: this batches with the
+        // setSpaceDisplayView call inside openWorkspaceOutputTarget below,
+        // so when the workspace-change effect fires it sees the marker and
+        // defers to our explicit displayView instead of overwriting it.
+        explicitSpaceDisplayViewRequestedForWorkspaceRef.current =
+          normalizedWorkspaceId;
         setSelectedWorkspaceId(normalizedWorkspaceId);
       }
 
