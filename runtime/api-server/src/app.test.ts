@@ -10,6 +10,7 @@ import { afterEach, test } from "node:test";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 
+import Database from "better-sqlite3";
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 import yazl from "yazl";
 import * as tar from "tar";
@@ -66,6 +67,38 @@ function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   tempDirs.push(dir);
   return dir;
+}
+
+function seedWorkspaceDataForQuery(dbPath: string): void {
+  const db = new Database(dbPath);
+  db.pragma("journal_mode = WAL");
+  db.exec(`
+    CREATE TABLE twitter_posts (
+      id TEXT PRIMARY KEY,
+      campaign_key TEXT,
+      status TEXT NOT NULL
+    );
+    CREATE TABLE campaign_plans (
+      campaign_key TEXT PRIMARY KEY,
+      owner TEXT NOT NULL
+    );
+  `);
+  db.prepare(
+    "INSERT INTO twitter_posts (id, campaign_key, status) VALUES (?, ?, ?)",
+  ).run("p1", "launch-a", "draft");
+  db.prepare(
+    "INSERT INTO twitter_posts (id, campaign_key, status) VALUES (?, ?, ?)",
+  ).run("p2", "launch-a", "draft");
+  db.prepare(
+    "INSERT INTO twitter_posts (id, campaign_key, status) VALUES (?, ?, ?)",
+  ).run("p3", "launch-b", "published");
+  db.prepare(
+    "INSERT INTO campaign_plans (campaign_key, owner) VALUES (?, ?)",
+  ).run("launch-a", "alice");
+  db.prepare(
+    "INSERT INTO campaign_plans (campaign_key, owner) VALUES (?, ?)",
+  ).run("launch-b", "bob");
+  db.close();
 }
 
 function writeRuntimeConfig(root: string, document: Record<string, unknown>): void {
@@ -738,123 +771,588 @@ test("runtime tools capability routes expose local onboarding and cronjob action
     onboardingSessionId: "session-1"
   });
   const app = buildTestRuntimeApiServer({ store });
+  try {
+    const capabilityStatus = await app.inject({
+      method: "GET",
+      url: "/api/v1/capabilities/runtime-tools",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1"
+      }
+    });
+    assert.equal(capabilityStatus.statusCode, 200);
+    assert.equal(capabilityStatus.json().available, true);
+    assert.equal(capabilityStatus.json().workspace_id, "workspace-1");
+    assert.ok(
+      capabilityStatus
+        .json()
+        .tools.some((tool: { id: string }) => tool.id === "holaboss_onboarding_complete")
+    );
+    assert.ok(
+      capabilityStatus
+        .json()
+        .tools.some((tool: { id: string }) => tool.id === "image_generate")
+    );
+    assert.ok(
+      capabilityStatus
+        .json()
+        .tools.some((tool: { id: string }) => tool.id === "download_url")
+    );
+    assert.ok(
+      capabilityStatus
+        .json()
+        .tools.some((tool: { id: string }) => tool.id === "write_report")
+    );
+    assert.ok(
+      capabilityStatus
+        .json()
+        .tools.some((tool: { id: string }) => tool.id === "web_search")
+    );
+    assert.ok(
+      capabilityStatus
+        .json()
+        .tools.some((tool: { id: string }) => tool.id === "todoread")
+    );
+    assert.ok(
+      capabilityStatus
+        .json()
+        .tools.some((tool: { id: string }) => tool.id === "todowrite")
+    );
+    assert.ok(
+      capabilityStatus
+        .json()
+        .tools.some((tool: { id: string }) => tool.id === "terminal_session_start")
+    );
+    assert.ok(
+      capabilityStatus
+        .json()
+        .tools.some((tool: { id: string }) => tool.id === "skill")
+    );
+    assert.ok(
+      capabilityStatus
+        .json()
+        .tools.some((tool: { id: string }) => tool.id === "workspace_apps_scaffold")
+    );
+    assert.ok(
+      capabilityStatus
+        .json()
+        .tools.some((tool: { id: string }) => tool.id === "workspace_apps_build")
+    );
+    assert.ok(
+      capabilityStatus
+        .json()
+        .tools.some((tool: { id: string }) => tool.id === "workspace_apps_restart_and_wait_ready")
+    );
+    assert.ok(
+      capabilityStatus
+        .json()
+        .tools.some((tool: { id: string }) => tool.id === "workspace_apps_wait_until_ready")
+    );
+    assert.ok(
+      capabilityStatus
+        .json()
+        .tools.some((tool: { id: string }) => tool.id === "workspace_apps_probe_endpoints")
+    );
+    assert.ok(
+      capabilityStatus
+        .json()
+        .tools.some((tool: { id: string }) => tool.id === "workspace_data_describe_table")
+    );
+    assert.ok(
+      capabilityStatus
+        .json()
+        .tools.some((tool: { id: string }) => tool.id === "workspace_data_query")
+    );
 
-  const capabilityStatus = await app.inject({
-    method: "GET",
-    url: "/api/v1/capabilities/runtime-tools",
-    headers: {
-      "x-holaboss-workspace-id": "workspace-1"
-    }
+    const onboardingStatus = await app.inject({
+      method: "GET",
+      url: "/api/v1/capabilities/runtime-tools/onboarding/status",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1"
+      }
+    });
+    assert.equal(onboardingStatus.statusCode, 200);
+    assert.equal(onboardingStatus.json().onboarding_status, "pending");
+
+    const onboardingComplete = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/onboarding/complete",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1"
+      },
+      payload: {
+        summary: "ready to work"
+      }
+    });
+    assert.equal(onboardingComplete.statusCode, 200);
+    assert.equal(onboardingComplete.json().onboarding_status, "completed");
+    assert.equal(onboardingComplete.json().onboarding_completion_summary, "ready to work");
+
+    const createdJob = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/cronjobs",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+        "x-holaboss-session-id": "session-main",
+        "x-holaboss-selected-model": "openai/gpt-5.4"
+      },
+      payload: {
+        cron: "0 9 * * *",
+        description: "Daily check",
+        delivery: { mode: "deliver", channel: "session_run" }
+      }
+    });
+    assert.equal(createdJob.statusCode, 200);
+    assert.equal(createdJob.json().initiated_by, "workspace_agent");
+    assert.deepEqual(createdJob.json().delivery, {
+      mode: "announce",
+      channel: "session_run",
+      to: null
+    });
+    assert.equal(createdJob.json().metadata.model, undefined);
+    assert.equal(createdJob.json().metadata.source_session_id, "session-main");
+
+    const listedJobs = await app.inject({
+      method: "GET",
+      url: "/api/v1/capabilities/runtime-tools/cronjobs",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1"
+      }
+    });
+    assert.equal(listedJobs.statusCode, 200);
+    assert.equal(listedJobs.json().count, 1);
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
+test("runtime onboarding completion returns 409 workspace_folder_missing when the managed folder is gone", async () => {
+  const root = makeTempDir("hb-runtime-api-onboarding-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
   });
-  assert.equal(capabilityStatus.statusCode, 200);
-  assert.equal(capabilityStatus.json().available, true);
-  assert.equal(capabilityStatus.json().workspace_id, "workspace-1");
-  assert.ok(
-    capabilityStatus
-      .json()
-      .tools.some((tool: { id: string }) => tool.id === "holaboss_onboarding_complete")
-  );
-  assert.ok(
-    capabilityStatus
-      .json()
-      .tools.some((tool: { id: string }) => tool.id === "image_generate")
-  );
-  assert.ok(
-    capabilityStatus
-      .json()
-      .tools.some((tool: { id: string }) => tool.id === "download_url")
-  );
-  assert.ok(
-    capabilityStatus
-      .json()
-      .tools.some((tool: { id: string }) => tool.id === "write_report")
-  );
-  assert.ok(
-    capabilityStatus
-      .json()
-      .tools.some((tool: { id: string }) => tool.id === "web_search")
-  );
-  assert.ok(
-    capabilityStatus
-      .json()
-      .tools.some((tool: { id: string }) => tool.id === "todoread")
-  );
-  assert.ok(
-    capabilityStatus
-      .json()
-      .tools.some((tool: { id: string }) => tool.id === "todowrite")
-  );
-  assert.ok(
-    capabilityStatus
-      .json()
-      .tools.some((tool: { id: string }) => tool.id === "terminal_session_start")
-  );
-  assert.ok(
-    capabilityStatus
-      .json()
-      .tools.some((tool: { id: string }) => tool.id === "skill")
-  );
-
-  const onboardingStatus = await app.inject({
-    method: "GET",
-    url: "/api/v1/capabilities/runtime-tools/onboarding/status",
-    headers: {
-      "x-holaboss-workspace-id": "workspace-1"
-    }
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    onboardingStatus: "pending",
+    onboardingSessionId: "session-1",
   });
-  assert.equal(onboardingStatus.statusCode, 200);
-  assert.equal(onboardingStatus.json().onboarding_status, "pending");
+  const workspaceDir = path.join(workspaceRoot, "workspace-1");
+  fs.rmSync(workspaceDir, { recursive: true, force: true });
+  const app = buildTestRuntimeApiServer({ store });
+  try {
+    const resp = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/onboarding/complete",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1"
+      },
+      payload: {
+        summary: "ready to work"
+      }
+    });
 
-  const onboardingComplete = await app.inject({
-    method: "POST",
-    url: "/api/v1/capabilities/runtime-tools/onboarding/complete",
-    headers: {
-      "x-holaboss-workspace-id": "workspace-1"
+    assert.equal(resp.statusCode, 409);
+    assert.equal(resp.json().code, "workspace_folder_missing");
+    assert.equal(path.resolve(resp.json().workspace_path), path.resolve(workspaceDir));
+    assert.equal(fs.existsSync(workspaceDir), false);
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
+test("workspace data query route previews mixed-source joins deterministically", async () => {
+  const root = makeTempDir("hb-runtime-api-workspace-data-query-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const dataDbPath = path.join(
+    workspaceRoot,
+    "workspace-1",
+    ".holaboss",
+    "state",
+    "data.db",
+  );
+  fs.mkdirSync(path.dirname(dataDbPath), { recursive: true });
+  seedWorkspaceDataForQuery(dataDbPath);
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/workspace-data/query",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+      },
+      payload: {
+        query: `
+          SELECT plans.owner, COUNT(*) AS post_count
+          FROM twitter_posts AS posts
+          JOIN campaign_plans AS plans
+            ON plans.campaign_key = posts.campaign_key
+          GROUP BY plans.owner
+          ORDER BY plans.owner
+        `,
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(
+      response.json().rows,
+      [
+        { owner: "alice", post_count: 2 },
+        { owner: "bob", post_count: 1 },
+      ],
+    );
+    assert.equal(response.json().truncated, false);
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
+test("workspace app capability routes scaffold, register, and inspect a managed app starter", async () => {
+  const root = makeTempDir("hb-runtime-api-workspace-app-tools-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const scaffold = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/workspace-apps/scaffold",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+      },
+      payload: {
+        app_id: "demo-app",
+        name: "Demo App",
+      },
+    });
+    assert.equal(scaffold.statusCode, 200);
+    assert.equal(scaffold.json().app_id, "demo-app");
+
+    const register = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/workspace-apps/register",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+      },
+      payload: {
+        app_id: "demo-app",
+      },
+    });
+    assert.equal(register.statusCode, 200);
+    assert.equal(register.json().registered, true);
+    assert.equal(register.json().config_path, "apps/demo-app/app.runtime.yaml");
+
+    fs.writeFileSync(
+      path.join(workspaceRoot, "workspace-1", "apps", "demo-app", "package.json"),
+      `${JSON.stringify(
+        {
+          name: "demo-app",
+          version: "0.1.0",
+          private: true,
+          scripts: {
+            build: "node -e \"process.stdout.write('route-build-ok')\"",
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const build = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/workspace-apps/demo-app/build",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+      },
+      payload: {},
+    });
+    assert.equal(build.statusCode, 200);
+    assert.equal(build.json().ok, true);
+    assert.match(String(build.json().stdout ?? ""), /route-build-ok/);
+
+    const status = await app.inject({
+      method: "GET",
+      url: "/api/v1/capabilities/runtime-tools/workspace-apps/demo-app/status",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+      },
+    });
+    assert.equal(status.statusCode, 200);
+    assert.equal(status.json().app_id, "demo-app");
+    assert.equal(status.json().build_status, "pending");
+    assert.equal(status.json().ready, false);
+    assert.equal(status.json().runtime_contract?.mcp?.sse_path, "/mcp/sse");
+    assert.equal(status.json().runtime_contract?.mcp?.message_path, "/mcp/messages");
+    assert.equal(status.json().runtime_contract?.healthcheck?.path, "/mcp/health");
+    assert.equal(typeof status.json().revision?.source_updated_at, "string");
+
+    const ports = await app.inject({
+      method: "GET",
+      url: "/api/v1/capabilities/runtime-tools/workspace-apps/demo-app/ports",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+      },
+    });
+    assert.equal(ports.statusCode, 200);
+    assert.equal(typeof ports.json().ports.http, "number");
+    assert.equal(typeof ports.json().ports.mcp, "number");
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
+test("workspace app capability routes restart-and-wait and probe managed endpoints", async () => {
+  const root = makeTempDir("hb-runtime-api-workspace-app-restart-probe-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const lifecycleCalls: string[] = [];
+  const app = buildTestRuntimeApiServer({
+    store,
+    appLifecycleExecutor: {
+      startApp: async (params) => {
+        lifecycleCalls.push(`start:${params.workspaceId}:${params.appId}`);
+        return {
+          app_id: params.appId,
+          status: "started",
+          detail: "started",
+          ports: {
+            http: params.httpPort ?? 0,
+            mcp: params.mcpPort ?? 0,
+          },
+        };
+      },
+      stopApp: async (params) => {
+        lifecycleCalls.push(`stop:${params.workspaceId}:${params.appId}`);
+        return {
+          app_id: params.appId,
+          status: "stopped",
+          detail: "stopped",
+          ports: {},
+        };
+      },
+      shutdownAll: async () => ({ stopped: [], failed: [] }),
     },
-    payload: {
-      summary: "ready to work"
-    }
   });
-  assert.equal(onboardingComplete.statusCode, 200);
-  assert.equal(onboardingComplete.json().onboarding_status, "completed");
-  assert.equal(onboardingComplete.json().onboarding_completion_summary, "ready to work");
 
-  const createdJob = await app.inject({
-    method: "POST",
-    url: "/api/v1/capabilities/runtime-tools/cronjobs",
-    headers: {
-      "x-holaboss-workspace-id": "workspace-1",
-      "x-holaboss-session-id": "session-main",
-      "x-holaboss-selected-model": "openai/gpt-5.4"
-    },
-    payload: {
-      cron: "0 9 * * *",
-      description: "Daily check",
-      delivery: { mode: "deliver", channel: "session_run" }
-    }
-  });
-  assert.equal(createdJob.statusCode, 200);
-  assert.equal(createdJob.json().initiated_by, "workspace_agent");
-  assert.deepEqual(createdJob.json().delivery, {
-    mode: "announce",
-    channel: "session_run",
-    to: null
-  });
-  assert.equal(createdJob.json().metadata.model, "openai/gpt-5.4");
-  assert.equal(createdJob.json().metadata.source_session_id, "session-main");
+  let uiServer: { close: () => Promise<void> } | null = null;
+  let mcpServer: { close: () => Promise<void> } | null = null;
+  try {
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/workspace-apps/scaffold",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+      },
+      payload: {
+        app_id: "demo-app",
+        name: "Demo App",
+      },
+    });
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/workspace-apps/register",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+      },
+      payload: {
+        app_id: "demo-app",
+      },
+    });
+    fs.writeFileSync(
+      path.join(workspaceRoot, "workspace-1", "apps", "demo-app", "app.runtime.yaml"),
+      `app_id: demo-app
+name: Demo App
+slug: demo-app
+lifecycle:
+  setup: npm install
+  start: npm run start
+healthchecks:
+  api:
+    path: /ready
+    timeout_s: 30
+    interval_s: 5
+mcp:
+  transport: http-sse
+  port: 13100
+  path: /transport/sse
+  tools:
+    - demo_tool
+env_contract:
+  - HOLABOSS_WORKSPACE_ID
+`,
+      "utf8",
+    );
 
-  const listedJobs = await app.inject({
-    method: "GET",
-    url: "/api/v1/capabilities/runtime-tools/cronjobs",
-    headers: {
-      "x-holaboss-workspace-id": "workspace-1"
-    }
-  });
-  assert.equal(listedJobs.statusCode, 200);
-  assert.equal(listedJobs.json().count, 1);
+    store.upsertAppBuild({
+      workspaceId: "workspace-1",
+      appId: "demo-app",
+      status: "stopped",
+    });
 
-  await app.close();
-  store.close();
+    const restarted = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/workspace-apps/demo-app/restart-and-wait-ready",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+      },
+      payload: {
+        timeout_ms: 1000,
+        poll_interval_ms: 10,
+      },
+    });
+    assert.equal(restarted.statusCode, 200);
+    assert.equal(restarted.json().restarted, true);
+    assert.equal(restarted.json().ready, true);
+    assert.equal(
+      lifecycleCalls.includes("stop:workspace-1:demo-app"),
+      true,
+    );
+    assert.equal(
+      lifecycleCalls.every(
+        (entry) =>
+          entry === "stop:workspace-1:demo-app" ||
+          entry === "start:workspace-1:demo-app"
+      ),
+      true,
+    );
+
+    const resolved = resolveWorkspaceAppRuntime(
+      path.join(workspaceRoot, "workspace-1"),
+      "demo-app",
+      { store, workspaceId: "workspace-1", allocatePorts: true },
+    );
+
+    uiServer = await startStaticHttpServer((request, response) => {
+      if (request.url === "/") {
+        response.statusCode = 200;
+        response.setHeader("content-type", "text/html; charset=utf-8");
+        response.end("<html><body>route probe</body></html>");
+        return;
+      }
+      if (request.url === "/ready") {
+        response.statusCode = 200;
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ ok: true, message_path: "/transport/messages" }));
+        return;
+      }
+      response.statusCode = 404;
+      response.end("not found");
+    }, { port: resolved.ports.http });
+
+    mcpServer = await startStaticHttpServer((request, response) => {
+      if (request.method === "POST" && request.url === "/transport/messages") {
+        const chunks: Buffer[] = [];
+        request.on("data", (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        request.on("end", () => {
+          const payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+            id?: string | number | null;
+            method?: string;
+          };
+          response.statusCode = 200;
+          response.setHeader("content-type", "application/json");
+          if (payload.method === "initialize") {
+            response.end(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: payload.id ?? null,
+                result: {
+                  protocolVersion: "2025-03-26",
+                  capabilities: { tools: { listChanged: false } },
+                  serverInfo: { name: "demo-app", version: "0.1.0" },
+                },
+              }),
+            );
+            return;
+          }
+          if (payload.method === "tools/list") {
+            response.end(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: payload.id ?? null,
+                result: {
+                  tools: [{ name: "demo_tool" }, { name: "demo_tool_2" }],
+                },
+              }),
+            );
+            return;
+          }
+          response.statusCode = 400;
+          response.end(JSON.stringify({ error: "unexpected method" }));
+        });
+        return;
+      }
+      response.statusCode = 404;
+      response.end("not found");
+    }, { port: resolved.ports.mcp });
+
+    const probed = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/workspace-apps/demo-app/probe-endpoints",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+      },
+      payload: {},
+    });
+    assert.equal(probed.statusCode, 200);
+    assert.equal(probed.json().all_ok, true);
+    assert.equal(probed.json().count, 4);
+    assert.equal(
+      probed.json().checks.find((entry: { check: string }) => entry.check === "mcp_tools_list")
+        ?.tool_count,
+      2,
+    );
+    assert.equal(
+      probed.json().checks.find((entry: { check: string }) => entry.check === "mcp_health")?.url,
+      `http://127.0.0.1:${resolved.ports.http}/ready`,
+    );
+    assert.equal(
+      probed.json().checks.find((entry: { check: string }) => entry.check === "mcp_initialize")?.url,
+      `http://127.0.0.1:${resolved.ports.mcp}/transport/messages`,
+    );
+  } finally {
+    await uiServer?.close();
+    await mcpServer?.close();
+    await app.close();
+    store.close();
+  }
 });
 
 test("runtime subagent capability routes create and cancel hidden background tasks", async () => {
@@ -873,7 +1371,7 @@ test("runtime subagent capability routes create and cancel hidden background tas
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    kind: "workspace_session",
+    kind: "main_session",
     title: "Workspace 1",
   });
   store.upsertBinding({
@@ -1103,7 +1601,7 @@ test("delegated subagents use the configured global subagent model instead of re
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    kind: "workspace_session",
+    kind: "main_session",
   });
   const app = buildTestRuntimeApiServer({ store });
 
@@ -2929,7 +3427,7 @@ test("ensure-main-session binds one desktop main session and exports legacy fron
   const older = store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "session-older",
-    kind: "workspace_session",
+    kind: "main_session",
     title: "Older conversation",
     createdBy: "workspace_user",
   });
@@ -2944,7 +3442,7 @@ test("ensure-main-session binds one desktop main session and exports legacy fron
   const newer = store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "session-newer",
-    kind: "workspace_session",
+    kind: "main_session",
     title: "Main conversation",
     createdBy: "workspace_user",
   });
@@ -2966,8 +3464,8 @@ test("ensure-main-session binds one desktop main session and exports legacy fron
   const binding = store.getConversationBindingByConversation({
     workspaceId: workspace.id,
     channel: "desktop",
-    conversationKey: "workspace-main",
-    role: "main",
+    conversationKey: "main_session",
+    role: "main_session",
   });
   assert.ok(binding);
   assert.equal(binding?.sessionId, newer.sessionId);
@@ -3102,6 +3600,38 @@ test("PATCH workspace_path still accepts a folder with the legacy identity path"
     fs.readFileSync(path.join(movedPath, ".holaboss", "state", "workspace_id"), "utf-8").trim(),
     workspaceId,
   );
+
+  await app.close();
+  store.close();
+});
+
+test("PATCH workspace metadata returns 409 workspace_folder_missing when a managed folder is gone", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const app = buildTestRuntimeApiServer({ store });
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: { name: "Managed", harness: "pi" }
+  });
+  const workspaceId = (created.json().workspace as { id: string }).id;
+  const workspaceDir = path.join(workspaceRoot, workspaceId);
+  fs.rmSync(workspaceDir, { recursive: true, force: true });
+
+  const resp = await app.inject({
+    method: "PATCH",
+    url: `/api/v1/workspaces/${workspaceId}`,
+    payload: { onboarding_requested_by: "workspace_agent" }
+  });
+
+  assert.equal(resp.statusCode, 409);
+  assert.equal(resp.json().code, "workspace_folder_missing");
+  assert.equal(path.resolve(resp.json().workspace_path), path.resolve(workspaceDir));
+  assert.equal(fs.existsSync(workspaceDir), false);
 
   await app.close();
   store.close();
@@ -3975,12 +4505,12 @@ test("history endpoint returns stored messages even after runtime harness owners
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "session-old",
-    kind: "workspace_session"
+    kind: "main_session"
   });
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "session-new",
-    kind: "workspace_session"
+    kind: "main_session"
   });
   store.insertSessionMessage({
     workspaceId: workspace.id,
@@ -4294,7 +4824,7 @@ test("cronjobs, task proposals, and session state routes preserve local payload 
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    kind: "workspace_session",
+    kind: "main_session",
     title: "Workspace 1",
   });
   store.upsertBinding({
@@ -4457,7 +4987,7 @@ test("cronjobs, task proposals, and session state routes preserve local payload 
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    kind: "main",
+    kind: "main_session",
     title: "Main"
   });
   store.createMemoryUpdateProposal({
@@ -4638,6 +5168,121 @@ test("workspace template, file, and snapshot routes preserve local payload shape
   store.close();
 });
 
+test("PUT files requires explicit approval before blanking a non-empty file", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: {
+      name: "Workspace File Guardrails",
+      harness: "pi",
+      status: "active"
+    }
+  });
+  const workspace = created.json().workspace as { id: string };
+  const targetPath = path.join(workspaceRoot, workspace.id, "docs", "note.txt");
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.writeFileSync(targetPath, "keep me\n", "utf8");
+
+  const blocked = await app.inject({
+    method: "PUT",
+    url: `/api/v1/workspaces/${workspace.id}/files/docs/note.txt`,
+    payload: {
+      content_base64: Buffer.from("\n \n", "utf8").toString("base64")
+    }
+  });
+  assert.equal(blocked.statusCode, 409);
+  assert.equal(blocked.json().code, "destructive_write_requires_explicit_approval");
+  assert.match(blocked.json().detail, /would clear a non-empty file/i);
+  assert.equal(fs.readFileSync(targetPath, "utf8"), "keep me\n");
+
+  const allowed = await app.inject({
+    method: "PUT",
+    url: `/api/v1/workspaces/${workspace.id}/files/docs/note.txt`,
+    payload: {
+      content_base64: Buffer.from("\n \n", "utf8").toString("base64"),
+      allow_destructive_write: true
+    }
+  });
+  assert.equal(allowed.statusCode, 200);
+  assert.equal(allowed.json().path, "docs/note.txt");
+  assert.equal(fs.readFileSync(targetPath, "utf8"), "\n \n");
+
+  await app.close();
+  store.close();
+});
+
+test("apply-template requires explicit approval before replace_existing deletes workspace files", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: {
+      name: "Workspace Template Guardrails",
+      harness: "pi",
+      status: "active"
+    }
+  });
+  const workspace = created.json().workspace as { id: string };
+  const workspaceDir = path.join(workspaceRoot, workspace.id);
+  fs.writeFileSync(path.join(workspaceDir, "stale.txt"), "stale\n", "utf8");
+
+  const blocked = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspaces/${workspace.id}/apply-template`,
+    payload: {
+      replace_existing: true,
+      files: [
+        {
+          path: "README.md",
+          content_base64: Buffer.from("# Fresh\n", "utf8").toString("base64")
+        }
+      ]
+    }
+  });
+  assert.equal(blocked.statusCode, 409);
+  assert.equal(blocked.json().code, "destructive_write_requires_explicit_approval");
+  assert.match(blocked.json().detail, /replace_existing would delete existing workspace files/i);
+  assert.equal(fs.existsSync(path.join(workspaceDir, "stale.txt")), true);
+  assert.equal(fs.existsSync(path.join(workspaceDir, "README.md")), false);
+
+  const allowed = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspaces/${workspace.id}/apply-template`,
+    payload: {
+      replace_existing: true,
+      allow_destructive_write: true,
+      files: [
+        {
+          path: "README.md",
+          content_base64: Buffer.from("# Fresh\n", "utf8").toString("base64")
+        }
+      ]
+    }
+  });
+  assert.equal(allowed.statusCode, 200);
+  assert.equal(allowed.json().files_written, 1);
+  assert.equal(fs.existsSync(path.join(workspaceDir, "stale.txt")), false);
+  assert.equal(fs.readFileSync(path.join(workspaceDir, "README.md"), "utf8"), "# Fresh\n");
+
+  await app.close();
+  store.close();
+});
+
 test("workspace apply-template-from-url downloads and extracts a zip archive", async () => {
   const root = makeTempDir("hb-runtime-api-");
   const workspaceRoot = path.join(root, "workspace");
@@ -4678,7 +5323,8 @@ test("workspace apply-template-from-url downloads and extracts a zip archive", a
       payload: {
         url: `${server.url}/template.zip`,
         api_key: "template-key",
-        replace_existing: true
+        replace_existing: true,
+        allow_destructive_write: true
       }
     });
 
@@ -4695,6 +5341,56 @@ test("workspace apply-template-from-url downloads and extracts a zip archive", a
       "echo remote\n"
     );
     assert.notEqual(fs.statSync(path.join(workspaceDir, "scripts", "run.sh")).mode & 0o111, 0);
+  } finally {
+    await server.close();
+    await app.close();
+    store.close();
+  }
+});
+
+test("workspace apply-template-from-url requires explicit approval before replace_existing deletes workspace files", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: {
+      name: "Workspace Template URL Guardrails",
+      harness: "pi",
+      status: "active"
+    }
+  });
+  const workspace = created.json().workspace as { id: string };
+  const workspaceDir = path.join(workspaceRoot, workspace.id);
+  fs.writeFileSync(path.join(workspaceDir, "stale.txt"), "stale\n", "utf8");
+
+  const zipArchive = await createZipBuffer([{ path: "README.md", content: "# Remote Template\n" }]);
+  const server = await startStaticHttpServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/zip" });
+    response.end(zipArchive);
+  });
+
+  try {
+    const blocked = await app.inject({
+      method: "POST",
+      url: `/api/v1/workspaces/${workspace.id}/apply-template-from-url`,
+      payload: {
+        url: `${server.url}/template.zip`,
+        replace_existing: true
+      }
+    });
+
+    assert.equal(blocked.statusCode, 409);
+    assert.equal(blocked.json().code, "destructive_write_requires_explicit_approval");
+    assert.match(blocked.json().detail, /replace_existing would delete existing workspace files/i);
+    assert.equal(fs.existsSync(path.join(workspaceDir, "stale.txt")), true);
+    assert.equal(fs.existsSync(path.join(workspaceDir, "README.md")), false);
   } finally {
     await server.close();
     await app.close();
@@ -5285,6 +5981,7 @@ test("ensure-running dedupes concurrent setup/start for the same app", async () 
 });
 
 test("auto-start on ready reuses a healthy untracked shell-managed app", async () => {
+  const previousEmbeddedRuntime = process.env.HOLABOSS_EMBEDDED_RUNTIME;
   process.env.HOLABOSS_EMBEDDED_RUNTIME = "1";
   const root = makeTempDir("hb-runtime-api-");
   const workspaceRoot = path.join(root, "workspace");
@@ -5338,28 +6035,16 @@ test("auto-start on ready reuses a healthy untracked shell-managed app", async (
     ].join("\n"),
     "utf8"
   );
-  const resolved = resolveWorkspaceAppRuntime(workspaceDir, "app-a", {
-    store,
-    workspaceId: workspace.id,
-    allocatePorts: true,
-  });
-  const httpPort = resolved.ports.http;
-  const mcpPort = resolved.ports.mcp;
-  const httpServer = await startStaticHttpServer(
-    (_request, response) => {
-      response.statusCode = 200;
-      response.end("ok");
-    },
-    { port: httpPort },
-  );
-  const mcpServer = await startStaticHttpServer(
-    (_request, response) => {
-      response.statusCode = 200;
-      response.end("ok");
-    },
-    { port: mcpPort },
-  );
-
+  let httpServer: { url: string; close: () => Promise<void> } | undefined;
+  let mcpServer: { url: string; close: () => Promise<void> } | undefined;
+  const patchedStore = store as RuntimeStateStore & {
+    allocateAppPort: RuntimeStateStore["allocateAppPort"];
+    getAppPort: RuntimeStateStore["getAppPort"];
+  };
+  const originalAllocateAppPort = store.allocateAppPort.bind(store);
+  const originalGetAppPort = store.getAppPort.bind(store);
+  let httpPort = 0;
+  let mcpPort = 0;
   const lifecycleCalls: Array<Record<string, unknown>> = [];
   const rememberedPorts: Array<Record<string, unknown>> = [];
   const app = buildRuntimeApiServer({
@@ -5395,25 +6080,263 @@ test("auto-start on ready reuses a healthy untracked shell-managed app", async (
       }
     }
   });
+  try {
+    httpServer = await startStaticHttpServer(
+      (_request, response) => {
+        response.statusCode = 200;
+        response.end("ok");
+      },
+      { port: 0 },
+    );
+    mcpServer = await startStaticHttpServer(
+      (_request, response) => {
+        response.statusCode = 200;
+        response.end("ok");
+      },
+      { port: 0 },
+    );
+    httpPort = Number(new URL(httpServer.url).port);
+    mcpPort = Number(new URL(mcpServer.url).port);
+    const portMap = new Map<string, number>([
+      ["app-a__http", httpPort],
+      ["app-a__mcp", mcpPort]
+    ]);
+    patchedStore.allocateAppPort = ((params) => {
+      const port = portMap.get(params.appId);
+      if (port !== undefined) {
+        return {
+          workspaceId: params.workspaceId,
+          appId: params.appId,
+          port,
+          createdAt: "test-created-at",
+          updatedAt: "test-updated-at"
+        };
+      }
+      return originalAllocateAppPort(params);
+    }) as RuntimeStateStore["allocateAppPort"];
+    patchedStore.getAppPort = ((params) => {
+      const port = portMap.get(params.appId);
+      if (port !== undefined) {
+        return {
+          workspaceId: params.workspaceId,
+          appId: params.appId,
+          port,
+          createdAt: "test-created-at",
+          updatedAt: "test-updated-at"
+        };
+      }
+      return originalGetAppPort(params);
+    }) as RuntimeStateStore["getAppPort"];
 
-  await app.ready();
-  await sleep(150);
-
-  assert.equal(lifecycleCalls.length, 0);
-  assert.deepEqual(rememberedPorts, [
-    {
+    const resolved = resolveWorkspaceAppRuntime(workspaceDir, "app-a", {
+      store,
       workspaceId: workspace.id,
-      appId: "app-a",
-      httpPort,
-      mcpPort
-    }
-  ]);
-  assert.equal(store.getAppBuild({ workspaceId: workspace.id, appId: "app-a" })?.status, "running");
+      allocatePorts: true,
+    });
+    assert.equal(resolved.ports.http, httpPort);
+    assert.equal(resolved.ports.mcp, mcpPort);
+    store.upsertAppBuild({ workspaceId: workspace.id, appId: "app-a", status: "running" });
 
-  await httpServer.close();
-  await mcpServer.close();
-  await app.close();
-  store.close();
+    await app.ready();
+    await sleep(150);
+
+    assert.equal(lifecycleCalls.length, 0);
+    assert.deepEqual(rememberedPorts, [
+      {
+        workspaceId: workspace.id,
+        appId: "app-a",
+        httpPort,
+        mcpPort
+      }
+    ]);
+    assert.equal(store.getAppBuild({ workspaceId: workspace.id, appId: "app-a" })?.status, "running");
+  } finally {
+    if (httpServer) {
+      await httpServer.close();
+    }
+    if (mcpServer) {
+      await mcpServer.close();
+    }
+    patchedStore.allocateAppPort = originalAllocateAppPort;
+    patchedStore.getAppPort = originalGetAppPort;
+    if (previousEmbeddedRuntime === undefined) {
+      delete process.env.HOLABOSS_EMBEDDED_RUNTIME;
+    } else {
+      process.env.HOLABOSS_EMBEDDED_RUNTIME = previousEmbeddedRuntime;
+    }
+    await app.close();
+    store.close();
+  }
+});
+
+test("auto-start on ready does not reuse a healthy untracked shell-managed app without prior running state", async () => {
+  const previousEmbeddedRuntime = process.env.HOLABOSS_EMBEDDED_RUNTIME;
+  process.env.HOLABOSS_EMBEDDED_RUNTIME = "1";
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-2",
+    name: "Workspace Apps",
+    harness: "pi",
+    status: "active"
+  });
+  const workspaceDir = path.join(workspaceRoot, workspace.id);
+  const appDir = path.join(workspaceDir, "apps", "app-a");
+  fs.mkdirSync(appDir, { recursive: true });
+
+  fs.writeFileSync(
+    path.join(appDir, "app.runtime.yaml"),
+    [
+      "app_id: app-a",
+      "name: App A",
+      "mcp:",
+      "  transport: http-sse",
+      "  port: 13100",
+      "  path: /mcp",
+      "healthchecks:",
+      "  http:",
+      "    path: /health",
+      "    timeout_s: 1",
+      "  mcp:",
+      "    path: /health",
+      "    timeout_s: 1",
+      "lifecycle:",
+      "  setup: ''",
+      "  start: npm run start"
+    ].join("\n"),
+    "utf8"
+  );
+  fs.writeFileSync(
+    path.join(workspaceDir, "workspace.yaml"),
+    [
+      "applications:",
+      "  - app_id: app-a",
+      "    config_path: apps/app-a/app.runtime.yaml"
+    ].join("\n"),
+    "utf8"
+  );
+
+  let httpServer: { url: string; close: () => Promise<void> } | undefined;
+  let mcpServer: { url: string; close: () => Promise<void> } | undefined;
+  const patchedStore = store as RuntimeStateStore & {
+    allocateAppPort: RuntimeStateStore["allocateAppPort"];
+    getAppPort: RuntimeStateStore["getAppPort"];
+  };
+  const originalAllocateAppPort = store.allocateAppPort.bind(store);
+  const originalGetAppPort = store.getAppPort.bind(store);
+  const lifecycleCalls: Array<Record<string, unknown>> = [];
+  const rememberedPorts: Array<Record<string, unknown>> = [];
+  let httpPort = 0;
+  let mcpPort = 0;
+  const app = buildRuntimeApiServer({
+    store,
+    queueWorker: null,
+    durableMemoryWorker: null,
+    cronWorker: null,
+    bridgeWorker: null,
+    recallEmbeddingBackfillWorker: null,
+    enableAppHealthMonitor: false,
+    startAppsOnReady: true,
+    appLifecycleExecutor: {
+      async startApp(params) {
+        lifecycleCalls.push({ action: "start", ...params });
+        return {
+          app_id: params.appId,
+          status: "started",
+          detail: "app started with lifecycle manager",
+          ports: { http: params.httpPort ?? 18080, mcp: params.mcpPort ?? 13100 }
+        };
+      },
+      async stopApp() {
+        throw new Error("not used");
+      },
+      async shutdownAll() {
+        throw new Error("not used");
+      },
+      isTrackingApp() {
+        return false;
+      },
+      rememberAppPorts(params) {
+        rememberedPorts.push(params);
+      }
+    }
+  });
+
+  try {
+    httpServer = await startStaticHttpServer(
+      (_request, response) => {
+        response.statusCode = 200;
+        response.end("ok");
+      },
+      { port: 0 },
+    );
+    mcpServer = await startStaticHttpServer(
+      (_request, response) => {
+        response.statusCode = 200;
+        response.end("ok");
+      },
+      { port: 0 },
+    );
+    httpPort = Number(new URL(httpServer.url).port);
+    mcpPort = Number(new URL(mcpServer.url).port);
+    const portMap = new Map<string, number>([
+      ["app-a__http", httpPort],
+      ["app-a__mcp", mcpPort]
+    ]);
+    patchedStore.allocateAppPort = ((params) => {
+      const port = portMap.get(params.appId);
+      if (port !== undefined) {
+        return {
+          workspaceId: params.workspaceId,
+          appId: params.appId,
+          port,
+          createdAt: "test-created-at",
+          updatedAt: "test-updated-at"
+        };
+      }
+      return originalAllocateAppPort(params);
+    }) as RuntimeStateStore["allocateAppPort"];
+    patchedStore.getAppPort = ((params) => {
+      const port = portMap.get(params.appId);
+      if (port !== undefined) {
+        return {
+          workspaceId: params.workspaceId,
+          appId: params.appId,
+          port,
+          createdAt: "test-created-at",
+          updatedAt: "test-updated-at"
+        };
+      }
+      return originalGetAppPort(params);
+    }) as RuntimeStateStore["getAppPort"];
+
+    await app.ready();
+    await sleep(150);
+
+    assert.equal(lifecycleCalls.length, 1);
+    assert.equal(rememberedPorts.length, 0);
+    assert.equal(store.getAppBuild({ workspaceId: workspace.id, appId: "app-a" })?.status, "running");
+  } finally {
+    if (httpServer) {
+      await httpServer.close();
+    }
+    if (mcpServer) {
+      await mcpServer.close();
+    }
+    patchedStore.allocateAppPort = originalAllocateAppPort;
+    patchedStore.getAppPort = originalGetAppPort;
+    if (previousEmbeddedRuntime === undefined) {
+      delete process.env.HOLABOSS_EMBEDDED_RUNTIME;
+    } else {
+      process.env.HOLABOSS_EMBEDDED_RUNTIME = previousEmbeddedRuntime;
+    }
+    await app.close();
+    store.close();
+  }
 });
 
 test("app setup timeout honors configured timeout", async () => {
@@ -6338,7 +7261,7 @@ test("queue route persists input and runtime state without writing session histo
 
   const session = store.getSession({ workspaceId: workspace.id, sessionId });
   assert.ok(session);
-  assert.equal(session.kind, "workspace_session");
+  assert.equal(session.kind, "main_session");
   assert.equal(session.title, "hello world");
 
   const binding = store.getBinding({ workspaceId: workspace.id, sessionId });
@@ -6347,6 +7270,44 @@ test("queue route persists input and runtime state without writing session histo
 
   const history = store.listSessionMessages({ workspaceId: workspace.id, sessionId });
   assert.equal(history.length, 0);
+
+  await app.close();
+  store.close();
+});
+
+test("queue route accepts image_urls without text or attachments", async () => {
+  const root = makeTempDir("hb-runtime-api-queue-image-urls-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/agent-sessions/queue",
+    payload: {
+      workspace_id: workspace.id,
+      image_urls: ["https://example.com/reference.png"]
+    }
+  });
+
+  assert.equal(response.statusCode, 200);
+  const queued = store.getInput({ workspaceId: workspace.id, inputId: response.json().input_id });
+  assert.ok(queued);
+  assert.equal(queued.payload.text, "");
+  assert.deepEqual(queued.payload.image_urls, ["https://example.com/reference.png"]);
+
+  const session = store.getSession({ workspaceId: workspace.id, sessionId: response.json().session_id });
+  assert.ok(session);
+  assert.equal(session?.title, "Image input");
 
   await app.close();
   store.close();
@@ -6369,7 +7330,7 @@ test("queue route preserves the active claimed input while adding later queued w
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    kind: "workspace_session",
+    kind: "main_session",
   });
   store.upsertBinding({
     workspaceId: workspace.id,
@@ -6465,7 +7426,7 @@ test("queue route folds pending background updates into the next main-session in
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    kind: "workspace_session",
+    kind: "main_session",
   });
   store.upsertBinding({
     workspaceId: workspace.id,
@@ -6555,7 +7516,7 @@ test("queue route preserves an existing explicit session title", async () => {
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    kind: "workspace_session",
+    kind: "main_session",
     title: "Pinned title",
   });
 
@@ -7032,7 +7993,7 @@ test("accepting and dismissing evolve task proposals updates linked skill candid
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    kind: "main",
+    kind: "main_session",
     title: "Main"
   });
   store.upsertBinding({

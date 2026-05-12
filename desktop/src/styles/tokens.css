@@ -40,9 +40,13 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
   --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
   --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
   --color-scrim: var(--scrim);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
@@ -257,7 +261,7 @@
 }
 /* Surface palette — registered so theme switches interpolate the
    whole canvas instead of hard-cutting on most surfaces. Initial
-   values mirror the amber-minimal-light defaults. */
+   values mirror the holaos-light defaults. */
 @property --card {
   syntax: "<color>";
   inherits: true;
@@ -276,7 +280,7 @@
 @property --muted-foreground {
   syntax: "<color>";
   inherits: true;
-  initial-value: oklch(0.5 0.005 250);
+  initial-value: oklch(0.56 0.005 250);
 }
 @property --accent {
   syntax: "<color>";
@@ -311,7 +315,7 @@
   --radius: 0.5rem;
 
   /* Surface + content. Quiet near-neutral grays with a subtle cool
-     undertone; mirrors amber-minimal-light. */
+     undertone; mirrors holaos-light. */
   --background: oklch(1 0 0);
   --foreground: oklch(0.18 0.003 250);
   --card: oklch(0.985 0.002 250);
@@ -323,7 +327,7 @@
   --secondary: oklch(0.97 0.002 250);
   --secondary-foreground: oklch(0.21 0.003 250);
   --muted: oklch(0.97 0.002 250);
-  --muted-foreground: oklch(0.5 0.005 250);
+  --muted-foreground: oklch(0.56 0.005 250);
   --accent: oklch(0.95 0.002 250);
   --accent-foreground: oklch(0.18 0.003 250);
   --border: oklch(0.92 0.003 250);
@@ -348,6 +352,21 @@
   --info: oklch(0.62 0.17 240);
   --scrim: oklch(0.15 0.01 240 / 0.46);
   --destructive: oklch(0.55 0.24 18);
+
+  /* Foreground colours for tonal CTAs (text/icon on a solid tone-bg
+     button or chip). Default to `var(--background)` so contrast
+     auto-adapts to theme mode: light themes (bg ≈ white) end up
+     with white text — which reads against the typically-darker
+     light-mode tones; dark themes (bg ≈ near-black) get dark text,
+     which reads against the typically-lighter dark-mode pastels
+     most themes ship (catppuccin / nord / one-dark-pro et al.).
+     Warning stays anchored dark because amber/yellow is usually
+     light in both modes and never plays well with white text.
+     Themes that have unusual tones can still override per-tone. */
+  --destructive-foreground: var(--background);
+  --success-foreground: var(--background);
+  --warning-foreground: oklch(0.18 0 0);
+  --info-foreground: var(--background);
 
   --hairline-alpha: 0.05;
   --shadow-alpha: 0.07;
@@ -382,6 +401,22 @@
     var(--foreground)
   );
   --info-text: color-mix(in oklab, var(--info) 45%, var(--foreground));
+
+  /* Workspace identity tint — neutral gray composed with --background /
+     --foreground via color-mix, so dark mode adapts automatically without
+     a separate theme override. */
+  --workspace-color-gray: oklch(0.55 0.005 270);
+
+  --workspace-color-gray-bg: color-mix(
+    in srgb,
+    var(--workspace-color-gray) 14%,
+    var(--background)
+  );
+  --workspace-color-gray-fg: color-mix(
+    in oklab,
+    var(--workspace-color-gray) 65%,
+    var(--foreground)
+  );
 }
 
 .dark {

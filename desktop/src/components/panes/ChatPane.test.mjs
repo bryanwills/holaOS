@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const sourcePath = path.join(__dirname, "ChatPane.tsx");
+const sourcePath = path.join(__dirname, "ChatPane", "index.tsx");
 
 test("chat pane surfaces workspace activation errors before generic app-starting copy", async () => {
   const source = await readFile(sourcePath, "utf8");
@@ -1019,7 +1019,7 @@ test("chat pane syncs the shared file display from live file-oriented tool calls
   assert.match(source, /if \(toolName === "edit"\) \{/);
   assert.match(
     source,
-    /if \(eventType === "tool_call"\) \{\s*const fileDisplayTarget =\s*fileDisplaySyncTargetFromToolPayload\(eventPayload\);[\s\S]*onSyncFileDisplayFromAgentOperation\?\.\(fileDisplayTarget\);/,
+    /if \(eventType === "tool_call"\) \{\s*const fileDisplayTarget =\s*fileDisplaySyncTargetFromToolPayload\(eventPayload\);[\s\S]*if \(fileDisplayTarget && !activeSessionReadOnlyRef\.current\) \{/,
   );
 });
 

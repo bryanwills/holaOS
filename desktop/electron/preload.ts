@@ -687,23 +687,31 @@ interface CronjobListResponsePayload {
 interface CronjobCreatePayload {
   workspace_id: string;
   initiated_by: string;
+  session_id?: string;
   name?: string;
   cron: string;
   description: string;
   instruction?: string;
   enabled?: boolean;
   delivery: CronjobDeliveryPayload;
+  model?: string;
   metadata?: Record<string, unknown>;
 }
 
 interface CronjobUpdatePayload {
+  session_id?: string;
   name?: string;
   cron?: string;
   description?: string;
   instruction?: string;
   enabled?: boolean;
   delivery?: CronjobDeliveryPayload;
+  model?: string;
   metadata?: Record<string, unknown>;
+}
+
+interface CronjobRunNowPayload {
+  model?: string;
 }
 
 interface SessionRuntimeRecordPayload {
@@ -1255,6 +1263,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
       force?: boolean;
     }) =>
       ipcRenderer.invoke("ui:showNativeNotification", payload) as Promise<boolean>,
+    setBadgeCount: (count: number) =>
+      ipcRenderer.invoke("ui:setBadgeCount", count) as Promise<void>,
+    getNotificationsEnabled: () =>
+      ipcRenderer.invoke("ui:getNotificationsEnabled") as Promise<boolean>,
+    setNotificationsEnabled: (enabled: boolean) =>
+      ipcRenderer.invoke("ui:setNotificationsEnabled", enabled) as Promise<boolean>,
     openSettingsPane: (section?: UiSettingsPaneSection) => ipcRenderer.invoke("ui:openSettingsPane", section) as Promise<void>,
     openExternalUrl: (url: string) => ipcRenderer.invoke("ui:openExternalUrl", url) as Promise<void>,
     onWindowStateChange: (listener: (state: DesktopWindowStatePayload) => void) => {
@@ -1271,7 +1285,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
       const wrapped = (_event: Electron.IpcRendererEvent, section: UiSettingsPaneSection) => listener(section);
       ipcRenderer.on("ui:openSettingsPane", wrapped);
       return () => ipcRenderer.removeListener("ui:openSettingsPane", wrapped);
-    }
+    },
+    onNotificationActivated: (
+      listener: (payload: { workspaceId: string; sessionId: string | null }) => void,
+    ) => {
+      const wrapped = (
+        _event: Electron.IpcRendererEvent,
+        payload: { workspaceId: string; sessionId: string | null },
+      ) => listener(payload);
+      ipcRenderer.on("ui:notificationActivated", wrapped);
+      return () => ipcRenderer.removeListener("ui:notificationActivated", wrapped);
+    },
   },
   clipboard: {
     readImage: () =>
@@ -1360,8 +1384,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:installAppFromCatalog", params) as Promise<InstallAppFromCatalogResponse>,
     installAppFromArchiveFile: (params: { workspaceId: string }) =>
       ipcRenderer.invoke("workspace:installAppFromArchiveFile", params) as Promise<InstallAppFromCatalogResponse | null>,
-    runDashboardQuery: (params: { workspaceId: string; sql: string }) =>
-      ipcRenderer.invoke("dashboard:runQuery", params) as Promise<DashboardQueryResult>,
     listOutputs: (payload: string | HolabossListOutputsPayload) =>
       ipcRenderer.invoke("workspace:listOutputs", payload) as Promise<WorkspaceOutputListResponsePayload>,
     listSkills: (workspaceId: string) =>
@@ -1371,10 +1393,19 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:createWorkspace", payload) as Promise<WorkspaceResponsePayload>,
     deleteWorkspace: (workspaceId: string, keepFiles?: boolean) =>
       ipcRenderer.invoke("workspace:deleteWorkspace", workspaceId, keepFiles) as Promise<WorkspaceResponsePayload>,
+    updateAppearance: (
+      workspaceId: string,
+      payload: { icon: string | null; iconColor: string | null },
+    ) =>
+      ipcRenderer.invoke(
+        "workspace:updateAppearance",
+        workspaceId,
+        payload,
+      ) as Promise<WorkspaceResponsePayload>,
     listCronjobs: (workspaceId: string, enabledOnly?: boolean) =>
       ipcRenderer.invoke("workspace:listCronjobs", workspaceId, enabledOnly) as Promise<CronjobListResponsePayload>,
-    runCronjobNow: (workspaceId: string, jobId: string) =>
-      ipcRenderer.invoke("workspace:runCronjobNow", workspaceId, jobId) as Promise<CronjobRunResponsePayload>,
+    runCronjobNow: (workspaceId: string, jobId: string, payload?: CronjobRunNowPayload) =>
+      ipcRenderer.invoke("workspace:runCronjobNow", workspaceId, jobId, payload) as Promise<CronjobRunResponsePayload>,
     createCronjob: (payload: CronjobCreatePayload) =>
       ipcRenderer.invoke("workspace:createCronjob", payload) as Promise<CronjobRecordPayload>,
     updateCronjob: (workspaceId: string, jobId: string, payload: CronjobUpdatePayload) =>

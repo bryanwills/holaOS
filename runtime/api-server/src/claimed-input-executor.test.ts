@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, test as nodeTest } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
@@ -14,6 +16,10 @@ import {
 import type { MemoryServiceLike } from "./memory.js";
 import type { RuntimeSentryCaptureOptions } from "./runtime-sentry.js";
 import type { PiContextUsage } from "./session-checkpoint.js";
+import {
+  persistWorkspaceHarnessSessionId,
+  readWorkspaceHarnessSessionId,
+} from "./ts-runner-session-state.js";
 
 const tempDirs: string[] = [];
 const ORIGINAL_ENV = {
@@ -26,6 +32,15 @@ const ORIGINAL_ENV = {
   HOLABOSS_RUNTIME_CONFIG_PATH: process.env.HOLABOSS_RUNTIME_CONFIG_PATH,
   HOLABOSS_HARNESS_RUN_TIMEOUT_S: process.env.HOLABOSS_HARNESS_RUN_TIMEOUT_S,
 };
+const require = createRequire(import.meta.url);
+const PI_PACKAGE_ENTRY_PATH = fileURLToPath(
+  import.meta.resolve("@mariozechner/pi-coding-agent"),
+);
+const PI_SESSION_MANAGER_MODULE_PATH = path.join(
+  path.dirname(PI_PACKAGE_ENTRY_PATH),
+  "core",
+  "session-manager.js",
+);
 
 function test(
   name: string,
@@ -100,6 +115,211 @@ function setNodeRunnerCommand(lines: string[]): void {
   process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE = `printf '%s' '${scriptBase64}' | base64 --decode | {runtime_node} - {request_base64}`;
 }
 
+function openPiSessionManager(sessionFile: string) {
+  const { SessionManager } = require(PI_SESSION_MANAGER_MODULE_PATH) as {
+    SessionManager: {
+      create: (cwd: string, sessionDir?: string) => {
+        appendMessage: (message: Record<string, unknown>) => string;
+        appendCompaction: (
+          summary: string,
+          firstKeptEntryId: string,
+          tokensBefore: number,
+          details?: unknown,
+          fromHook?: boolean,
+        ) => string | undefined;
+        buildSessionContext: () => {
+          messages: Array<Record<string, unknown>>;
+        };
+        getBranch: () => Array<Record<string, unknown>>;
+        getEntries: () => Array<Record<string, unknown>>;
+        getSessionFile: () => string | undefined;
+      };
+      open: (sessionFile: string) => {
+        appendCompaction: (
+          summary: string,
+          firstKeptEntryId: string,
+          tokensBefore: number,
+          details?: unknown,
+          fromHook?: boolean,
+        ) => string | undefined;
+        buildSessionContext: () => {
+          messages: Array<Record<string, unknown>>;
+        };
+        getBranch: () => Array<Record<string, unknown>>;
+        getEntries: () => Array<Record<string, unknown>>;
+        getSessionFile: () => string | undefined;
+      };
+    };
+  };
+  return SessionManager.open(sessionFile);
+}
+
+function createPiSessionFile(params: {
+  workspaceDir: string;
+  sessionDir: string;
+}) {
+  fs.mkdirSync(params.sessionDir, { recursive: true });
+  const { SessionManager } = require(PI_SESSION_MANAGER_MODULE_PATH) as {
+    SessionManager: {
+      create: (cwd: string, sessionDir?: string) => {
+        appendMessage: (message: Record<string, unknown>) => string;
+        appendCompaction: (
+          summary: string,
+          firstKeptEntryId: string,
+          tokensBefore: number,
+          details?: unknown,
+          fromHook?: boolean,
+        ) => string | undefined;
+        buildSessionContext: () => {
+          messages: Array<Record<string, unknown>>;
+        };
+        getBranch: () => Array<Record<string, unknown>>;
+        getEntries: () => Array<Record<string, unknown>>;
+        getSessionFile: () => string | undefined;
+      };
+    };
+  };
+  const sessionManager = SessionManager.create(
+    params.workspaceDir,
+    params.sessionDir,
+  );
+  const sessionFile = sessionManager.getSessionFile();
+  assert.ok(sessionFile);
+  return {
+    sessionManager,
+    sessionFile,
+  };
+}
+
+function latestPiCompactionEntry(
+  sessionFile: string,
+): Record<string, unknown> | null {
+  const branch = openPiSessionManager(sessionFile).getBranch();
+  for (let index = branch.length - 1; index >= 0; index -= 1) {
+    const entry = branch[index];
+    if (entry?.type === "compaction") {
+      return entry;
+    }
+  }
+  return null;
+}
+
+function upsertTurnRequestSnapshotFixture(params: {
+  store: RuntimeStateStore;
+  workspaceId: string;
+  sessionId: string;
+  inputId: string;
+  model: string;
+  providerId: string;
+  modelId: string;
+  modelProxyProvider?: string;
+  systemPrompt?: string;
+  instructionSize?: number;
+}): void {
+  const instructionSize = Math.max(1, params.instructionSize ?? 1024);
+  params.store.upsertTurnRequestSnapshot({
+    workspaceId: params.workspaceId,
+    sessionId: params.sessionId,
+    inputId: params.inputId,
+    snapshotKind: "harness_host_request",
+    fingerprint: `snapshot-${params.inputId}`,
+    payload: {
+      schema_version: 1,
+      snapshot_kind: "harness_host_request",
+      workspace_id: params.workspaceId,
+      session_id: params.sessionId,
+      input_id: params.inputId,
+      runtime_config: {
+        provider_id: params.providerId,
+        model_id: params.modelId,
+        system_prompt: params.systemPrompt ?? "System prompt",
+        context_messages: [],
+        model_client: {
+          model_proxy_provider:
+            params.modelProxyProvider ?? "openai_compatible",
+          base_url: "https://runtime.example/api/v1/model-proxy",
+          default_headers: {
+            "X-API-Key": "snapshot-key",
+          },
+        },
+      },
+      harness_request: {
+        workspace_id: params.workspaceId,
+        session_id: params.sessionId,
+        input_id: params.inputId,
+        provider_id: params.providerId,
+        model_id: params.modelId,
+        model: params.model,
+        instruction: "x".repeat(instructionSize),
+        context: {},
+        model_client: {
+          model_proxy_provider:
+            params.modelProxyProvider ?? "openai_compatible",
+          api_key: "runtime-api-key",
+          base_url: "https://runtime.example/api/v1/model-proxy",
+          default_headers: {
+            "X-API-Key": "runtime-api-key",
+          },
+        },
+      },
+    },
+  });
+}
+
+function piUserMessage(text: string): Record<string, unknown> {
+  return {
+    role: "user",
+    content: text,
+    timestamp: Date.now(),
+  };
+}
+
+function piAssistantMessage(text: string): Record<string, unknown> {
+  return {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    api: "responses",
+    provider: "openai",
+    model: "gpt-test",
+    usage: {
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+      },
+    },
+    stopReason: "stop",
+    timestamp: Date.now(),
+  };
+}
+
+function piSessionMessageTexts(sessionFile: string): string[] {
+  const context = openPiSessionManager(sessionFile).buildSessionContext();
+  return context.messages.map((message) => {
+    const content = message.content;
+    if (typeof content === "string") {
+      return content;
+    }
+    if (Array.isArray(content)) {
+      return content
+        .filter(
+          (entry): entry is { type: string; text?: string } =>
+            Boolean(entry) && typeof entry === "object",
+        )
+        .map((entry) => (entry.type === "text" ? entry.text ?? "" : ""))
+        .join("");
+    }
+    return "";
+  });
+}
+
 function writeRuntimeConfigDocument(document: Record<string, unknown>): string {
   const root = makeTempDir("hb-runtime-config-");
   const configPath = path.join(root, "state", "runtime-config.json");
@@ -157,7 +377,7 @@ function createSubagentRunFixture(params: {
   params.store.ensureSession({
     workspaceId: params.workspaceId,
     sessionId: mainSessionId,
-    kind: "workspace_session",
+    kind: "main_session",
   });
   params.store.ensureSession({
     workspaceId: params.workspaceId,
@@ -686,7 +906,7 @@ test("claimed input creates a completion notification for successful cronjob ses
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    kind: "workspace_session",
+    kind: "main_session",
     title: "Main Session",
     createdBy: "workspace_user",
   });
@@ -862,7 +1082,7 @@ test("claimed input creates a completion notification for completed main-session
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    kind: "workspace_session",
+    kind: "main_session",
     title: "Main Session",
     createdBy: "workspace_user",
   });
@@ -1471,7 +1691,7 @@ test("claimed input delivers materialized main-session event batches without ins
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    kind: "workspace_session",
+    kind: "main_session",
   });
   const event = store.enqueueMainSessionEvent({
     workspaceId: workspace.id,
@@ -1504,10 +1724,12 @@ test("claimed input delivers materialized main-session event batches without ins
     materializedInputId: queued.inputId,
   });
 
+  let capturedInstruction = "";
   await processClaimedInput({
     store,
     record: queued,
     executeRunnerRequestFn: async (payload, options = {}) => {
+      capturedInstruction = String(payload.instruction);
       await options.onEvent?.({
         session_id: payload.session_id,
         input_id: payload.input_id,
@@ -1551,6 +1773,8 @@ test("claimed input delivers materialized main-session event batches without ins
     messages[0]?.text,
     "The research is done and the report is ready.",
   );
+  assert.doesNotMatch(capturedInstruction, /Pending Background Updates/);
+  assert.match(capturedInstruction, /\[Holaboss Main Session Event Batch v1\]/);
   assert.equal(updatedEvent?.status, "delivered");
   assert.ok(updatedEvent?.deliveredAt);
 
@@ -1568,7 +1792,7 @@ test("claimed input requeues materialized main-session event batches when the re
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    kind: "workspace_session",
+    kind: "main_session",
   });
   const event = store.enqueueMainSessionEvent({
     workspaceId: workspace.id,
@@ -1636,7 +1860,7 @@ test("claimed input requeues paused materialized main-session event batches with
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    kind: "workspace_session",
+    kind: "main_session",
   });
   const event = store.enqueueMainSessionEvent({
     workspaceId: workspace.id,
@@ -1721,6 +1945,181 @@ test("claimed input requeues paused materialized main-session event batches with
   store.close();
 });
 
+test("claimed input runs main-session followups on the bound session snapshot even when workspace pi state points elsewhere", async () => {
+  const store = makeStore("hb-claimed-input-main-session-followup-snapshot-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    kind: "main_session",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  const { sessionManager, sessionFile: liveSessionFile } = createPiSessionFile({
+    workspaceDir,
+    sessionDir: path.join(workspaceDir, ".holaboss", "pi-sessions"),
+  });
+  sessionManager.appendMessage(
+    piUserMessage("Tell me when the background task finishes."),
+  );
+  sessionManager.appendMessage(piAssistantMessage("Working on it."));
+  persistWorkspaceHarnessSessionId({
+    workspaceDir,
+    harness: "pi",
+    sessionId: liveSessionFile,
+  });
+  store.upsertBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    harness: "pi",
+    harnessSessionId: liveSessionFile,
+  });
+  const { sessionManager: otherSessionManager, sessionFile: otherSessionFile } =
+    createPiSessionFile({
+      workspaceDir,
+      sessionDir: path.join(workspaceDir, ".holaboss", "pi-sessions"),
+    });
+  otherSessionManager.appendMessage(
+    piUserMessage("This is a subagent-only pi session."),
+  );
+  otherSessionManager.appendMessage(
+    piAssistantMessage("Subagent result lives here."),
+  );
+  persistWorkspaceHarnessSessionId({
+    workspaceDir,
+    harness: "pi",
+    sessionId: otherSessionFile,
+  });
+
+  const event = store.enqueueMainSessionEvent({
+    workspaceId: workspace.id,
+    ownerMainSessionId: "session-main",
+    originMainSessionId: "session-main",
+    subagentId: "subagent-1",
+    eventType: "completed",
+    deliveryBucket: "background_update",
+    payload: {
+      status: "completed",
+      summary: "Research is done.",
+    },
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: {
+      text: "[Holaboss Main Session Event Batch v1]\nSummarize the queued event.",
+      context: {
+        source: "main_session_event_batch",
+        main_session_event_ids: [event.eventId],
+        delivery_bucket: "background_update",
+      },
+    },
+    idempotencyKey: `main-session-event-batch:${event.eventId}`,
+  });
+  store.markMainSessionEventsMaterialized({
+    workspaceId: workspace.id,
+    eventIds: [event.eventId],
+    materializedInputId: queued.inputId,
+  });
+
+  let snapshotSessionFile = "";
+  let checkpointQueued = false;
+  await processClaimedInput({
+    store,
+    record: queued,
+    enqueueSessionCheckpointJobFn: () => {
+      checkpointQueued = true;
+      return null;
+    },
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      const execContext = recordValue(
+        recordValue(payload.context)?._sandbox_runtime_exec_v1,
+      );
+      snapshotSessionFile =
+        typeof execContext?.harness_session_id === "string"
+          ? execContext.harness_session_id
+          : "";
+      assert.ok(snapshotSessionFile);
+      assert.notEqual(snapshotSessionFile, liveSessionFile);
+      assert.equal(path.basename(snapshotSessionFile), path.basename(liveSessionFile));
+      assert.notEqual(
+        path.basename(snapshotSessionFile),
+        path.basename(otherSessionFile),
+      );
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "output_delta",
+        payload: { delta: "The report is ready." },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 3,
+        event_type: "pi_native_event",
+        payload: {
+          native_type: "message_end",
+          native_event: {
+            type: "message_end",
+            message: piAssistantMessage("The report is ready."),
+          },
+          harness_session_id: snapshotSessionFile,
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 4,
+        event_type: "run_completed",
+        payload: {
+          status: "ok",
+          harness_session_id: snapshotSessionFile,
+        },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  assert.equal(checkpointQueued, false);
+  assert.equal(
+    store.getBinding({
+      workspaceId: workspace.id,
+      sessionId: "session-main",
+    })?.harnessSessionId,
+    liveSessionFile,
+  );
+  assert.equal(
+    readWorkspaceHarnessSessionId({ workspaceDir, harness: "pi" }),
+    liveSessionFile,
+  );
+  assert.equal(fs.existsSync(path.dirname(snapshotSessionFile)), false);
+  assert.deepEqual(piSessionMessageTexts(liveSessionFile), [
+    "Tell me when the background task finishes.",
+    "Working on it.",
+    "The report is ready.",
+  ]);
+
+  store.close();
+});
+
 test("claimed input folds attached background updates into a normal user turn", async () => {
   const store = makeStore("hb-claimed-input-inline-background-events-");
   const workspace = store.createWorkspace({
@@ -1732,7 +2131,7 @@ test("claimed input folds attached background updates into a normal user turn", 
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    kind: "workspace_session",
+    kind: "main_session",
   });
   const event = store.enqueueMainSessionEvent({
     workspaceId: workspace.id,
@@ -4239,5 +4638,780 @@ test("claimed input keeps existing harness session binding when run_failed omits
 
   assert.ok(binding);
   assert.equal(binding.harnessSessionId, "stale-pi-session");
+  store.close();
+});
+
+test("claimed input compacts a reused PI session before a smaller-window model run", async () => {
+  const store = makeStore("hb-claimed-input-prerun-compaction-downshift-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  const { sessionManager, sessionFile } = createPiSessionFile({
+    workspaceDir,
+    sessionDir: path.join(workspaceDir, ".holaboss", "pi-sessions"),
+  });
+  sessionManager.appendMessage(piUserMessage("x".repeat(260_000)));
+  const assistantEntryId = sessionManager.appendMessage(
+    piAssistantMessage("previous response"),
+  );
+  store.upsertBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    harness: "pi",
+    harnessSessionId: sessionFile,
+  });
+  const previousInput = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "previous", model: "openai_codex/gpt-5.4" },
+  });
+  store.updateInput({
+    workspaceId: workspace.id,
+    inputId: previousInput.inputId,
+    fields: { status: "DONE" },
+  });
+  store.upsertTurnResult({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: previousInput.inputId,
+    startedAt: "2026-05-11T00:00:00.000Z",
+    completedAt: "2026-05-11T00:01:00.000Z",
+    status: "completed",
+    stopReason: "completed",
+    assistantText: "previous response",
+    toolUsageSummary: {
+      total_calls: 0,
+      completed_calls: 0,
+      failed_calls: 0,
+      tool_names: [],
+      tool_ids: [],
+    },
+    permissionDenials: [],
+    promptSectionIds: [],
+    capabilityManifestFingerprint: null,
+    requestSnapshotFingerprint: null,
+    promptCacheProfile: null,
+    contextBudgetDecisions: {
+      context_usage: {
+        tokens: 650_000,
+        context_window: 1_000_000,
+        percent: 65,
+      },
+    },
+    tokenUsage: null,
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "new task", model: "openai_codex/gpt-5.5" },
+  });
+  upsertTurnRequestSnapshotFixture({
+    store,
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: queued.inputId,
+    model: "openai_codex/gpt-5.5",
+    providerId: "openai_codex",
+    modelId: "gpt-5.5",
+    instructionSize: 2_048,
+  });
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+  let compactionCalls = 0;
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+    registerRunStartedFn: async () => {},
+    relayRunEventFn: async () => {},
+    resolveRuntimeModelClientFn: () => ({
+      providerId: "openai_codex",
+      configuredProviderId: "openai_codex",
+      modelId: "gpt-5.5",
+      modelToken: "openai_codex/gpt-5.5",
+      modelProxyProvider: "openai_compatible",
+      modelClient: {
+        model_proxy_provider: "openai_compatible",
+        api_key: "runtime-api-key",
+        base_url: "https://runtime.example/api/v1/model-proxy",
+        default_headers: {
+          "X-API-Key": "runtime-api-key",
+        },
+      },
+    }),
+    runPiSessionCompactionFn: async (requestPayload) => {
+      compactionCalls += 1;
+      const snapshotSessionFile = String(requestPayload.harness_session_id);
+      openPiSessionManager(snapshotSessionFile).appendCompaction(
+        "Compacted history",
+        assistantEntryId,
+        650_000,
+        { readFiles: [], modifiedFiles: [] },
+        false,
+      );
+      return {
+        compacted: true,
+        session_file: snapshotSessionFile,
+        result: {
+          summary: "Compacted history",
+          firstKeptEntryId: assistantEntryId,
+          tokensBefore: 650_000,
+          details: { readFiles: [], modifiedFiles: [] },
+        },
+        reason: null,
+        diagnostics: {
+          context_usage: {
+            tokens: 650_000,
+            contextWindow: 1_000_000,
+            percent: 65,
+          },
+        },
+        error: null,
+      };
+    },
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      const execContext = recordValue(
+        recordValue(payload.context)?._sandbox_runtime_exec_v1,
+      );
+      assert.equal(execContext?.harness_session_id, sessionFile);
+      assert.ok(latestPiCompactionEntry(sessionFile));
+      await options.onEvent?.({
+        session_id: String(payload.session_id),
+        input_id: String(payload.input_id),
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: String(payload.session_id),
+        input_id: String(payload.input_id),
+        sequence: 2,
+        event_type: "run_completed",
+        payload: {
+          status: "completed",
+          harness_session_id: sessionFile,
+          context_usage: {
+            tokens: 110_000,
+            context_window: 400_000,
+            percent: 27.5,
+          },
+        },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  assert.equal(compactionCalls, 1);
+  const turnResult = turnResultForInput(store, queued);
+  const preRunTelemetry = recordValue(
+    recordValue(turnResult?.contextBudgetDecisions)?.pre_run_compaction,
+  );
+  assert.equal(turnResult?.status, "completed");
+  assert.ok(preRunTelemetry);
+  assert.equal(preRunTelemetry?.initial_decision, "would_overflow");
+  assert.equal(preRunTelemetry?.final_decision, "fit");
+  assert.equal(preRunTelemetry?.trigger_reason, "model_downshift_projected_overflow");
+  assert.equal(preRunTelemetry?.compaction_attempted, true);
+  assert.equal(preRunTelemetry?.compaction_changed_branch, true);
+  assert.equal(preRunTelemetry?.reset_required, false);
+  assert.equal(preRunTelemetry?.previous_selected_model, "openai_codex/gpt-5.4");
+  assert.equal(preRunTelemetry?.target_selected_model, "openai_codex/gpt-5.5");
+  assert.ok(latestPiCompactionEntry(sessionFile));
+  store.close();
+});
+
+test("claimed input fails with session reset required when pre-run compaction cannot make the session fit", async () => {
+  const store = makeStore("hb-claimed-input-prerun-compaction-reset-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  const { sessionManager, sessionFile } = createPiSessionFile({
+    workspaceDir,
+    sessionDir: path.join(workspaceDir, ".holaboss", "pi-sessions"),
+  });
+  sessionManager.appendMessage(piUserMessage("x".repeat(260_000)));
+  sessionManager.appendMessage(piAssistantMessage("previous response"));
+  store.upsertBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    harness: "pi",
+    harnessSessionId: sessionFile,
+  });
+  const previousInput = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "previous", model: "openai_codex/gpt-5.5" },
+  });
+  store.updateInput({
+    workspaceId: workspace.id,
+    inputId: previousInput.inputId,
+    fields: { status: "DONE" },
+  });
+  store.upsertTurnResult({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: previousInput.inputId,
+    startedAt: "2026-05-11T00:00:00.000Z",
+    completedAt: "2026-05-11T00:01:00.000Z",
+    status: "completed",
+    stopReason: "completed",
+    assistantText: "previous response",
+    toolUsageSummary: {
+      total_calls: 0,
+      completed_calls: 0,
+      failed_calls: 0,
+      tool_names: [],
+      tool_ids: [],
+    },
+    permissionDenials: [],
+    promptSectionIds: [],
+    capabilityManifestFingerprint: null,
+    requestSnapshotFingerprint: null,
+    promptCacheProfile: null,
+    contextBudgetDecisions: {
+      context_usage: {
+        tokens: 130_100,
+        context_window: 400_000,
+        percent: 32.5,
+      },
+    },
+    tokenUsage: null,
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "new task", model: "openai_codex/gpt-5.5" },
+  });
+  upsertTurnRequestSnapshotFixture({
+    store,
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: queued.inputId,
+    model: "openai_codex/gpt-5.5",
+    providerId: "openai_codex",
+    modelId: "gpt-5.5",
+    instructionSize: 1_024,
+  });
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+  let runnerCalled = false;
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+    registerRunStartedFn: async () => {},
+    relayRunEventFn: async () => {},
+    resolveRuntimeModelClientFn: () => ({
+      providerId: "openai_codex",
+      configuredProviderId: "openai_codex",
+      modelId: "gpt-5.5",
+      modelToken: "openai_codex/gpt-5.5",
+      modelProxyProvider: "openai_compatible",
+      modelClient: {
+        model_proxy_provider: "openai_compatible",
+        api_key: "runtime-api-key",
+        base_url: "https://runtime.example/api/v1/model-proxy",
+        default_headers: {
+          "X-API-Key": "runtime-api-key",
+        },
+      },
+    }),
+    runPiSessionCompactionFn: async (requestPayload) => ({
+      compacted: false,
+      session_file: String(requestPayload.harness_session_id),
+      result: null,
+      reason: "already_compacted",
+      diagnostics: {
+        context_usage: {
+          tokens: 130_100,
+          contextWindow: 400_000,
+          percent: 32.5,
+        },
+      },
+      error: null,
+    }),
+    executeRunnerRequestFn: async () => {
+      runnerCalled = true;
+      throw new Error("runner should not be invoked");
+    },
+  });
+
+  assert.equal(runnerCalled, false);
+  const updated = store.getInput({
+    workspaceId: workspace.id,
+    inputId: queued.inputId,
+  });
+  const events = outputEventsForInput(store, queued);
+  const turnResult = turnResultForInput(store, queued);
+  const terminalPayload = events.at(-1)?.payload ?? null;
+  const preRunTelemetry = recordValue(
+    recordValue(turnResult?.contextBudgetDecisions)?.pre_run_compaction,
+  );
+  assert.equal(updated?.status, "FAILED");
+  assert.equal(turnResult?.status, "failed");
+  assert.equal(turnResult?.stopReason, "session_reset_required");
+  assert.equal(recordValue(terminalPayload)?.error_type, "SessionResetRequiredError");
+  assert.ok(
+    String(recordValue(terminalPayload)?.message ?? "").includes(
+      "session reset required",
+    ),
+  );
+  assert.ok(preRunTelemetry);
+  assert.equal(preRunTelemetry?.initial_decision, "threshold_exceeded");
+  assert.equal(preRunTelemetry?.final_decision, "reset_required");
+  assert.equal(preRunTelemetry?.compaction_attempted, true);
+  assert.equal(preRunTelemetry?.compaction_changed_branch, false);
+  assert.equal(preRunTelemetry?.reset_required, true);
+  store.close();
+});
+
+test("claimed input retries once after a provider context overflow and succeeds after runtime compaction", async () => {
+  const store = makeStore("hb-claimed-input-overflow-recovery-success-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  const { sessionManager, sessionFile } = createPiSessionFile({
+    workspaceDir,
+    sessionDir: path.join(workspaceDir, ".holaboss", "pi-sessions"),
+  });
+  sessionManager.appendMessage(piUserMessage("x".repeat(80_000)));
+  const assistantEntryId = sessionManager.appendMessage(
+    piAssistantMessage("previous response"),
+  );
+  store.upsertBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    harness: "pi",
+    harnessSessionId: sessionFile,
+  });
+  const previousInput = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "previous", model: "openai_codex/gpt-5.5" },
+  });
+  store.updateInput({
+    workspaceId: workspace.id,
+    inputId: previousInput.inputId,
+    fields: { status: "DONE" },
+  });
+  store.upsertTurnResult({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: previousInput.inputId,
+    startedAt: "2026-05-11T00:00:00.000Z",
+    completedAt: "2026-05-11T00:01:00.000Z",
+    status: "completed",
+    stopReason: "completed",
+    assistantText: "previous response",
+    toolUsageSummary: {
+      total_calls: 0,
+      completed_calls: 0,
+      failed_calls: 0,
+      tool_names: [],
+      tool_ids: [],
+    },
+    permissionDenials: [],
+    promptSectionIds: [],
+    capabilityManifestFingerprint: null,
+    requestSnapshotFingerprint: null,
+    promptCacheProfile: null,
+    contextBudgetDecisions: {
+      context_usage: {
+        tokens: 100_000,
+        context_window: 400_000,
+        percent: 25,
+      },
+    },
+    tokenUsage: null,
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "new task", model: "openai_codex/gpt-5.5" },
+  });
+  upsertTurnRequestSnapshotFixture({
+    store,
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: queued.inputId,
+    model: "openai_codex/gpt-5.5",
+    providerId: "openai_codex",
+    modelId: "gpt-5.5",
+    instructionSize: 1_024,
+  });
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+  let compactionCalls = 0;
+  let runnerCalls = 0;
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+    registerRunStartedFn: async () => {},
+    relayRunEventFn: async () => {},
+    resolveRuntimeModelClientFn: () => ({
+      providerId: "openai_codex",
+      configuredProviderId: "openai_codex",
+      modelId: "gpt-5.5",
+      modelToken: "openai_codex/gpt-5.5",
+      modelProxyProvider: "openai_compatible",
+      modelClient: {
+        model_proxy_provider: "openai_compatible",
+        api_key: "runtime-api-key",
+        base_url: "https://runtime.example/api/v1/model-proxy",
+        default_headers: {
+          "X-API-Key": "runtime-api-key",
+        },
+      },
+    }),
+    runPiSessionCompactionFn: async (requestPayload) => {
+      compactionCalls += 1;
+      const snapshotSessionFile = String(requestPayload.harness_session_id);
+      openPiSessionManager(snapshotSessionFile).appendCompaction(
+        "Overflow recovery compaction",
+        assistantEntryId,
+        100_000,
+        { readFiles: [], modifiedFiles: [] },
+        false,
+      );
+      return {
+        compacted: true,
+        session_file: snapshotSessionFile,
+        result: {
+          summary: "Overflow recovery compaction",
+          firstKeptEntryId: assistantEntryId,
+          tokensBefore: 100_000,
+          details: { readFiles: [], modifiedFiles: [] },
+        },
+        reason: null,
+        diagnostics: {
+          context_usage: {
+            tokens: 100_000,
+            contextWindow: 400_000,
+            percent: 25,
+          },
+        },
+        error: null,
+      };
+    },
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      runnerCalls += 1;
+      if (runnerCalls === 1) {
+        assert.equal(latestPiCompactionEntry(sessionFile), null);
+        await options.onEvent?.({
+          session_id: String(payload.session_id),
+          input_id: String(payload.input_id),
+          sequence: 1,
+          event_type: "run_started",
+          payload: {},
+        });
+        await options.onEvent?.({
+          session_id: String(payload.session_id),
+          input_id: String(payload.input_id),
+          sequence: 2,
+          event_type: "run_failed",
+          payload: {
+            type: "ProviderError",
+            message: "Your input exceeds the context window of this model.",
+            harness_session_id: sessionFile,
+          },
+        });
+        return {
+          events: [],
+          skippedLines: [],
+          stderr: "",
+          returnCode: 0,
+          sawTerminal: true,
+        };
+      }
+      assert.ok(latestPiCompactionEntry(sessionFile));
+      await options.onEvent?.({
+        session_id: String(payload.session_id),
+        input_id: String(payload.input_id),
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: String(payload.session_id),
+        input_id: String(payload.input_id),
+        sequence: 2,
+        event_type: "run_completed",
+        payload: {
+          status: "completed",
+          harness_session_id: sessionFile,
+          context_usage: {
+            tokens: 80_000,
+            context_window: 400_000,
+            percent: 20,
+          },
+        },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  assert.equal(compactionCalls, 1);
+  assert.equal(runnerCalls, 2);
+  const events = outputEventsForInput(store, queued);
+  const turnResult = turnResultForInput(store, queued);
+  const overflowRecovery = recordValue(
+    recordValue(turnResult?.contextBudgetDecisions)?.overflow_recovery,
+  );
+  assert.equal(turnResult?.status, "completed");
+  assert.deepEqual(
+    events.map((event) => event.eventType),
+    ["run_started", "run_started", "run_completed"],
+  );
+  assert.equal(events.some((event) => event.eventType === "run_failed"), false);
+  assert.ok(overflowRecovery);
+  assert.equal(overflowRecovery?.trigger_reason, "provider_context_overflow");
+  assert.equal(overflowRecovery?.initial_error_type, "ProviderError");
+  assert.equal(
+    overflowRecovery?.initial_error_message,
+    "Your input exceeds the context window of this model.",
+  );
+  assert.equal(overflowRecovery?.compaction_attempted, true);
+  assert.equal(overflowRecovery?.compaction_changed_branch, true);
+  assert.equal(overflowRecovery?.retry_attempted, true);
+  assert.equal(overflowRecovery?.recovered, true);
+  assert.equal(overflowRecovery?.reset_required, false);
+  store.close();
+});
+
+test("claimed input fails with session reset required when overflow persists after runtime recovery retry", async () => {
+  const store = makeStore("hb-claimed-input-overflow-recovery-reset-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  const { sessionManager, sessionFile } = createPiSessionFile({
+    workspaceDir,
+    sessionDir: path.join(workspaceDir, ".holaboss", "pi-sessions"),
+  });
+  sessionManager.appendMessage(piUserMessage("x".repeat(80_000)));
+  const assistantEntryId = sessionManager.appendMessage(
+    piAssistantMessage("previous response"),
+  );
+  store.upsertBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    harness: "pi",
+    harnessSessionId: sessionFile,
+  });
+  const previousInput = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "previous", model: "openai_codex/gpt-5.5" },
+  });
+  store.updateInput({
+    workspaceId: workspace.id,
+    inputId: previousInput.inputId,
+    fields: { status: "DONE" },
+  });
+  store.upsertTurnResult({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: previousInput.inputId,
+    startedAt: "2026-05-11T00:00:00.000Z",
+    completedAt: "2026-05-11T00:01:00.000Z",
+    status: "completed",
+    stopReason: "completed",
+    assistantText: "previous response",
+    toolUsageSummary: {
+      total_calls: 0,
+      completed_calls: 0,
+      failed_calls: 0,
+      tool_names: [],
+      tool_ids: [],
+    },
+    permissionDenials: [],
+    promptSectionIds: [],
+    capabilityManifestFingerprint: null,
+    requestSnapshotFingerprint: null,
+    promptCacheProfile: null,
+    contextBudgetDecisions: {
+      context_usage: {
+        tokens: 100_000,
+        context_window: 400_000,
+        percent: 25,
+      },
+    },
+    tokenUsage: null,
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "new task", model: "openai_codex/gpt-5.5" },
+  });
+  upsertTurnRequestSnapshotFixture({
+    store,
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: queued.inputId,
+    model: "openai_codex/gpt-5.5",
+    providerId: "openai_codex",
+    modelId: "gpt-5.5",
+    instructionSize: 1_024,
+  });
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+  let compactionCalls = 0;
+  let runnerCalls = 0;
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+    registerRunStartedFn: async () => {},
+    relayRunEventFn: async () => {},
+    resolveRuntimeModelClientFn: () => ({
+      providerId: "openai_codex",
+      configuredProviderId: "openai_codex",
+      modelId: "gpt-5.5",
+      modelToken: "openai_codex/gpt-5.5",
+      modelProxyProvider: "openai_compatible",
+      modelClient: {
+        model_proxy_provider: "openai_compatible",
+        api_key: "runtime-api-key",
+        base_url: "https://runtime.example/api/v1/model-proxy",
+        default_headers: {
+          "X-API-Key": "runtime-api-key",
+        },
+      },
+    }),
+    runPiSessionCompactionFn: async (requestPayload) => {
+      compactionCalls += 1;
+      const snapshotSessionFile = String(requestPayload.harness_session_id);
+      openPiSessionManager(snapshotSessionFile).appendCompaction(
+        "Overflow recovery compaction",
+        assistantEntryId,
+        100_000,
+        { readFiles: [], modifiedFiles: [] },
+        false,
+      );
+      return {
+        compacted: true,
+        session_file: snapshotSessionFile,
+        result: {
+          summary: "Overflow recovery compaction",
+          firstKeptEntryId: assistantEntryId,
+          tokensBefore: 100_000,
+          details: { readFiles: [], modifiedFiles: [] },
+        },
+        reason: null,
+        diagnostics: {
+          context_usage: {
+            tokens: 100_000,
+            contextWindow: 400_000,
+            percent: 25,
+          },
+        },
+        error: null,
+      };
+    },
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      runnerCalls += 1;
+      if (runnerCalls === 2) {
+        assert.ok(latestPiCompactionEntry(sessionFile));
+      }
+      await options.onEvent?.({
+        session_id: String(payload.session_id),
+        input_id: String(payload.input_id),
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: String(payload.session_id),
+        input_id: String(payload.input_id),
+        sequence: 2,
+        event_type: "run_failed",
+        payload: {
+          type: "ProviderError",
+          message: "context_length_exceeded: Your input exceeds the context window of this model.",
+          harness_session_id: sessionFile,
+        },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  assert.equal(compactionCalls, 1);
+  assert.equal(runnerCalls, 2);
+  const updated = store.getInput({
+    workspaceId: workspace.id,
+    inputId: queued.inputId,
+  });
+  const events = outputEventsForInput(store, queued);
+  const turnResult = turnResultForInput(store, queued);
+  const terminalPayload = events.at(-1)?.payload ?? null;
+  const overflowRecovery = recordValue(
+    recordValue(turnResult?.contextBudgetDecisions)?.overflow_recovery,
+  );
+  assert.equal(updated?.status, "FAILED");
+  assert.equal(turnResult?.status, "failed");
+  assert.equal(turnResult?.stopReason, "session_reset_required");
+  assert.equal(recordValue(terminalPayload)?.error_type, "SessionResetRequiredError");
+  assert.ok(
+    String(recordValue(terminalPayload)?.message ?? "").includes(
+      "session reset required",
+    ),
+  );
+  assert.ok(overflowRecovery);
+  assert.equal(overflowRecovery?.trigger_reason, "provider_context_overflow");
+  assert.equal(overflowRecovery?.compaction_attempted, true);
+  assert.equal(overflowRecovery?.compaction_changed_branch, true);
+  assert.equal(overflowRecovery?.retry_attempted, true);
+  assert.equal(overflowRecovery?.recovered, false);
+  assert.equal(overflowRecovery?.reset_required, true);
   store.close();
 });

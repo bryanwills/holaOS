@@ -377,7 +377,7 @@ const RUNTIME_TOOL_DEFINITIONS = new Map<string, ToolCapabilityDefinition>(
 );
 
 function browserToolSessionKinds(): string[] {
-  return ["workspace_session", "subagent", "task_proposal"];
+  return ["subagent"];
 }
 
 const BROWSER_TOOL_DEFINITIONS = new Map<string, ToolCapabilityDefinition>(
@@ -390,7 +390,7 @@ const BROWSER_TOOL_DEFINITIONS = new Map<string, ToolCapabilityDefinition>(
       description: toolDef.description,
       availability: {
         sessionKinds:
-          toolDef.session_scope === "workspace_session_only"
+          toolDef.session_scope === "subagent_only"
             ? browserToolSessionKinds()
             : undefined,
       },
@@ -871,8 +871,12 @@ function buildPolicyContext(
   );
   const runtimeToolIds = uniqueNormalizedSorted(
     params.runtimeToolIds
-      ? params.runtimeToolIds
-      : params.extraTools.filter((toolName) => RUNTIME_TOOL_DEFINITIONS.has(normalizedToken(toolName)))
+      ? params.runtimeToolIds.filter((toolId) =>
+          RUNTIME_TOOL_DEFINITIONS.has(normalizedToken(toolId))
+        )
+      : params.extraTools.filter(
+          (toolName) => RUNTIME_TOOL_DEFINITIONS.has(normalizedToken(toolName))
+        )
   );
   const mcpServerIds = uniqueSorted((params.resolvedMcpServerIds ?? []).map((serverId) => serverId.trim()));
   const workspaceCommands = uniqueSorted((params.workspaceCommandIds ?? []).map((commandId) => commandId.trim()));
@@ -903,6 +907,9 @@ function buildStaticCapabilityRegistry(
 ): StaticAgentCapabilityRegistry {
   const { context, workspaceCommands, workspaceSkills } = buildPolicyContext(params);
   const descriptorByKey = new Map<string, StaticAgentCapabilityDescriptor>();
+  const stagedRuntimeToolIds = new Set(
+    uniqueNormalizedSorted(params.runtimeToolIds ?? [])
+  );
 
   const upsertDescriptor = (descriptor: StaticAgentCapabilityDescriptor | null) => {
     if (!descriptor) {
@@ -919,6 +926,13 @@ function buildStaticCapabilityRegistry(
     upsertDescriptor(buildToolDescriptor(toolName, "default_tool"));
   }
   for (const toolName of params.extraTools) {
+    const normalizedToolName = normalizedToken(toolName);
+    if (
+      stagedRuntimeToolIds.has(normalizedToolName) &&
+      !RUNTIME_TOOL_DEFINITIONS.has(normalizedToolName)
+    ) {
+      continue;
+    }
     upsertDescriptor(buildToolDescriptor(toolName, "extra_tool"));
   }
 
@@ -1283,6 +1297,20 @@ function delegatedMcpServerNames(manifest: AgentCapabilityManifest): string[] {
   return [...names].sort((left, right) => left.localeCompare(right));
 }
 
+function pushMcpToolAliasLines(
+  lines: string[],
+  manifest: AgentCapabilityManifest,
+  heading: string,
+): void {
+  if (manifest.mcp_tool_aliases.length === 0) {
+    return;
+  }
+  lines.push(heading);
+  for (const alias of manifest.mcp_tool_aliases) {
+    lines.push(`- \`${alias.tool_id}\` -> call \`${alias.callable_name}\``);
+  }
+}
+
 function sortDelegatedOnlyCapabilities(
   capabilities: AgentCapabilityRecord[],
 ): AgentCapabilityRecord[] {
@@ -1313,15 +1341,29 @@ function sortDelegatedOnlyCapabilities(
 export function renderCapabilityPolicyCorePromptSection(
   manifest: AgentCapabilityManifest,
 ): string {
+  const normalizedSessionKind = normalizeOptionalToken(
+    manifest.context.session_kind,
+  );
   const lines = [
     "Capability policy for this run:",
     `Harness: ${manifest.context.harness_id ?? "unknown"}.`,
     `Session kind: ${manifest.context.session_kind ?? "unknown"}.`,
+  ];
+  if (normalizedSessionKind === "main_session" || normalizedSessionKind === "onboarding") {
+    lines.push(
+      "Use surfaced capabilities to inspect, route, or verify before making claims about workspace, app, browser, or runtime state whenever possible.",
+      "If state-changing work happens in this run or through a delegated child, verify the result before claiming success or completion.",
+      "Use coordination capabilities to track progress, consult available skills, route execution, or ask for clarification instead of keeping hidden state.",
+      "If a capability is not surfaced in the runtime context for this run, do not assume it is available.",
+    );
+    return lines.join("\n");
+  }
+  lines.push(
     "Use inspection capabilities to gather context before mutating workspace, app, browser, or runtime state whenever possible.",
     "After edits, shell commands, browser actions, MCP mutations, or runtime mutations, run a follow-up inspection or verification step before claiming success.",
     "Use coordination capabilities to track progress, consult available skills, or ask for clarification instead of keeping hidden state.",
     "If a capability is not surfaced in the runtime context for this run, do not assume it is available.",
-  ];
+  );
   return lines.join("\n");
 }
 
@@ -1346,9 +1388,11 @@ export function renderCapabilityToolRoutingPromptSection(
   }
   if (manifest.runtime_tools.some((capability) => capability.id === "holaboss_delegate_task")) {
     ensureHeading();
-    lines.push("Delegation routing: when the user asks for work that needs web, browser, terminal, or other execution-heavy capability not surfaced directly in this run, use `holaboss_delegate_task` instead of replying that the current run lacks those tools.");
+    lines.push("Delegation routing: when the user asks for web, browser, terminal, or other execution work, use `holaboss_delegate_task` instead of carrying out that task in this session.");
     lines.push("Deliverable routing: when the user asks for a report, brief, memo, digest, recap, or other long-form deliverable, prefer `holaboss_delegate_task` so the result is produced as an artifact and the main chat stays concise.");
-    lines.push("Treat the main session as a coordinator first: if the task is browser-heavy, web-heavy, terminal-heavy, multi-step, or interruptible, route it to a delegated subagent unless the direct capability is clearly surfaced and the work is truly small enough to finish inline.");
+    lines.push("Treat the main session as a coordinator first: if the request requires task execution, route it to a delegated subagent. Reserve this session for clarification, routing, direct inspection, and verification.");
+    lines.push("Fresh-work routing: when the user asks for fresh execution, fresh investigation, a rerun, or a new deliverable, delegate or inspect first; do not answer from prior chat memory alone.");
+    lines.push("Reuse guardrail: do not present a previous artifact or child result as the answer to a fresh request unless the user clearly asked to reuse or continue that exact result, or you verified that it already satisfies the current request.");
     lines.push("Available-tool fallback: missing the ideal MCP, API, browser, web, terminal, or file tool is not enough to stop; choose another viable direct or delegated route before surfacing a limitation.");
     lines.push("Treat current-run capability limits as a delegation signal when hidden subagents can perform the task.");
     lines.push("Do not lead with a capability apology, manual workaround, or \"I can't do that here\" answer when delegation is available.");
@@ -1419,18 +1463,12 @@ export function renderCapabilityAvailabilityContextPromptSection(
   if (manifest.mcp_tools.length > 0 || (manifest.context.mcp_server_ids?.length ?? 0) > 0) {
     lines.push("Connected MCP access: available.");
     lines.push("Use surfaced MCP tools when relevant; tool names may be resolved dynamically by the runtime.");
-    if (manifest.mcp_tool_aliases.length > 0) {
-      lines.push("MCP callable tool aliases for this run:");
-      for (const alias of manifest.mcp_tool_aliases) {
-        lines.push(`- \`${alias.tool_id}\` -> call \`${alias.callable_name}\``);
-      }
-    }
+    pushMcpToolAliasLines(lines, manifest, "MCP callable tool aliases for this run:");
   } else {
     lines.push("Connected MCP access: none.");
   }
   if (
-    (normalizedSessionKind === "workspace_session" ||
-      normalizedSessionKind === "main") &&
+    normalizedSessionKind === "main_session" &&
     manifest.runtime_tools.some((capability) => capability.id === "holaboss_delegate_task")
   ) {
     lines.push(
@@ -1472,8 +1510,8 @@ export function renderDelegatedCapabilityAvailabilityContextPromptSection(
     );
   }
   if (
-    directManifest.mcp_tools.length === 0 &&
-    delegatedManifest.mcp_tools.length > 0
+    delegatedManifest.mcp_tools.length > 0 ||
+    (delegatedManifest.context.mcp_server_ids?.length ?? 0) > 0
   ) {
     const delegatedServers = delegatedMcpServerNames(delegatedManifest);
     if (delegatedServers.length > 0) {
@@ -1483,6 +1521,11 @@ export function renderDelegatedCapabilityAvailabilityContextPromptSection(
           .join(", ")}.`,
       );
     }
+    pushMcpToolAliasLines(
+      lines,
+      delegatedManifest,
+      "Delegated MCP callable tool aliases for routing only:",
+    );
   }
 
   const delegatedOnly = sortDelegatedOnlyCapabilities(

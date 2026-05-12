@@ -73,6 +73,7 @@ test("decodeRunnerRequestBase64 applies defaults for optional fields", () => {
     input_id: "input-1",
     instruction: "Ship it",
     attachments: [],
+    image_urls: [],
     context: {
       nested: {
         ok: true,
@@ -99,10 +100,12 @@ test("decodeHarnessHostPiRequestBase64 validates and normalizes request payloads
       session_id: "session-1",
       browser_tools_enabled: true,
       browser_space: "user",
+      force_compaction: true,
       input_id: "input-1",
       instruction: "Do the thing",
       context_messages: ["Recent runtime context"],
       tools: { read: true, web_search: false, ignore: "x" },
+      image_urls: ["https://example.com/reference.png"],
       thinking_value: "medium",
       provider_id: "openai",
       model_id: "gpt-5.1",
@@ -131,11 +134,13 @@ test("decodeHarnessHostPiRequestBase64 validates and normalizes request payloads
     session_id: "session-1",
     browser_tools_enabled: true,
     browser_space: "user",
+    force_compaction: true,
     input_id: "input-1",
     instruction: "Do the thing",
     context_messages: ["Recent runtime context"],
     tools: { read: true, web_search: false },
     attachments: [],
+    image_urls: ["https://example.com/reference.png"],
     thinking_value: "medium",
     debug: false,
     harness_session_id: undefined,
@@ -208,6 +213,8 @@ test("decodeHarnessHostPiRequestBase64 allows empty or missing system_prompt", (
 
   assert.equal(emptyPrompt.system_prompt, "");
   assert.equal(missingPrompt.system_prompt, "");
+  assert.equal(emptyPrompt.force_compaction, false);
+  assert.equal(missingPrompt.force_compaction, false);
   assert.deepEqual(emptyPrompt.context_messages, ["Recent runtime context"]);
   assert.deepEqual(missingPrompt.context_messages, ["Recent runtime context"]);
 });

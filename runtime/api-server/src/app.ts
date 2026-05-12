@@ -106,8 +106,6 @@ import { BrokerError, IntegrationBrokerService } from "./integration-broker.js";
 import { OAuthService } from "./oauth-service.js";
 import { ComposioService } from "./composio-service.js";
 import {
-  type RuntimeAgentToolsCreateDataTableParams,
-  type RuntimeAgentToolsCreateDashboardParams,
   RuntimeAgentToolsService,
   RuntimeAgentToolsServiceError,
 } from "./runtime-agent-tools.js";
@@ -391,6 +389,7 @@ function normalizedSessionTitleSnippet(value: string): string {
 function sessionTitleFromFirstUserInput(
   text: string,
   attachments: SessionInputAttachmentPayload[],
+  imageUrls: readonly string[] = [],
 ): string | null {
   if (text.trim()) {
     return normalizedSessionTitleSnippet(text);
@@ -401,6 +400,12 @@ function sessionTitleFromFirstUserInput(
   if (attachments.length > 1) {
     const firstName = attachments[0]?.name?.trim() || "Attachment";
     return normalizedSessionTitleSnippet(`${firstName} +${attachments.length - 1} more`);
+  }
+  if (imageUrls.length === 1) {
+    return "Image input";
+  }
+  if (imageUrls.length > 1) {
+    return normalizedSessionTitleSnippet(`${imageUrls.length} image inputs`);
   }
   return null;
 }
@@ -601,6 +606,32 @@ function capabilityInputId(params: {
   );
 }
 
+function cronjobMetadataWithRequestDefaults(params: {
+  body: Record<string, unknown>;
+  existingMetadata?: Record<string, unknown> | null;
+}): Record<string, unknown> {
+  const metadata = hasOwn(params.body, "metadata")
+    ? { ...(optionalDict(params.body.metadata) ?? {}) }
+    : { ...((params.existingMetadata ?? {}) as Record<string, unknown>) };
+  delete metadata.model;
+
+  if (hasOwn(params.body, "session_id")) {
+    const sourceSessionId = nullableString(params.body.session_id);
+    if (sourceSessionId) {
+      metadata.source_session_id = sourceSessionId;
+    } else {
+      delete metadata.source_session_id;
+    }
+  } else if (typeof metadata.source_session_id !== "string") {
+    const sourceSessionId = optionalString(params.body.session_id);
+    if (sourceSessionId) {
+      metadata.source_session_id = sourceSessionId;
+    }
+  }
+
+  return metadata;
+}
+
 function requiredCronjobDeliveryInput(value: unknown): {
   channel: string;
   mode?: string;
@@ -766,6 +797,25 @@ function requiredSessionInputAttachments(value: unknown, workspaceDir: string): 
   });
 }
 
+function requiredSessionInputImageUrls(value: unknown): string[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("image_urls must be an array");
+  }
+  return value.map((item, index) => {
+    if (typeof item !== "string") {
+      throw new Error(`image_urls[${index}] must be a string`);
+    }
+    const trimmed = item.trim();
+    if (!trimmed) {
+      throw new Error(`image_urls[${index}] must be a non-empty string`);
+    }
+    return trimmed;
+  });
+}
+
 function attachmentsFromInputPayload(value: unknown): SessionInputAttachmentPayload[] {
   if (!Array.isArray(value)) {
     return [];
@@ -793,6 +843,8 @@ function workspaceRecordPayload(
     created_at: workspace.createdAt,
     updated_at: workspace.updatedAt,
     deleted_at_utc: workspace.deletedAtUtc,
+    icon: workspace.icon,
+    icon_color: workspace.iconColor,
     workspace_path: workspacePath ?? null,
     folder_state: folderState ?? null
   };
@@ -899,6 +951,23 @@ function requireHealthyWorkspaceFolder(
     reply.code(500).send({ detail: err instanceof Error ? err.message : "workspace folder check failed" });
     return null;
   }
+}
+
+function sendStructuredWorkspaceStoreError(reply: FastifyReply, error: unknown): boolean {
+  const err = error as Error & { code?: string; workspacePath?: string };
+  if (
+    err?.code === "workspace_folder_missing" ||
+    err?.code === "workspace_identity_write_failed" ||
+    err?.code === "workspace_identity_write_busy"
+  ) {
+    reply.code(409).send({
+      detail: err.message,
+      code: err.code,
+      workspace_path: err.workspacePath ?? null
+    });
+    return true;
+  }
+  return false;
 }
 
 function agentSessionPayload(
@@ -1107,6 +1176,8 @@ function outputPayload(record: OutputRecord): Record<string, unknown> {
 }
 
 function cronjobPayload(record: CronjobRecord): Record<string, unknown> {
+  const metadata = isRecord(record.metadata) ? { ...record.metadata } : {};
+  delete metadata.model;
   return {
     id: record.id,
     workspace_id: record.workspaceId,
@@ -1117,7 +1188,7 @@ function cronjobPayload(record: CronjobRecord): Record<string, unknown> {
     instruction: record.instruction,
     enabled: record.enabled,
     delivery: record.delivery,
-    metadata: record.metadata,
+    metadata,
     last_run_at: record.lastRunAt,
     next_run_at: record.nextRunAt,
     run_count: record.runCount,
@@ -1208,29 +1279,26 @@ function inferredSessionKind(workspace: WorkspaceRecord, sessionId: string): str
   if (onboardingSessionId && onboardingSessionId === trimmedSessionId && sessionSelectionUsesOnboarding(workspace)) {
     return "onboarding";
   }
-  return "workspace_session";
+  return "main_session";
+}
+
+function normalizedPrimaryChatSessionKind(kind: string | null | undefined): string {
+  const normalized = (kind ?? "").trim().toLowerCase() || "main_session";
+  return normalized === "workspace_session" || normalized === "main"
+    ? "main_session"
+    : normalized;
 }
 
 function isPrimaryChatSessionKind(kind: string | null | undefined): boolean {
-  const normalized = (kind ?? "").trim().toLowerCase();
-  return (
-    !normalized ||
-    normalized === "workspace_session" ||
-    normalized === "main" ||
-    normalized === "onboarding"
-  );
+  const normalized = normalizedPrimaryChatSessionKind(kind);
+  return normalized === "main_session" || normalized === "onboarding";
 }
 
 function canInlineBackgroundUpdatesIntoSessionKind(
   kind: string | null | undefined,
 ): boolean {
-  const normalized = (kind ?? "").trim().toLowerCase();
-  return (
-    !normalized ||
-    normalized === "workspace_session" ||
-    normalized === "main" ||
-    normalized === "onboarding"
-  );
+  const normalized = normalizedPrimaryChatSessionKind(kind);
+  return normalized === "main_session" || normalized === "onboarding";
 }
 
 function groupedMainSessionEventsPayload(
@@ -1254,8 +1322,8 @@ function preferredWorkspaceSessionId(params: {
   const desktopBinding = params.store.getConversationBindingByConversation({
     workspaceId: params.workspace.id,
     channel: "desktop",
-    conversationKey: "workspace-main",
-    role: "main",
+    conversationKey: "main_session",
+    role: "main_session",
   });
   if (desktopBinding) {
     const boundSession = params.store.getSession({
@@ -1330,7 +1398,7 @@ function renderLegacySessionHistoryMarkdown(params: {
     "",
     `- Workspace: ${params.workspace.name.trim() || params.workspace.id}`,
     `- Session ID: ${params.session.sessionId}`,
-    `- Kind: ${(params.session.kind || "workspace_session").trim() || "workspace_session"}`,
+    `- Kind: ${(params.session.kind || "main_session").trim() || "main_session"}`,
     `- Exported At: ${params.exportedAt}`,
     `- Archived At: ${params.archivedAt}`,
   ];
@@ -1535,7 +1603,7 @@ function resolveOrCreateWorkspaceMainSession(params: {
     params.store.ensureSession({
       workspaceId: params.workspace.id,
       sessionId: `main-${randomUUID()}`,
-      kind: "main",
+      kind: "main_session",
       title: params.workspace.name.trim() || "Main Session",
       createdBy: "system",
     });
@@ -1543,9 +1611,9 @@ function resolveOrCreateWorkspaceMainSession(params: {
   params.store.upsertConversationBinding({
     workspaceId: params.workspace.id,
     channel: "desktop",
-    conversationKey: "workspace-main",
+    conversationKey: "main_session",
     sessionId: session.sessionId,
-    role: "main",
+    role: "main_session",
     isActive: true,
     metadata: {},
     lastActiveAt: utcNowIso(),
@@ -1827,6 +1895,16 @@ function sendError(reply: FastifyReply, statusCode: number, detail: string) {
   return reply.code(statusCode).send({ detail });
 }
 
+function destructiveWriteApprovalResponse(detail: string): {
+  code: "destructive_write_requires_explicit_approval";
+  detail: string;
+} {
+  return {
+    code: "destructive_write_requires_explicit_approval",
+    detail
+  };
+}
+
 function resolveWorkspaceFilePath(workspaceDir: string, relativePath: string): string {
   if (!relativePath || relativePath.split("/").includes("..")) {
     throw new Error("path traversal not allowed");
@@ -1837,6 +1915,30 @@ function resolveWorkspaceFilePath(workspaceDir: string, relativePath: string): s
     throw new Error("path traversal not allowed");
   }
   return fullPath;
+}
+
+function isPreservedWorkspaceEntryForReplaceExisting(entryName: string): boolean {
+  return entryName === ".holaboss" || entryName === "workspace.json";
+}
+
+function workspaceReplaceExistingWouldDeleteEntries(workspaceDir: string): boolean {
+  for (const entry of fs.readdirSync(workspaceDir, { withFileTypes: true })) {
+    if (!isPreservedWorkspaceEntryForReplaceExisting(entry.name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isEffectivelyEmptyWorkspaceFileContent(buffer: Buffer): boolean {
+  if (buffer.length === 0) {
+    return true;
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buffer).trim().length === 0;
+  } catch {
+    return false;
+  }
 }
 
 class InvalidTemplateArchiveError extends Error {
@@ -2674,6 +2776,58 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     workspaceRoot: store.workspaceRoot,
     terminalSessionManager,
     queueWorker,
+    appLifecycle: {
+      ensureAppRunning: async (workspaceId: string, appId: string) => {
+        await ensureAppRunning(workspaceId, appId);
+      },
+      ensureAllAppsRunning: async (workspaceId: string) => {
+        return await ensureAllAppsRunning(workspaceId);
+      },
+      stopApp: async (workspaceId: string, appId: string) => {
+        return await stopManagedWorkspaceApp(workspaceId, appId);
+      },
+      installFromArchive: async ({ workspaceId, appId, archiveUrl, archivePath }) => {
+        const payload: Record<string, unknown> = {
+          workspace_id: workspaceId,
+          app_id: appId,
+        };
+        if (archiveUrl) payload.archive_url = archiveUrl;
+        else if (archivePath) payload.archive_path = archivePath;
+        const response = await app.inject({
+          method: "POST",
+          url: "/api/v1/apps/install-archive",
+          payload,
+        });
+        const body = (() => {
+          try {
+            return JSON.parse(response.body) as Record<string, unknown>;
+          } catch {
+            return null;
+          }
+        })();
+        if (response.statusCode >= 200 && response.statusCode < 300 && isRecord(body)) {
+          return {
+            ok: true,
+            ready: body.ready === true,
+            detail: typeof body.detail === "string" ? body.detail : "installed",
+            error: typeof body.error === "string" ? body.error : null,
+          };
+        }
+        const errorMessage =
+          isRecord(body) && typeof body.error === "string"
+            ? body.error
+            : isRecord(body) && typeof body.message === "string"
+              ? body.message
+              : `install-archive returned status ${response.statusCode}`;
+        return {
+          ok: false,
+          ready: false,
+          detail: errorMessage,
+          error: errorMessage,
+          statusCode: response.statusCode,
+        };
+      },
+    },
   });
   async function maybeShapeCapabilityToolResult(params: {
     headers: Record<string, unknown>;
@@ -2824,6 +2978,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       const isShellManaged =
         Boolean(resolved.resolvedApp.lifecycle.start?.trim()) ||
         Boolean(resolved.resolvedApp.startCommand?.trim());
+      const build = store.getAppBuild({ workspaceId, appId });
       const healthy = await isAppHealthy({
         resolvedApp: resolved.resolvedApp,
         httpPort: resolved.ports.http,
@@ -2844,29 +2999,42 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         return;
       }
       if (healthy && isShellManaged) {
-        appLifecycleExecutor.rememberAppPorts?.({
-          workspaceId,
-          appId,
-          httpPort: resolved.ports.http,
-          mcpPort: resolved.ports.mcp,
-        });
-        app.log.info(
-          {
-            event: "app.ensure_running.healthy_untracked_reused",
+        if (build?.status !== "running") {
+          app.log.warn(
+            {
+              event: "app.ensure_running.healthy_untracked_refused",
+              workspaceId,
+              appId,
+              http: resolved.ports.http,
+              mcp: resolved.ports.mcp,
+              buildStatus: build?.status ?? null,
+            },
+            "ensureAppRunning: refusing to reuse untracked healthy listener without prior running state",
+          );
+        } else {
+          appLifecycleExecutor.rememberAppPorts?.({
             workspaceId,
             appId,
-            http: resolved.ports.http,
-            mcp: resolved.ports.mcp,
-          },
-          "ensureAppRunning: healthy app has no tracked process; reusing existing listener",
-        );
-        store.upsertAppBuild({ workspaceId, appId, status: "running" });
-        reconcileAppMcpRegistry(workspaceDir, appId, resolved);
-        return;
+            httpPort: resolved.ports.http,
+            mcpPort: resolved.ports.mcp,
+          });
+          app.log.info(
+            {
+              event: "app.ensure_running.healthy_untracked_reused",
+              workspaceId,
+              appId,
+              http: resolved.ports.http,
+              mcp: resolved.ports.mcp,
+            },
+            "ensureAppRunning: healthy app has no tracked process; reusing existing listener",
+          );
+          store.upsertAppBuild({ workspaceId, appId, status: "running" });
+          reconcileAppMcpRegistry(workspaceDir, appId, resolved);
+          return;
+        }
       }
 
       // Setup needed?
-      const build = store.getAppBuild({ workspaceId, appId });
       const needsSetup =
         !appBuildHasCompletedSetup(build?.status) &&
         resolved.resolvedApp.lifecycle.setup.trim().length > 0;
@@ -2956,6 +3124,30 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         appEnsureRunningTasks.delete(taskKey);
       }
     }
+  }
+
+  async function stopManagedWorkspaceApp(workspaceId: string, appId: string) {
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      throw new Error("workspace not found");
+    }
+    const workspaceDir = store.workspaceDir(workspaceId);
+    const resolvedApp = resolveWorkspaceAppRuntime(workspaceDir, appId, {
+      store,
+      workspaceId,
+    });
+    const result = await appLifecycleExecutor.stopApp({
+      appId,
+      appDir: resolvedApp.appDir,
+      workspaceId,
+      resolvedApp: resolvedApp.resolvedApp,
+    });
+    store.upsertAppBuild({
+      workspaceId,
+      appId,
+      status: "stopped",
+    });
+    return result;
   }
 
   async function ensureAllAppsRunning(
@@ -4226,6 +4418,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         requestedBy: optionalString(request.body.requested_by)
       });
     } catch (error) {
+      if (sendStructuredWorkspaceStoreError(reply, error)) {
+        return;
+      }
       if (error instanceof RuntimeAgentToolsServiceError) {
         return sendError(reply, error.statusCode, error.message);
       }
@@ -5222,8 +5417,393 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     },
   );
 
+  app.post(
+    "/api/v1/capabilities/runtime-tools/workspace-apps/find",
+    async (request, reply) => {
+      const body = isRecord(request.body) ? request.body : {};
+      try {
+        const sourceRaw = nullableString(body.source);
+        const source =
+          sourceRaw === "marketplace" || sourceRaw === "local" || sourceRaw === "installed" || sourceRaw === "all"
+            ? sourceRaw
+            : null;
+        return await runtimeAgentToolsService.findWorkspaceApps({
+          workspaceId: requiredCapabilityWorkspaceId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }),
+          query: nullableString(body.query),
+          source,
+        });
+      } catch (error) {
+        if (error instanceof RuntimeAgentToolsServiceError) {
+          return sendError(reply, error.statusCode, error.message);
+        }
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "workspace_apps_find failed",
+        );
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/capabilities/runtime-tools/workspace-apps/install",
+    async (request, reply) => {
+      if (!isRecord(request.body)) {
+        return sendError(reply, 400, "request body must be an object");
+      }
+      try {
+        const body = request.body;
+        return await runtimeAgentToolsService.installWorkspaceApp({
+          workspaceId: requiredCapabilityWorkspaceId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }),
+          appId: requiredString(body.app_id, "app_id"),
+        });
+      } catch (error) {
+        if (error instanceof RuntimeAgentToolsServiceError) {
+          return sendError(reply, error.statusCode, error.message);
+        }
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "workspace_apps_install failed",
+        );
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/capabilities/runtime-tools/workspace-apps/scaffold",
+    async (request, reply) => {
+      if (!isRecord(request.body)) {
+        return sendError(reply, 400, "request body must be an object");
+      }
+      try {
+        const body = request.body;
+        return await runtimeAgentToolsService.scaffoldWorkspaceApp({
+          workspaceId: requiredCapabilityWorkspaceId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }),
+          appId: requiredString(body.app_id, "app_id"),
+          name: nullableString(body.name) ?? undefined,
+          overwrite: body.overwrite === true,
+        });
+      } catch (error) {
+        if (error instanceof RuntimeAgentToolsServiceError) {
+          return sendError(reply, error.statusCode, error.message);
+        }
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "workspace_apps_scaffold failed",
+        );
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/capabilities/runtime-tools/workspace-apps/register",
+    async (request, reply) => {
+      if (!isRecord(request.body)) {
+        return sendError(reply, 400, "request body must be an object");
+      }
+      try {
+        const body = request.body;
+        return await runtimeAgentToolsService.registerWorkspaceApp({
+          workspaceId: requiredCapabilityWorkspaceId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }),
+          appId: requiredString(body.app_id, "app_id"),
+          configPath: nullableString(body.config_path) ?? undefined,
+        });
+      } catch (error) {
+        if (error instanceof RuntimeAgentToolsServiceError) {
+          return sendError(reply, error.statusCode, error.message);
+        }
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "workspace_apps_register failed",
+        );
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/capabilities/runtime-tools/workspace-apps/ensure-running",
+    async (request, reply) => {
+      if (!isRecord(request.body)) {
+        return sendError(reply, 400, "request body must be an object");
+      }
+      try {
+        const body = request.body;
+        return await runtimeAgentToolsService.ensureWorkspaceAppsRunning({
+          workspaceId: requiredCapabilityWorkspaceId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }),
+          appIds: Array.isArray(body.app_ids)
+            ? body.app_ids.filter((value): value is string => typeof value === "string")
+            : undefined,
+        });
+      } catch (error) {
+        if (error instanceof RuntimeAgentToolsServiceError) {
+          return sendError(reply, error.statusCode, error.message);
+        }
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "workspace_apps_ensure_running failed",
+        );
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/capabilities/runtime-tools/workspace-apps/:appId/build",
+    async (request, reply) => {
+      const params = request.params as { appId: string };
+      const body = isRecord(request.body) ? request.body : {};
+      try {
+        return await runtimeAgentToolsService.buildWorkspaceApp({
+          workspaceId: requiredCapabilityWorkspaceId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }),
+          appId: requiredString(params.appId, "appId"),
+          timeoutMs: typeof body.timeout_ms === "number" ? body.timeout_ms : undefined,
+        });
+      } catch (error) {
+        if (error instanceof RuntimeAgentToolsServiceError) {
+          return sendError(reply, error.statusCode, error.message);
+        }
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "workspace_apps_build failed",
+        );
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/capabilities/runtime-tools/workspace-apps/:appId/restart",
+    async (request, reply) => {
+      const params = request.params as { appId: string };
+      const body = isRecord(request.body) ? request.body : {};
+      try {
+        return await runtimeAgentToolsService.restartWorkspaceApp({
+          workspaceId: requiredCapabilityWorkspaceId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }),
+          appId: requiredString(params.appId, "appId"),
+        });
+      } catch (error) {
+        if (error instanceof RuntimeAgentToolsServiceError) {
+          return sendError(reply, error.statusCode, error.message);
+        }
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "workspace_apps_restart failed",
+        );
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/capabilities/runtime-tools/workspace-apps/:appId/restart-and-wait-ready",
+    async (request, reply) => {
+      const params = request.params as { appId: string };
+      const body = isRecord(request.body) ? request.body : {};
+      try {
+        return await runtimeAgentToolsService.restartAndWaitUntilWorkspaceAppReady({
+          workspaceId: requiredCapabilityWorkspaceId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }),
+          appId: requiredString(params.appId, "appId"),
+          timeoutMs: typeof body.timeout_ms === "number" ? body.timeout_ms : undefined,
+          pollIntervalMs:
+            typeof body.poll_interval_ms === "number" ? body.poll_interval_ms : undefined,
+        });
+      } catch (error) {
+        if (error instanceof RuntimeAgentToolsServiceError) {
+          return sendError(reply, error.statusCode, error.message);
+        }
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "workspace_apps_restart_and_wait_ready failed",
+        );
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/capabilities/runtime-tools/workspace-apps/:appId/wait-until-ready",
+    async (request, reply) => {
+      const params = request.params as { appId: string };
+      const body = isRecord(request.body) ? request.body : {};
+      try {
+        return await runtimeAgentToolsService.waitUntilWorkspaceAppReady({
+          workspaceId: requiredCapabilityWorkspaceId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }),
+          appId: requiredString(params.appId, "appId"),
+          timeoutMs: typeof body.timeout_ms === "number" ? body.timeout_ms : undefined,
+          pollIntervalMs:
+            typeof body.poll_interval_ms === "number" ? body.poll_interval_ms : undefined,
+        });
+      } catch (error) {
+        if (error instanceof RuntimeAgentToolsServiceError) {
+          return sendError(reply, error.statusCode, error.message);
+        }
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "workspace_apps_wait_until_ready failed",
+        );
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/capabilities/runtime-tools/workspace-apps/:appId/probe-endpoints",
+    async (request, reply) => {
+      const params = request.params as { appId: string };
+      const body = isRecord(request.body) ? request.body : {};
+      try {
+        return await runtimeAgentToolsService.probeWorkspaceAppEndpoints({
+          workspaceId: requiredCapabilityWorkspaceId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }),
+          appId: requiredString(params.appId, "appId"),
+          checks: Array.isArray(body.checks)
+            ? body.checks.filter((value): value is string => typeof value === "string")
+            : undefined,
+          timeoutMs: typeof body.timeout_ms === "number" ? body.timeout_ms : undefined,
+        });
+      } catch (error) {
+        if (error instanceof RuntimeAgentToolsServiceError) {
+          return sendError(reply, error.statusCode, error.message);
+        }
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "workspace_apps_probe_endpoints failed",
+        );
+      }
+    },
+  );
+
   app.get(
-    "/api/v1/capabilities/runtime-tools/data-tables",
+    "/api/v1/capabilities/runtime-tools/workspace-apps",
+    async (request, reply) => {
+      try {
+        return runtimeAgentToolsService.getWorkspaceAppStatus({
+          workspaceId: requiredCapabilityWorkspaceId({
+            headers: request.headers as Record<string, unknown>,
+            query: isRecord(request.query) ? request.query : undefined,
+          }),
+        });
+      } catch (error) {
+        if (error instanceof RuntimeAgentToolsServiceError) {
+          return sendError(reply, error.statusCode, error.message);
+        }
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "workspace_apps_get_status failed",
+        );
+      }
+    },
+  );
+
+  app.get(
+    "/api/v1/capabilities/runtime-tools/workspace-apps/:appId/status",
+    async (request, reply) => {
+      const params = request.params as { appId: string };
+      try {
+        return runtimeAgentToolsService.getWorkspaceAppStatus({
+          workspaceId: requiredCapabilityWorkspaceId({
+            headers: request.headers as Record<string, unknown>,
+            query: isRecord(request.query) ? request.query : undefined,
+          }),
+          appId: requiredString(params.appId, "appId"),
+        });
+      } catch (error) {
+        if (error instanceof RuntimeAgentToolsServiceError) {
+          return sendError(reply, error.statusCode, error.message);
+        }
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "workspace_apps_get_status failed",
+        );
+      }
+    },
+  );
+
+  app.get(
+    "/api/v1/capabilities/runtime-tools/workspace-apps/ports",
+    async (request, reply) => {
+      try {
+        return runtimeAgentToolsService.getWorkspaceAppPorts({
+          workspaceId: requiredCapabilityWorkspaceId({
+            headers: request.headers as Record<string, unknown>,
+            query: isRecord(request.query) ? request.query : undefined,
+          }),
+        });
+      } catch (error) {
+        if (error instanceof RuntimeAgentToolsServiceError) {
+          return sendError(reply, error.statusCode, error.message);
+        }
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "workspace_apps_get_ports failed",
+        );
+      }
+    },
+  );
+
+  app.get(
+    "/api/v1/capabilities/runtime-tools/workspace-apps/:appId/ports",
+    async (request, reply) => {
+      const params = request.params as { appId: string };
+      try {
+        return runtimeAgentToolsService.getWorkspaceAppPorts({
+          workspaceId: requiredCapabilityWorkspaceId({
+            headers: request.headers as Record<string, unknown>,
+            query: isRecord(request.query) ? request.query : undefined,
+          }),
+          appId: requiredString(params.appId, "appId"),
+        });
+      } catch (error) {
+        if (error instanceof RuntimeAgentToolsServiceError) {
+          return sendError(reply, error.statusCode, error.message);
+        }
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "workspace_apps_get_ports failed",
+        );
+      }
+    },
+  );
+
+  app.get(
+    "/api/v1/capabilities/runtime-tools/workspace-data/tables",
     async (request, reply) => {
       try {
         const query = isRecord(request.query) ? request.query : null;
@@ -5245,33 +5825,23 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         return sendError(
           reply,
           400,
-          error instanceof Error ? error.message : "list_data_tables failed",
+          error instanceof Error ? error.message : "workspace_data_list_tables failed",
         );
       }
     },
   );
 
-  app.post(
-    "/api/v1/capabilities/runtime-tools/data-tables",
+  app.get(
+    "/api/v1/capabilities/runtime-tools/workspace-data/tables/:tableName",
     async (request, reply) => {
-      if (!isRecord(request.body)) {
-        return sendError(reply, 400, "request body must be an object");
-      }
+      const params = request.params as { tableName: string };
       try {
-        const body = request.body;
-        return runtimeAgentToolsService.createDataTable({
+        return runtimeAgentToolsService.describeDataTable({
           workspaceId: requiredCapabilityWorkspaceId({
             headers: request.headers as Record<string, unknown>,
-            body,
+            query: isRecord(request.query) ? request.query : undefined,
           }),
-          name: requiredString(body.name, "name"),
-          columns: Array.isArray(body.columns)
-            ? (body.columns as unknown[] as RuntimeAgentToolsCreateDataTableParams["columns"])
-            : [],
-          rows: Array.isArray(body.rows)
-            ? (body.rows as unknown[] as RuntimeAgentToolsCreateDataTableParams["rows"])
-            : [],
-          replaceExisting: body.replace_existing === true,
+          tableName: requiredString(params.tableName, "tableName"),
         });
       } catch (error) {
         if (error instanceof RuntimeAgentToolsServiceError) {
@@ -5280,31 +5850,26 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         return sendError(
           reply,
           400,
-          error instanceof Error ? error.message : "create_data_table failed",
+          error instanceof Error ? error.message : "workspace_data_describe_table failed",
         );
       }
     },
   );
 
   app.post(
-    "/api/v1/capabilities/runtime-tools/dashboards",
+    "/api/v1/capabilities/runtime-tools/workspace-data/tables/:tableName/sample",
     async (request, reply) => {
-      if (!isRecord(request.body)) {
-        return sendError(reply, 400, "request body must be an object");
-      }
+      const params = request.params as { tableName: string };
+      const body = isRecord(request.body) ? request.body : {};
       try {
-        const body = request.body;
-        return await runtimeAgentToolsService.createDashboard({
+        return runtimeAgentToolsService.sampleDataTableRows({
           workspaceId: requiredCapabilityWorkspaceId({
             headers: request.headers as Record<string, unknown>,
             body,
           }),
-          name: requiredString(body.name, "name"),
-          title: requiredString(body.title, "title"),
-          description: nullableString(body.description) ?? undefined,
-          panels: Array.isArray(body.panels)
-            ? (body.panels as unknown[] as RuntimeAgentToolsCreateDashboardParams["panels"])
-            : [],
+          tableName: requiredString(params.tableName, "tableName"),
+          limit: typeof body.limit === "number" ? body.limit : undefined,
+          offset: typeof body.offset === "number" ? body.offset : undefined,
         });
       } catch (error) {
         if (error instanceof RuntimeAgentToolsServiceError) {
@@ -5313,7 +5878,35 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         return sendError(
           reply,
           400,
-          error instanceof Error ? error.message : "create_dashboard failed",
+          error instanceof Error ? error.message : "workspace_data_sample_rows failed",
+        );
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/capabilities/runtime-tools/workspace-data/query",
+    async (request, reply) => {
+      const body = isRecord(request.body) ? request.body : {};
+      try {
+        return runtimeAgentToolsService.queryWorkspaceData({
+          workspaceId: requiredCapabilityWorkspaceId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }),
+          query: requiredString(body.query, "query"),
+          limit: typeof body.limit === "number" ? body.limit : undefined,
+          offset: typeof body.offset === "number" ? body.offset : undefined,
+          timeoutMs: typeof body.timeout_ms === "number" ? body.timeout_ms : undefined,
+        });
+      } catch (error) {
+        if (error instanceof RuntimeAgentToolsServiceError) {
+          return sendError(reply, error.statusCode, error.message);
+        }
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "workspace_data_query failed",
         );
       }
     },
@@ -5581,6 +6174,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         )
       });
     } catch (error) {
+      if (sendStructuredWorkspaceStoreError(reply, error)) {
+        return;
+      }
       return sendError(reply, 400, error instanceof Error ? error.message : "failed to create workspace");
     }
   });
@@ -5680,6 +6276,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       if (hasOwn(request.body, "onboarding_requested_by")) {
         fields.onboardingRequestedBy = nullableString(request.body.onboarding_requested_by);
       }
+      if (hasOwn(request.body, "icon")) {
+        fields.icon = nullableString(request.body.icon);
+      }
+      if (hasOwn(request.body, "icon_color")) {
+        fields.iconColor = nullableString(request.body.icon_color);
+      }
 
       // Workspace path relocation. This is intentionally a separate branch
       // from the normal status/onboarding updates: it needs filesystem-level
@@ -5694,6 +6296,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         try {
           relocated = store.relocateWorkspace(params.workspaceId, nextPath);
         } catch (error) {
+          if (sendStructuredWorkspaceStoreError(reply, error)) {
+            return;
+          }
           const msg = error instanceof Error ? error.message : "workspace relocation failed";
           // "workspace X not found" → 404, everything else → 400 (validation).
           if (/not found/.test(msg)) {
@@ -5724,6 +6329,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         )
       };
     } catch (error) {
+      if (sendStructuredWorkspaceStoreError(reply, error)) {
+        return;
+      }
       return sendError(reply, 404, error instanceof Error ? error.message.replace(/^workspace .* not found$/, "workspace not found") : "workspace not found");
     }
   });
@@ -5875,15 +6483,23 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const params = request.params as { workspaceId: string };
     const files = Array.isArray(request.body.files) ? request.body.files : [];
     const replaceExisting = optionalBoolean(request.body.replace_existing, false);
+    const allowDestructiveWrite = optionalBoolean(request.body.allow_destructive_write, false);
     const workspaceDir = requireHealthyWorkspaceFolder(store, params.workspaceId, reply);
     if (!workspaceDir) {
       return;
     }
 
     fs.mkdirSync(workspaceDir, { recursive: true });
+    if (replaceExisting && workspaceReplaceExistingWouldDeleteEntries(workspaceDir) && !allowDestructiveWrite) {
+      return reply.code(409).send(
+        destructiveWriteApprovalResponse(
+          "replace_existing would delete existing workspace files; retry with allow_destructive_write=true only when the user explicitly asked for that destructive change"
+        )
+      );
+    }
     if (replaceExisting) {
       for (const entry of fs.readdirSync(workspaceDir, { withFileTypes: true })) {
-        if (entry.name === ".holaboss" || entry.name === "workspace.json") {
+        if (isPreservedWorkspaceEntryForReplaceExisting(entry.name)) {
           continue;
         }
         fs.rmSync(path.join(workspaceDir, entry.name), { recursive: true, force: true });
@@ -5924,6 +6540,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const params = request.params as { workspaceId: string };
     const url = requiredString(request.body.url, "url");
     const replaceExisting = optionalBoolean(request.body.replace_existing, false);
+    const allowDestructiveWrite = optionalBoolean(request.body.allow_destructive_write, false);
     const apiKey = optionalString(request.body.api_key);
     const workspaceDir = requireHealthyWorkspaceFolder(store, params.workspaceId, reply);
     if (!workspaceDir) {
@@ -5931,9 +6548,16 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
 
     fs.mkdirSync(workspaceDir, { recursive: true });
+    if (replaceExisting && workspaceReplaceExistingWouldDeleteEntries(workspaceDir) && !allowDestructiveWrite) {
+      return reply.code(409).send(
+        destructiveWriteApprovalResponse(
+          "replace_existing would delete existing workspace files; retry with allow_destructive_write=true only when the user explicitly asked for that destructive change"
+        )
+      );
+    }
     if (replaceExisting) {
       for (const entry of fs.readdirSync(workspaceDir, { withFileTypes: true })) {
-        if (entry.name === ".holaboss" || entry.name === "workspace.json") {
+        if (isPreservedWorkspaceEntryForReplaceExisting(entry.name)) {
           continue;
         }
         fs.rmSync(path.join(workspaceDir, entry.name), { recursive: true, force: true });
@@ -6004,6 +6628,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
     const params = request.params as { workspaceId: string; "*": string };
+    const allowDestructiveWrite = optionalBoolean(request.body.allow_destructive_write, false);
     const workspaceDir = requireHealthyWorkspaceFolder(store, params.workspaceId, reply);
     if (!workspaceDir) {
       return;
@@ -6015,7 +6640,18 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, error instanceof Error ? error.message : "path traversal not allowed");
     }
     fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-    fs.writeFileSync(fullPath, Buffer.from(requiredString(request.body.content_base64, "content_base64"), "base64"));
+    const nextContent = Buffer.from(requiredString(request.body.content_base64, "content_base64"), "base64");
+    if (!allowDestructiveWrite && fs.existsSync(fullPath)) {
+      const existingStats = fs.statSync(fullPath);
+      if (existingStats.isFile() && existingStats.size > 0 && isEffectivelyEmptyWorkspaceFileContent(nextContent)) {
+        return reply.code(409).send(
+          destructiveWriteApprovalResponse(
+            `writing ${params["*"]} would clear a non-empty file; retry with allow_destructive_write=true only when the user explicitly asked for that destructive change`
+          )
+        );
+      }
+    }
+    fs.writeFileSync(fullPath, nextContent);
     if (optionalBoolean(request.body.executable, false)) {
       fs.chmodSync(fullPath, fs.statSync(fullPath).mode | 0o111);
     }
@@ -7020,8 +7656,14 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     } catch (error) {
       return sendError(reply, 422, error instanceof Error ? error.message : "attachments are invalid");
     }
-    if (!trimmedText && attachments.length === 0) {
-      return sendError(reply, 422, "text or attachments are required");
+    let imageUrls: string[];
+    try {
+      imageUrls = requiredSessionInputImageUrls(request.body.image_urls);
+    } catch (error) {
+      return sendError(reply, 422, error instanceof Error ? error.message : "image_urls are invalid");
+    }
+    if (!trimmedText && attachments.length === 0 && imageUrls.length === 0) {
+      return sendError(reply, 422, "text, attachments, or image_urls are required");
     }
 
     const existingSession = store.getSession({
@@ -7029,7 +7671,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       sessionId: resolvedSessionId
     });
     const inferredKind = inferredSessionKind(workspace, resolvedSessionId);
-    const generatedSessionTitle = sessionTitleFromFirstUserInput(trimmedText, attachments);
+    const generatedSessionTitle = sessionTitleFromFirstUserInput(trimmedText, attachments, imageUrls);
 
     store.ensureSession({
       workspaceId,
@@ -7077,7 +7719,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       payload: {
         text: trimmedText,
         attachments,
-        image_urls: Array.isArray(request.body.image_urls) ? request.body.image_urls : [],
+        image_urls: imageUrls,
         model: nullableString(request.body.model) ?? null,
         thinking_value: nullableString(request.body.thinking_value) ?? null,
         context:
@@ -7215,8 +7857,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const existingAttachments = Array.isArray(existingPayload.attachments)
       ? existingPayload.attachments
       : [];
-    if (!trimmedText && existingAttachments.length === 0) {
-      return sendError(reply, 422, "text or attachments are required");
+    const existingImageUrls = Array.isArray(existingPayload.image_urls)
+      ? existingPayload.image_urls
+      : [];
+    if (!trimmedText && existingAttachments.length === 0 && existingImageUrls.length === 0) {
+      return sendError(reply, 422, "text, attachments, or image_urls are required");
     }
 
     const updated = store.updateInput({
@@ -7876,7 +8521,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       instruction: optionalString(request.body.instruction) ?? requiredString(request.body.description, "description"),
       enabled: optionalBoolean(request.body.enabled, true),
       delivery: requiredDict(request.body.delivery, "delivery"),
-      metadata: optionalDict(request.body.metadata) ?? {},
+      metadata: cronjobMetadataWithRequestDefaults({
+        body: request.body,
+      }),
       nextRunAt: cronjobNextRunAt(requiredString(request.body.cron, "cron"), new Date())
     });
     return cronjobPayload(job);
@@ -7898,6 +8545,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
   app.post("/api/v1/cronjobs/:jobId/run", async (request, reply) => {
     const query = isRecord(request.query) ? request.query : {};
+    const body = isRecord(request.body) ? request.body : {};
     const workspaceId = optionalString(query.workspace_id);
     if (!workspaceId) {
       return sendError(reply, 400, "workspace_id is required");
@@ -7915,6 +8563,14 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         job,
         now,
         () => queueWorker?.wake(),
+        {
+          sessionId: optionalString(body.session_id),
+          selectedModel:
+            optionalString(body.model) ||
+            optionalString(body.selected_model) ||
+            null,
+          selectedThinkingValue: optionalString(body.thinking_value) || null,
+        },
       );
       const updated = store.updateCronjob({
         workspaceId,
@@ -7974,6 +8630,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         : description != null && existing.instruction.trim() === existing.description.trim()
           ? description
           : undefined;
+    const metadataProvided =
+      hasOwn(request.body, "metadata") ||
+      hasOwn(request.body, "model") ||
+      hasOwn(request.body, "selected_model") ||
+      hasOwn(request.body, "session_id");
     const job = store.updateCronjob({
       workspaceId,
       jobId: params.jobId,
@@ -7983,7 +8644,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       instruction,
       enabled: hasOwn(request.body, "enabled") ? optionalBoolean(request.body.enabled, false) : null,
       delivery: hasOwn(request.body, "delivery") ? (optionalDict(request.body.delivery) ?? {}) : undefined,
-      metadata: hasOwn(request.body, "metadata") ? (optionalDict(request.body.metadata) ?? {}) : undefined,
+      metadata: metadataProvided
+        ? cronjobMetadataWithRequestDefaults({
+            body: request.body,
+            existingMetadata: existing.metadata,
+          })
+        : undefined,
       nextRunAt: cron == null ? cron : cronjobNextRunAt(cron, new Date())
     });
     if (!job) {

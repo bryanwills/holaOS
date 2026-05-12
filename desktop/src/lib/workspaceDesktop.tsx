@@ -131,6 +131,11 @@ interface WorkspaceDesktopContextValue {
   clearPendingAppInstall: () => void;
   connectAndInstallApp: () => Promise<void>;
   isConnectingAppIntegration: boolean;
+  connectIntegrationProvider: (params: {
+    provider: string;
+    appId?: string | null;
+    accountLabel?: string | null;
+  }) => Promise<{ connectionId: string }>;
   templateSourceMode: TemplateSourceMode;
   setTemplateSourceMode: (value: TemplateSourceMode) => void;
   workspaceCreateLocation: WorkspaceCreateLocation;
@@ -182,6 +187,10 @@ interface WorkspaceDesktopContextValue {
   chooseTemplateFolder: () => Promise<void>;
   createWorkspace: () => Promise<void>;
   deleteWorkspace: (workspaceId: string) => Promise<void>;
+  updateWorkspaceAppearance: (
+    workspaceId: string,
+    payload: { icon: string | null; iconColor: string | null },
+  ) => Promise<void>;
   removeInstalledApp: (appId: string) => Promise<void>;
   selectedApps: Set<string>;
   setSelectedApps: (value: Set<string> | ((prev: Set<string>) => Set<string>)) => void;
@@ -1060,6 +1069,48 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     }
   }
 
+  async function updateWorkspaceAppearance(
+    workspaceId: string,
+    payload: { icon: string | null; iconColor: string | null },
+  ) {
+    const trimmedWorkspaceId = workspaceId.trim();
+    if (!trimmedWorkspaceId) {
+      throw new Error("workspaceId is required");
+    }
+    const optimistic = {
+      icon: payload.icon,
+      icon_color: payload.iconColor,
+    };
+    setWorkspaces((current) =>
+      current.map((workspace) =>
+        workspace.id === trimmedWorkspaceId
+          ? { ...workspace, ...optimistic }
+          : workspace,
+      ),
+    );
+    try {
+      const response = await window.electronAPI.workspace.updateAppearance(
+        trimmedWorkspaceId,
+        payload,
+      );
+      const updated = response?.workspace;
+      if (updated) {
+        setWorkspaces((current) =>
+          current.map((workspace) =>
+            workspace.id === trimmedWorkspaceId ? updated : workspace,
+          ),
+        );
+      }
+    } catch (error) {
+      // Revert by re-fetching the authoritative list. Surface the error
+      // through the standard channel so the caller / surrounding chrome
+      // can render it.
+      await loadWorkspaceData({ preserveSelection: true, allowEmpty: true });
+      setWorkspaceErrorMessage(normalizeErrorMessage(error));
+      throw error;
+    }
+  }
+
   async function removeInstalledApp(appId: string) {
     if (!selectedWorkspaceId) {
       return;
@@ -1189,79 +1240,83 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     setPendingAppInstall(null);
   }
 
+  async function connectIntegrationProvider({
+    provider,
+    accountLabel,
+  }: {
+    provider: string;
+    appId?: string | null;
+    accountLabel?: string | null;
+  }): Promise<{ connectionId: string }> {
+    const runtimeConfig = await window.electronAPI.runtime.getConfig();
+    const userId = runtimeConfig.userId ?? (resolvedUserId || "local");
+
+    // Snapshot existing connection ids before initiating — see
+    // IntegrationsPane comment: poll the list and look for a new id,
+    // since the id from /link isn't reliably queryable.
+    let beforeIds = new Set<string>();
+    try {
+      const before =
+        await window.electronAPI.workspace.composioListConnections();
+      beforeIds = new Set(before.connections.map((c) => c.id));
+    } catch {
+      // tolerate snapshot failure
+    }
+
+    const link = await window.electronAPI.workspace.composioConnect({
+      provider,
+      owner_user_id: userId,
+    });
+    await window.electronAPI.ui.openExternalUrl(link.redirect_url);
+
+    const COMPOSIO_POLL_INTERVAL_MS = 3000;
+    const COMPOSIO_POLL_MAX_TICKS = 100;
+    const MAX_CONSECUTIVE_ERRORS = 20;
+    let consecutiveErrors = 0;
+    for (let tick = 0; tick < COMPOSIO_POLL_MAX_TICKS; tick++) {
+      await new Promise((r) => setTimeout(r, COMPOSIO_POLL_INTERVAL_MS));
+      let current;
+      try {
+        current =
+          await window.electronAPI.workspace.composioListConnections();
+        consecutiveErrors = 0;
+      } catch (pollError) {
+        consecutiveErrors += 1;
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          throw pollError;
+        }
+        continue;
+      }
+      const newConnection = current.connections.find(
+        (c) =>
+          !beforeIds.has(c.id) &&
+          c.toolkitSlug.toLowerCase() === provider.toLowerCase(),
+      );
+      if (newConnection) {
+        await window.electronAPI.workspace.composioFinalize({
+          connected_account_id: newConnection.id,
+          provider,
+          owner_user_id: userId,
+          account_label: accountLabel ?? `${provider} (Managed)`,
+        });
+        return { connectionId: newConnection.id };
+      }
+    }
+    throw new Error(
+      `Connection to ${provider} timed out after ${
+        (COMPOSIO_POLL_MAX_TICKS * COMPOSIO_POLL_INTERVAL_MS) / 1000
+      }s. Please try again.`,
+    );
+  }
+
   async function connectAndInstallApp() {
     if (!pendingAppInstall) return;
     const { appId, provider } = pendingAppInstall;
     setIsConnectingAppIntegration(true);
     setAppCatalogError("");
     try {
-      const runtimeConfig = await window.electronAPI.runtime.getConfig();
-      const userId = runtimeConfig.userId ?? (resolvedUserId || "local");
-
-      // Snapshot existing connection ids before initiating — see
-      // IntegrationsPane comment: poll the list and look for a new id,
-      // since the id from /link isn't reliably queryable.
-      let beforeIds = new Set<string>();
-      try {
-        const before =
-          await window.electronAPI.workspace.composioListConnections();
-        beforeIds = new Set(before.connections.map((c) => c.id));
-      } catch {
-        // tolerate snapshot failure
-      }
-
-      const link = await window.electronAPI.workspace.composioConnect({
-        provider,
-        owner_user_id: userId,
-      });
-      await window.electronAPI.ui.openExternalUrl(link.redirect_url);
-
-      const COMPOSIO_POLL_INTERVAL_MS = 3000;
-      const COMPOSIO_POLL_MAX_TICKS = 100;
-      const MAX_CONSECUTIVE_ERRORS = 20;
-      let consecutiveErrors = 0;
-      let connected = false;
-      for (let tick = 0; tick < COMPOSIO_POLL_MAX_TICKS; tick++) {
-        await new Promise((r) => setTimeout(r, COMPOSIO_POLL_INTERVAL_MS));
-        let current;
-        try {
-          current =
-            await window.electronAPI.workspace.composioListConnections();
-          consecutiveErrors = 0;
-        } catch (pollError) {
-          consecutiveErrors += 1;
-          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-            throw pollError;
-          }
-          continue;
-        }
-        const newConnection = current.connections.find(
-          (c) =>
-            !beforeIds.has(c.id) &&
-            c.toolkitSlug.toLowerCase() === provider.toLowerCase(),
-        );
-        if (newConnection) {
-          await window.electronAPI.workspace.composioFinalize({
-            connected_account_id: newConnection.id,
-            provider,
-            owner_user_id: userId,
-            account_label: `${provider} (Managed)`,
-          });
-          // First-time connect → no requested connectionId; doInstallApp
-          // falls through to its "auto-pick first active" path which now
-          // sees the freshly-stored connection.
-          await doInstallApp(appId, null);
-          connected = true;
-          return;
-        }
-      }
-      if (!connected) {
-        setAppCatalogError(
-          `Connection to ${provider} timed out after ${
-            (COMPOSIO_POLL_MAX_TICKS * COMPOSIO_POLL_INTERVAL_MS) / 1000
-          }s. Please try again.`,
-        );
-      }
+      await connectIntegrationProvider({ provider, appId });
+      await doInstallApp(appId, null);
     } catch (error) {
       setAppCatalogError(normalizeErrorMessage(error));
     } finally {
@@ -1383,6 +1438,16 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   useEffect(() => {
     let cancelled = false;
     async function loadMarketplaceTemplates() {
+      // Skip the fetch when there's no usable session — the BFF will 401
+      // anyway, and a 401 elsewhere in the stack can trigger an unwanted
+      // auto sign-in browser popup. Just clear local state.
+      if (!canUseMarketplaceTemplates) {
+        setMarketplaceTemplates([]);
+        setSelectedMarketplaceTemplateName("");
+        setMarketplaceTemplatesError("");
+        setIsLoadingMarketplaceTemplates(false);
+        return;
+      }
       setIsLoadingMarketplaceTemplates(true);
       setMarketplaceTemplatesError("");
       try {
@@ -1522,6 +1587,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     ) {
       setInstalledApps([]);
       setIsLoadingInstalledApps(false);
+      setIsActivatingWorkspace(false);
       setWorkspaceLifecycleWorkspaceId("");
       setWorkspaceAppsReadyState(false);
       setWorkspaceBlockingReasonState("");
@@ -1734,10 +1800,17 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       return;
     }
     const timer = setInterval(() => {
-      void refreshInstalledApps();
+      void window.electronAPI.workspace
+        .activateWorkspace(selectedWorkspaceId)
+        .then((response) => {
+          applyWorkspaceLifecycle(response);
+        })
+        .catch(() => {
+          void refreshInstalledApps();
+        });
     }, 3000);
     return () => clearInterval(timer);
-  }, [installedApps, selectedWorkspaceId]);
+  }, [installedApps, refreshInstalledApps, selectedWorkspaceId]);
 
   const value = useMemo(
     () => ({
@@ -1766,6 +1839,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       clearPendingAppInstall,
       connectAndInstallApp,
       isConnectingAppIntegration,
+      connectIntegrationProvider,
       templateSourceMode,
       setTemplateSourceMode,
       workspaceCreateLocation,
@@ -1814,6 +1888,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       chooseTemplateFolder,
       createWorkspace,
       deleteWorkspace,
+      updateWorkspaceAppearance,
       removeInstalledApp,
       selectedApps,
       setSelectedApps,
@@ -1885,6 +1960,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       activateWorkspace,
       createWorkspace,
       deleteWorkspace,
+      updateWorkspaceAppearance,
       removeInstalledApp,
       selectedApps,
       pendingIntegrations,

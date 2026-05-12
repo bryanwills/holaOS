@@ -17,11 +17,11 @@ on:
         default: main
         type: string
       release_tag:
-        description: GitHub release tag to create or update
+        description: GitHub release tag to create in holaOS-releases
         required: true
         type: string
       release_title:
-        description: Optional GitHub release title (defaults to the tag)
+        description: Optional GitHub release title (defaults to holaOS <version>)
         required: false
         type: string
       prerelease:
@@ -251,12 +251,11 @@ jobs:
       - name: Ensure release tag is available
         env:
           GH_TOKEN: ${{ secrets.HOLABOSS_RELEASES_REPO_TOKEN }}
-          RELEASE_SHA: ${{ steps.release_meta.outputs.release_sha }}
           RELEASE_TAG: ${{ steps.release_meta.outputs.release_tag }}
           RELEASE_GH_REPO: holaboss-ai/holaOS-releases
         run: |
           if [ -z "${GH_TOKEN}" ]; then
-            echo "manual release publishing to ${RELEASE_GH_REPO} requires HOLABOSS_RELEASES_REPO_TOKEN with read access to ${GITHUB_REPOSITORY} and write access to ${RELEASE_GH_REPO}" >&2
+            echo "manual release publishing to ${RELEASE_GH_REPO} requires HOLABOSS_RELEASES_REPO_TOKEN" >&2
             exit 1
           fi
 
@@ -265,7 +264,7 @@ jobs:
             exit 1
           fi
 
-          if gh release view --repo "${RELEASE_GH_REPO}" "${RELEASE_TAG}" >/dev/null 2>&1; then
+          if gh release view "${RELEASE_TAG}" --repo "${RELEASE_GH_REPO}" >/dev/null 2>&1; then
             echo "release ${RELEASE_TAG} already exists in ${RELEASE_GH_REPO}" >&2
             exit 1
           fi
@@ -321,6 +320,8 @@ jobs:
             runtime/api-server/dist
 
       - name: Prepare desktop (build SDK + install desktop deps)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: npm run desktop:prepare
 
       - name: Require mac signing and notarization credentials
@@ -341,7 +342,7 @@ jobs:
         shell: bash
         env:
           HOLABOSS_RELEASE_TAG: ${{ env.RELEASE_TAG }}
-          HOLABOSS_RUNTIME_DIR: ${{ github.workspace }}/out/runtime-macos
+          HOLABOSS_RUNTIME_DIR: ${{ github.workspace }}/out/runtime-macos/
           HOLABOSS_AUTH_BASE_URL: ${{ vars.HOLABOSS_AUTH_BASE_URL }}
           HOLABOSS_AUTH_SIGN_IN_URL: ${{ vars.HOLABOSS_AUTH_SIGN_IN_URL }}
           HOLABOSS_BACKEND_BASE_URL: ${{ vars.HOLABOSS_BACKEND_BASE_URL }}
@@ -600,6 +601,8 @@ jobs:
             desktop/package-lock.json
 
       - name: Prepare desktop (build SDK + install desktop deps)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: npm run desktop:prepare
 
       - name: Build Windows desktop installer
@@ -700,6 +703,8 @@ jobs:
             desktop/out/release/*.exe
             desktop/out/release/*.yml
             desktop/out/release/*.blockmap
+            desktop/out/runtime-windows/package-metadata.json
+            desktop/out/runtime-windows/runtime/metadata.json
           if-no-files-found: error
 
   publish-release:
@@ -717,7 +722,7 @@ jobs:
       - release-windows-desktop
     permissions:
       actions: read
-      contents: read
+      contents: write
     runs-on: ubuntu-latest
     env:
       RELEASE_SHA: ${{ needs.ensure-release.outputs.release_sha }}
@@ -745,16 +750,17 @@ jobs:
       - name: Publish validated GitHub release
         env:
           GH_TOKEN: ${{ secrets.HOLABOSS_RELEASES_REPO_TOKEN }}
+          SOURCE_GH_TOKEN: ${{ github.token }}
         run: |
           notes_path="$(mktemp)"
           trap 'rm -f "${notes_path}"' EXIT
 
           if [ -z "${GH_TOKEN}" ]; then
-            echo "manual release publishing to ${RELEASE_GH_REPO} requires HOLABOSS_RELEASES_REPO_TOKEN with read access to ${SOURCE_GH_REPO} and write access to ${RELEASE_GH_REPO}" >&2
+            echo "manual release publishing to ${RELEASE_GH_REPO} requires HOLABOSS_RELEASES_REPO_TOKEN" >&2
             exit 1
           fi
 
-          if gh release view --repo "${RELEASE_GH_REPO}" "${RELEASE_TAG}" >/dev/null 2>&1; then
+          if gh release view "${RELEASE_TAG}" --repo "${RELEASE_GH_REPO}" >/dev/null 2>&1; then
             echo "release ${RELEASE_TAG} already exists in ${RELEASE_GH_REPO}" >&2
             exit 1
           fi
@@ -764,11 +770,12 @@ jobs:
             exit 1
           fi
 
-          gh api "repos/${SOURCE_GH_REPO}/releases/generate-notes" \
+          GH_TOKEN="${SOURCE_GH_TOKEN}" gh api "repos/${SOURCE_GH_REPO}/releases/generate-notes" \
             --method POST \
             -f "tag_name=${RELEASE_TAG}" \
             -f "target_commitish=${RELEASE_SHA}" \
             --jq '.body' > "${notes_path}"
+
           sed -i.bak \
             -e '/^\*\*Full Changelog\*\*:/d' \
             -e '/^Full Changelog:/d' \

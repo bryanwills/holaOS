@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const creatingViewPath = path.join(__dirname, "CreatingView.tsx");
 const firstWorkspacePanePath = path.join(__dirname, "FirstWorkspacePane.tsx");
+const onboardingShellPath = path.join(__dirname, "OnboardingShell.tsx");
 
 test("creating view uses the publish-flow shell DNA: rounded card on bg-fg-2 canvas with subtle shadow", async () => {
   const source = await readFile(creatingViewPath, "utf8");
@@ -27,7 +28,7 @@ test("first workspace pane passes panel variant through to the creating view", a
   assert.match(source, /<CreatingView[\s\S]*workspaceCreateLocation=\{workspaceCreateLocation\}/);
 });
 
-test("first workspace onboarding splits configure and browser profile into staged flow", async () => {
+test("first workspace pane runs the welcome → name → folder flow", async () => {
   const source = await readFile(firstWorkspacePanePath, "utf8");
 
   assert.match(source, /type OnboardingStep =[\s\S]*\| "browser_profile"/);
@@ -58,11 +59,15 @@ test("creating view adapts progress text for copy/import browser bootstrap modes
   assert.match(source, /"Importing browser data"/);
 });
 
-test("first workspace pane wraps the flow in the bg-fg-2 full-screen canvas", async () => {
-  const source = await readFile(firstWorkspacePanePath, "utf8");
+test("first workspace pane wraps the flow in the bg-fg-2 full-screen canvas via OnboardingShell", async () => {
+  const paneSource = await readFile(firstWorkspacePanePath, "utf8");
+  const shellSource = await readFile(onboardingShellPath, "utf8");
 
-  // Both variants ride on the same tinted canvas — matches PublishScreen.
-  assert.match(source, /bg-fg-2/);
-  // macOS draggable region is preserved.
-  assert.match(source, /titlebar-drag-region/);
+  // Pane keeps the fixed-position takeover; panel variant adds a scrim.
+  assert.match(paneSource, /fixed inset-0 z-30/);
+  assert.match(paneSource, /fixed inset-0 z-40/);
+  assert.match(paneSource, /bg-scrim backdrop-blur-sm/);
+  // Canvas chrome (bg-fg-2 + macOS draggable region) lives inside the shell.
+  assert.match(shellSource, /bg-fg-2/);
+  assert.match(shellSource, /titlebar-drag-region/);
 });
