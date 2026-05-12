@@ -20,6 +20,7 @@ import {
   IconListChecks,
   IconListOrdered,
   IconQuote,
+  IconTable,
   IconText,
 } from "../icons";
 
@@ -189,7 +190,7 @@ export function defaultSlashItems(): SlashItem[] {
       keywords: ["text", "paragraph", "p"],
       icon: IconText,
       command: ({ editor, range }) =>
-        editor.chain().focus().deleteRange(range).setNode("paragraph").run(),
+        editor.chain().focus(undefined, { scrollIntoView: false }).deleteRange(range).setNode("paragraph").run(),
     },
     {
       id: "heading-1",
@@ -200,7 +201,7 @@ export function defaultSlashItems(): SlashItem[] {
       icon: IconHeading1,
       shortcut: "#",
       command: ({ editor, range }) =>
-        editor.chain().focus().deleteRange(range).setNode("heading", { level: 1 }).run(),
+        editor.chain().focus(undefined, { scrollIntoView: false }).deleteRange(range).setNode("heading", { level: 1 }).run(),
     },
     {
       id: "heading-2",
@@ -211,7 +212,7 @@ export function defaultSlashItems(): SlashItem[] {
       icon: IconHeading2,
       shortcut: "##",
       command: ({ editor, range }) =>
-        editor.chain().focus().deleteRange(range).setNode("heading", { level: 2 }).run(),
+        editor.chain().focus(undefined, { scrollIntoView: false }).deleteRange(range).setNode("heading", { level: 2 }).run(),
     },
     {
       id: "heading-3",
@@ -222,7 +223,7 @@ export function defaultSlashItems(): SlashItem[] {
       icon: IconHeading3,
       shortcut: "###",
       command: ({ editor, range }) =>
-        editor.chain().focus().deleteRange(range).setNode("heading", { level: 3 }).run(),
+        editor.chain().focus(undefined, { scrollIntoView: false }).deleteRange(range).setNode("heading", { level: 3 }).run(),
     },
     {
       id: "bulleted-list",
@@ -233,7 +234,7 @@ export function defaultSlashItems(): SlashItem[] {
       icon: IconList,
       shortcut: "-",
       command: ({ editor, range }) =>
-        editor.chain().focus().deleteRange(range).toggleBulletList().run(),
+        editor.chain().focus(undefined, { scrollIntoView: false }).deleteRange(range).toggleBulletList().run(),
     },
     {
       id: "numbered-list",
@@ -244,7 +245,7 @@ export function defaultSlashItems(): SlashItem[] {
       icon: IconListOrdered,
       shortcut: "1.",
       command: ({ editor, range }) =>
-        editor.chain().focus().deleteRange(range).toggleOrderedList().run(),
+        editor.chain().focus(undefined, { scrollIntoView: false }).deleteRange(range).toggleOrderedList().run(),
     },
     {
       id: "todo-list",
@@ -255,7 +256,7 @@ export function defaultSlashItems(): SlashItem[] {
       icon: IconListChecks,
       shortcut: "[ ]",
       command: ({ editor, range }) =>
-        editor.chain().focus().deleteRange(range).toggleTaskList().run(),
+        editor.chain().focus(undefined, { scrollIntoView: false }).deleteRange(range).toggleTaskList().run(),
     },
     {
       id: "quote",
@@ -266,7 +267,7 @@ export function defaultSlashItems(): SlashItem[] {
       icon: IconQuote,
       shortcut: ">",
       command: ({ editor, range }) =>
-        editor.chain().focus().deleteRange(range).setNode("paragraph").toggleBlockquote().run(),
+        editor.chain().focus(undefined, { scrollIntoView: false }).deleteRange(range).setNode("paragraph").toggleBlockquote().run(),
     },
     {
       id: "code-block",
@@ -277,7 +278,22 @@ export function defaultSlashItems(): SlashItem[] {
       icon: IconCodeBlock,
       shortcut: "```",
       command: ({ editor, range }) =>
-        editor.chain().focus().deleteRange(range).toggleCodeBlock().run(),
+        editor.chain().focus(undefined, { scrollIntoView: false }).deleteRange(range).toggleCodeBlock().run(),
+    },
+    {
+      id: "table",
+      section: "Other",
+      title: "Table",
+      subtitle: "3×3 grid, columns resize",
+      keywords: ["table", "grid", "rows", "cols"],
+      icon: IconTable,
+      command: ({ editor, range }) =>
+        editor
+          .chain()
+          .focus(undefined, { scrollIntoView: false })
+          .deleteRange(range)
+          .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
+          .run(),
     },
     {
       id: "divider",
@@ -288,7 +304,7 @@ export function defaultSlashItems(): SlashItem[] {
       icon: IconDivider,
       shortcut: "---",
       command: ({ editor, range }) =>
-        editor.chain().focus().deleteRange(range).setHorizontalRule().run(),
+        editor.chain().focus(undefined, { scrollIntoView: false }).deleteRange(range).setHorizontalRule().run(),
     },
   ];
 }

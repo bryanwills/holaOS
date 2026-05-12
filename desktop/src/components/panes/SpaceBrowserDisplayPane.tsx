@@ -64,6 +64,7 @@ interface SpaceBrowserDisplayPaneProps {
   suspendNativeView?: boolean;
   layoutSyncKey?: string;
   embedded?: boolean;
+  fullscreen?: boolean;
 }
 
 export function SpaceBrowserDisplayPane({
@@ -71,6 +72,7 @@ export function SpaceBrowserDisplayPane({
   suspendNativeView = false,
   layoutSyncKey = "",
   embedded = false,
+  fullscreen = false,
 }: SpaceBrowserDisplayPaneProps) {
   const [browserProfileImportDialogOpen, setBrowserProfileImportDialogOpen] =
     useState(false);
@@ -464,13 +466,19 @@ export function SpaceBrowserDisplayPane({
         <BrowserCaptureStatusToast message={actionStatus} />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden p-3">
+      <div
+        className={`min-h-0 flex-1 overflow-hidden ${fullscreen ? "p-0" : "p-3"}`}
+      >
         <div
           ref={viewportRef}
-          className={`relative h-full min-h-0 overflow-hidden rounded-xl border bg-card transition-colors ${
-            showAgentActivityHighlight
-              ? "border-primary/40"
-              : "border-border"
+          className={`relative h-full min-h-0 overflow-hidden bg-card transition-colors ${
+            fullscreen ? "" : "rounded-xl border"
+          } ${
+            fullscreen
+              ? ""
+              : showAgentActivityHighlight
+                ? "border-primary/40"
+                : "border-border"
           }`}
         >
 

@@ -7,6 +7,7 @@ import {
   type CronjobRecord,
   type RuntimeNotificationLevel,
   type RuntimeNotificationPriority,
+  type SessionInputRecord,
   type RuntimeStateStore,
   utcNowIso,
   type WorkspaceRecord
@@ -14,7 +15,7 @@ import {
 
 import type { QueueWorkerLike } from "./queue-worker.js";
 import { normalizeSubagentToolProfile } from "./runtime-agent-tools.js";
-import { resolveSubagentExecutionModel } from "./subagent-model.js";
+import { resolveSubagentExecutionProfile } from "./subagent-model.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 
@@ -72,13 +73,12 @@ function cronjobNotificationPriority(metadata: Record<string, unknown>): Runtime
 }
 
 function isCronjobMainSessionKind(value: string | null | undefined): boolean {
-  const normalized = normalizedString(value).toLowerCase();
-  return (
-    normalized === "" ||
-    normalized === "workspace_session" ||
-    normalized === "main" ||
-    normalized === "onboarding"
-  );
+  const normalized = normalizedString(value).toLowerCase() || "main_session";
+  const canonical =
+    normalized === "workspace_session" || normalized === "main"
+      ? "main_session"
+      : normalized;
+  return canonical === "main_session" || canonical === "onboarding";
 }
 
 function preferredCronjobMainSessionId(params: {
@@ -86,6 +86,22 @@ function preferredCronjobMainSessionId(params: {
   workspace: WorkspaceRecord;
   metadata: Record<string, unknown>;
 }): string | null {
+  const desktopBinding = params.store.getConversationBindingByConversation({
+    workspaceId: params.workspace.id,
+    channel: "desktop",
+    conversationKey: "main_session",
+    role: "main_session",
+  });
+  if (desktopBinding) {
+    const boundSession = params.store.getSession({
+      workspaceId: params.workspace.id,
+      sessionId: desktopBinding.sessionId,
+    });
+    if (boundSession && isCronjobMainSessionKind(boundSession.kind)) {
+      return boundSession.sessionId;
+    }
+  }
+
   const preferredIds = [
     normalizedString(params.metadata.source_session_id),
     normalizedString(params.metadata.session_id),
@@ -98,16 +114,6 @@ function preferredCronjobMainSessionId(params: {
     if (session && isCronjobMainSessionKind(session.kind)) {
       return session.sessionId;
     }
-  }
-
-  const desktopBinding = params.store.getConversationBindingByConversation({
-    workspaceId: params.workspace.id,
-    channel: "desktop",
-    conversationKey: "workspace-main",
-    role: "main",
-  });
-  if (desktopBinding) {
-    return desktopBinding.sessionId;
   }
 
   const onboardingSessionId = normalizedString(params.workspace.onboardingSessionId);
@@ -145,9 +151,9 @@ function resolveCronjobMainSession(params: {
     params.store.upsertConversationBinding({
       workspaceId: params.workspace.id,
       channel: "desktop",
-      conversationKey: "workspace-main",
+      conversationKey: "main_session",
       sessionId: existing,
-      role: "main",
+      role: "main_session",
       isActive: true,
       metadata: {},
       lastActiveAt: utcNowIso(),
@@ -159,16 +165,16 @@ function resolveCronjobMainSession(params: {
   params.store.ensureSession({
     workspaceId: params.workspace.id,
     sessionId,
-    kind: "workspace_session",
+    kind: "main_session",
     title: params.workspace.name.trim() || "Main Session",
     createdBy: "cronjob",
   });
   params.store.upsertConversationBinding({
     workspaceId: params.workspace.id,
     channel: "desktop",
-    conversationKey: "workspace-main",
+    conversationKey: "main_session",
     sessionId,
-    role: "main",
+    role: "main_session",
     isActive: true,
     metadata: {},
     lastActiveAt: utcNowIso(),
@@ -176,14 +182,69 @@ function resolveCronjobMainSession(params: {
   return sessionId;
 }
 
-function resolvedCronjobModel(params: {
+function inputModelValue(input: SessionInputRecord | null | undefined): string | null {
+  const model =
+    input && typeof input.payload.model === "string"
+      ? input.payload.model.trim()
+      : "";
+  return model || null;
+}
+
+function inputThinkingValue(input: SessionInputRecord | null | undefined): string | null {
+  const thinkingValue =
+    input && typeof input.payload.thinking_value === "string"
+      ? input.payload.thinking_value.trim()
+      : "";
+  return thinkingValue || null;
+}
+
+function latestCronjobControllerInput(params: {
+  store: RuntimeStateStore;
+  workspaceId: string;
+  sessionId: string;
+}): SessionInputRecord | null {
+  return params.store.getLatestInputForSession({
+    workspaceId: params.workspaceId,
+    sessionId: params.sessionId,
+    excludeContextSources: ["main_session_event_batch"],
+    preferConfiguredModel: true,
+  });
+}
+
+function resolvedCronjobExecutionProfile(params: {
   store: RuntimeStateStore;
   workspace: WorkspaceRecord;
   metadata: Record<string, unknown>;
-  sessionId?: string | null;
-}): string | null {
-  void params;
-  return resolveSubagentExecutionModel();
+  sessionId: string;
+  selectedModel?: string | null;
+  selectedThinkingValue?: string | null;
+}): {
+  requestedModel: string | null;
+  effectiveModel: string;
+  thinkingValue: string | null;
+} {
+  const selectedModelOverride = normalizedString(params.selectedModel);
+  const selectedThinkingOverride = normalizedString(params.selectedThinkingValue);
+  const controllerInput = latestCronjobControllerInput({
+    store: params.store,
+    workspaceId: params.workspace.id,
+    sessionId: params.sessionId,
+  });
+  const requestedModel = selectedModelOverride || inputModelValue(controllerInput) || null;
+  const inheritedThinkingValue = inputThinkingValue(controllerInput);
+  const requestedThinkingValue = selectedModelOverride
+    ? selectedThinkingOverride || null
+    : selectedThinkingOverride || inheritedThinkingValue;
+  const effectiveProfile = resolveSubagentExecutionProfile({
+    selectedModel: requestedModel,
+    selectedThinkingValue: requestedThinkingValue,
+    ignoreConfiguredSubagentModel: true,
+  });
+  return {
+    requestedModel,
+    effectiveModel: effectiveProfile.model,
+    thinkingValue: effectiveProfile.thinkingValue,
+  };
 }
 
 export function cronjobCheckIntervalMs(): number {
@@ -255,21 +316,31 @@ export function queueLocalCronjobRun(
   store: RuntimeStateStore,
   job: CronjobRecord,
   now: Date,
-  wakeQueueWorker: (() => void) | undefined
+  wakeQueueWorker: (() => void) | undefined,
+  options?: {
+    sessionId?: string | null;
+    selectedModel?: string | null;
+    selectedThinkingValue?: string | null;
+  },
 ): string {
   const workspace = store.getWorkspace(job.workspaceId);
   if (!workspace) {
     throw new Error(`workspace not found for cronjob ${job.id}`);
   }
   const metadata = isRecord(job.metadata) ? job.metadata : {};
-  const mainSessionId = resolveCronjobMainSession({ store, workspace, metadata });
+  const mainSessionId =
+    (typeof options?.sessionId === "string" && options.sessionId.trim()
+      ? options.sessionId.trim()
+      : null) ?? resolveCronjobMainSession({ store, workspace, metadata });
   const childSessionId = `subagent-${randomUUID()}`;
   const subagentId = randomUUID();
-  const model = resolvedCronjobModel({
+  const executionProfile = resolvedCronjobExecutionProfile({
     store,
     workspace,
     metadata,
     sessionId: mainSessionId,
+    selectedModel: options?.selectedModel,
+    selectedThinkingValue: options?.selectedThinkingValue,
   });
   const priority = Number.isInteger(metadata.priority) ? (metadata.priority as number) : 0;
   const idempotencyKey = typeof metadata.idempotency_key === "string" ? metadata.idempotency_key : null;
@@ -314,7 +385,8 @@ export function queueLocalCronjobRun(
     payload: {
       text: executableInstruction,
       image_urls: [],
-      model,
+      model: executionProfile.effectiveModel,
+      thinking_value: executionProfile.thinkingValue,
       context: {
         source: "subagent",
         source_type: "cronjob",
@@ -354,8 +426,8 @@ export function queueLocalCronjobRun(
     sourceId: job.id,
     cronjobId: job.id,
     toolProfile,
-    requestedModel: typeof metadata.model === "string" ? metadata.model : null,
-    effectiveModel: model,
+    requestedModel: executionProfile.requestedModel,
+    effectiveModel: executionProfile.effectiveModel,
     status: "queued",
     lastEventAt: now.toISOString(),
   });
@@ -425,11 +497,16 @@ export function executeLocalCronjobDelivery(
   job: CronjobRecord,
   now: Date,
   wakeQueueWorker: (() => void) | undefined,
+  options?: {
+    sessionId?: string | null;
+    selectedModel?: string | null;
+    selectedThinkingValue?: string | null;
+  },
 ): LocalCronjobDeliveryResult {
   const delivery = isRecord(job.delivery) ? job.delivery : {};
   const channel = typeof delivery.channel === "string" ? delivery.channel : null;
   if (channel === "session_run") {
-    const sessionId = queueLocalCronjobRun(store, job, now, wakeQueueWorker);
+    const sessionId = queueLocalCronjobRun(store, job, now, wakeQueueWorker, options);
     return {
       channel,
       sessionId,
@@ -437,7 +514,9 @@ export function executeLocalCronjobDelivery(
     };
   }
   if (channel === "system_notification") {
-    const notification = deliverLocalCronjobNotification(store, job);
+    const notification = deliverLocalCronjobNotification(store, job, {
+      sessionId: options?.sessionId,
+    });
     return {
       channel,
       sessionId: null,

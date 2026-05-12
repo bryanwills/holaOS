@@ -48,7 +48,7 @@ function seedMainSession(store: RuntimeStateStore) {
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    kind: "workspace_session",
+    kind: "main_session",
   });
   store.ensureRuntimeState({
     workspaceId: workspace.id,
@@ -305,6 +305,14 @@ test("main-session event worker inherits the owner main session model and thinki
   assert.match(
     String(batchInput?.payload.text),
     /supplemental continuation only/i,
+  );
+  assert.match(
+    String(batchInput?.payload.text),
+    /If completed work established durable verified workspace knowledge that future runs should reuse, record it in `AGENTS\.md` with `holaboss_update_workspace_instructions` before replying\./i,
+  );
+  assert.match(
+    String(batchInput?.payload.text),
+    /Do not persist one-off deliverables, unresolved hypotheses, partial investigations, or temporary runtime state\./i,
   );
   assert.match(
     String(batchInput?.payload.text),

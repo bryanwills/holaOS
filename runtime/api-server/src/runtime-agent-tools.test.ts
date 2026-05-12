@@ -54,7 +54,7 @@ test("continueSubagent queues a new input onto the same completed child session"
     store.ensureSession({
       workspaceId,
       sessionId: mainSessionId,
-      kind: "workspace_session",
+      kind: "main_session",
       createdBy: "workspace_user",
     });
     store.ensureSession({
@@ -185,7 +185,7 @@ test("continueSubagent inherits the composer-selected thinking value for the eff
     store.ensureSession({
       workspaceId,
       sessionId: mainSessionId,
-      kind: "workspace_session",
+      kind: "main_session",
       createdBy: "workspace_user",
     });
     store.ensureSession({
@@ -291,7 +291,7 @@ test("continueSubagent falls back to the controller session's latest model inste
     store.ensureSession({
       workspaceId,
       sessionId: mainSessionId,
-      kind: "workspace_session",
+      kind: "main_session",
       createdBy: "workspace_user",
     });
     store.ensureSession({
@@ -405,7 +405,7 @@ test("delegateTask only opts into the user browser surface when the parent input
     store.ensureSession({
       workspaceId,
       sessionId: mainSessionId,
-      kind: "workspace_session",
+      kind: "main_session",
       createdBy: "workspace_user",
     });
     const explicitParentInput = store.enqueueInput({
@@ -497,7 +497,7 @@ test("delegateTask inherits the composer-selected model and thinking when no sub
     store.ensureSession({
       workspaceId,
       sessionId: mainSessionId,
-      kind: "workspace_session",
+      kind: "main_session",
       createdBy: "workspace_user",
     });
     const parentInput = store.enqueueInput({
@@ -555,7 +555,7 @@ test("continueSubagent preserves the user browser surface flag for follow-up wor
     store.ensureSession({
       workspaceId,
       sessionId: mainSessionId,
-      kind: "workspace_session",
+      kind: "main_session",
       createdBy: "workspace_user",
     });
     store.ensureSession({
@@ -650,7 +650,7 @@ test("background task sync preserves persisted waiting-on-user blockers", async 
     store.ensureSession({
       workspaceId,
       sessionId: mainSessionId,
-      kind: "workspace_session",
+      kind: "main_session",
       createdBy: "workspace_user",
     });
     store.ensureSession({
@@ -747,7 +747,7 @@ test("resumeSubagent preserves the user browser surface flag while waiting on us
     store.ensureSession({
       workspaceId,
       sessionId: mainSessionId,
-      kind: "workspace_session",
+      kind: "main_session",
       createdBy: "workspace_user",
     });
     store.ensureSession({
@@ -848,7 +848,7 @@ test("resumeSubagent preserves the prior child thinking value", async () => {
     store.ensureSession({
       workspaceId,
       sessionId: mainSessionId,
-      kind: "workspace_session",
+      kind: "main_session",
       createdBy: "workspace_user",
     });
     store.ensureSession({
@@ -949,7 +949,7 @@ test("resumeSubagent falls back to the controller session's latest model instead
     store.ensureSession({
       workspaceId,
       sessionId: mainSessionId,
-      kind: "workspace_session",
+      kind: "main_session",
       createdBy: "workspace_user",
     });
     store.ensureSession({
@@ -1071,7 +1071,7 @@ test("cancelSubagent waits for a claimed child runtime to settle before returnin
     store.ensureSession({
       workspaceId,
       sessionId: mainSessionId,
-      kind: "workspace_session",
+      kind: "main_session",
       createdBy: "workspace_user",
     });
     store.ensureSession({
@@ -1231,6 +1231,63 @@ function makeHarness(): Harness {
     },
   };
 }
+
+test("invokeSkill resolves workspace-local skills from a registered custom workspace path", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-skill-custom-"));
+  const workspaceRoot = path.join(root, "workspace");
+  const dbPath = path.join(root, "runtime.db");
+  const customRoot = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-skill-custom-workspace-"));
+  const customWorkspaceDir = path.join(customRoot, "workspace");
+  const skillDir = path.join(customWorkspaceDir, "skills", "deploy-helper");
+
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+  try {
+    store.createWorkspace({
+      workspaceId: "workspace-1",
+      name: "Workspace 1",
+      harness: "pi",
+      status: "active",
+      workspacePath: customWorkspaceDir,
+    });
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: deploy-helper",
+        "description: Deployment helper",
+        "---",
+        "",
+        "# Deploy Helper",
+        "",
+        "Use the deploy workflow carefully.",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const service = new RuntimeAgentToolsService(store, { workspaceRoot });
+    const result = service.invokeSkill({
+      workspaceId: "workspace-1",
+      requestedName: "deploy-helper",
+      args: "Only use the docs path.",
+    }) as {
+      text: string;
+      skill_id: string;
+      skill_file_path: string;
+    };
+
+    assert.equal(result.skill_id, "deploy-helper");
+    assert.match(result.text, /Only use the docs path\./);
+    assert.equal(
+      result.skill_file_path,
+      fs.realpathSync(path.join(skillDir, "SKILL.md")),
+    );
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+    await rm(customRoot, { recursive: true, force: true });
+  }
+});
 
 function seedTwitterPosts(dbPath: string) {
   const db = new Database(dbPath);

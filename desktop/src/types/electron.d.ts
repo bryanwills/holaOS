@@ -149,7 +149,7 @@ declare global {
     height: number;
   }
 
-  type UiSettingsPaneSection = "account" | "billing" | "providers" | "integrations" | "submissions" | "settings" | "about";
+  type UiSettingsPaneSection = "account" | "billing" | "providers" | "integrations" | "submissions" | "settings";
 
   interface BrowserStatePayload {
     id: string;
@@ -455,6 +455,8 @@ interface RuntimeNotificationListOptionsPayload {
     created_at: string | null;
     updated_at: string | null;
     deleted_at_utc: string | null;
+    icon?: string | null;
+    icon_color?: string | null;
     workspace_path?: string | null;
     folder_state?: "healthy" | "missing" | null;
   }
@@ -842,23 +844,31 @@ interface RuntimeNotificationListOptionsPayload {
   interface CronjobCreatePayload {
     workspace_id: string;
     initiated_by: string;
+    session_id?: string;
     name?: string;
     cron: string;
     description: string;
     instruction?: string;
     enabled?: boolean;
     delivery: CronjobDeliveryPayload;
+    model?: string;
     metadata?: Record<string, unknown>;
   }
 
   interface CronjobUpdatePayload {
+    session_id?: string;
     name?: string;
     cron?: string;
     description?: string;
     instruction?: string;
     enabled?: boolean;
     delivery?: CronjobDeliveryPayload;
+    model?: string;
     metadata?: Record<string, unknown>;
+  }
+
+  interface CronjobRunNowPayload {
+    model?: string;
   }
 
   type RuntimeNotificationLevel = "info" | "success" | "warning" | "error";
@@ -1677,11 +1687,17 @@ interface RuntimeNotificationListOptionsPayload {
       showNativeNotification: (
         payload: DesktopNativeNotificationPayload
       ) => Promise<boolean>;
+      setBadgeCount: (count: number) => Promise<void>;
+      getNotificationsEnabled: () => Promise<boolean>;
+      setNotificationsEnabled: (enabled: boolean) => Promise<boolean>;
       openSettingsPane: (section?: UiSettingsPaneSection) => Promise<void>;
       openExternalUrl: (url: string) => Promise<void>;
       onWindowStateChange: (listener: (state: DesktopWindowStatePayload) => void) => () => void;
       onThemeChange: (listener: (theme: string) => void) => () => void;
       onOpenSettingsPane: (listener: (section: UiSettingsPaneSection) => void) => () => void;
+      onNotificationActivated: (
+        listener: (payload: { workspaceId: string; sessionId: string | null }) => void,
+      ) => () => void;
     };
     clipboard: {
       readImage: () => Promise<ClipboardImagePayload | null>;
@@ -1744,8 +1760,12 @@ interface RuntimeNotificationListOptionsPayload {
       getWorkspaceRoot: (workspaceId: string) => Promise<string>;
       createWorkspace: (payload: HolabossCreateWorkspacePayload) => Promise<WorkspaceResponsePayload>;
       deleteWorkspace: (workspaceId: string, keepFiles?: boolean) => Promise<WorkspaceResponsePayload>;
+      updateAppearance: (
+        workspaceId: string,
+        payload: { icon: string | null; iconColor: string | null },
+      ) => Promise<WorkspaceResponsePayload>;
       listCronjobs: (workspaceId: string, enabledOnly?: boolean) => Promise<CronjobListResponsePayload>;
-      runCronjobNow: (workspaceId: string, jobId: string) => Promise<CronjobRunResponsePayload>;
+      runCronjobNow: (workspaceId: string, jobId: string, payload?: CronjobRunNowPayload) => Promise<CronjobRunResponsePayload>;
       createCronjob: (payload: CronjobCreatePayload) => Promise<CronjobRecordPayload>;
       updateCronjob: (workspaceId: string, jobId: string, payload: CronjobUpdatePayload) => Promise<CronjobRecordPayload>;
       deleteCronjob: (workspaceId: string, jobId: string) => Promise<{ success: boolean }>;
