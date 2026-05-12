@@ -461,10 +461,10 @@ export function PublishScreen({
       role="dialog"
     >
       {/* macOS draggable title-bar region */}
-      <div className="titlebar-drag-region pointer-events-none fixed top-0 right-0 left-0 z-10 h-[38px]" />
+      <div className="titlebar-drag-region fixed top-0 right-0 left-0 z-10 h-[38px]" />
 
       {/* Top chrome */}
-      <header className="relative z-20 flex shrink-0 items-center justify-between px-5 pt-[44px] pb-3">
+      <header className="window-drag relative z-20 flex shrink-0 items-center justify-between px-5 pt-[44px] pb-3">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span>{selectedWorkspace?.name ?? "Workspace"}</span>
           {savedAt !== null && (

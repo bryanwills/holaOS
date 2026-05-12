@@ -358,9 +358,7 @@ export function TopTabsBar({
       className={headerClassName}
     >
       <div className={headerGridClassName} style={headerGridStyle}>
-        <div
-          className={`${integratedTitleBar ? "window-no-drag " : ""}hidden min-w-0 items-center gap-1.5 lg:flex`}
-        >
+        <div className="hidden min-w-0 items-center gap-1.5 lg:flex">
           {showLayoutPicker && onLayoutModeChange ? (
             <Popover
               open={layoutPickerOpen}
@@ -443,9 +441,7 @@ export function TopTabsBar({
           ) : null}
         </div>
 
-        <div
-          className={`${integratedTitleBar ? "window-no-drag " : ""}flex min-w-0 items-center justify-self-end gap-1.5`}
-        >
+        <div className="flex min-w-0 items-center justify-self-end gap-1.5">
           {/* Workspace navigation: control center toggle + workspace switcher */}
           {!controlCenterActive ? (
             <Tooltip>

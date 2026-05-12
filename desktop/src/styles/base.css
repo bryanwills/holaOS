@@ -45,8 +45,11 @@ body {
 
 /* ---- Electron window chrome ---- */
 
-.window-drag {
+.window-drag,
+.titlebar-drag-region {
+  app-region: drag;
   -webkit-app-region: drag;
+  user-select: none;
 }
 
 .window-drag button,
@@ -55,15 +58,19 @@ body {
 .window-drag textarea,
 .window-drag a,
 .window-drag [role="button"] {
+  app-region: no-drag;
   -webkit-app-region: no-drag;
 }
 
 .window-no-drag {
+  app-region: no-drag;
   -webkit-app-region: no-drag;
+  user-select: auto;
 }
 
 .window-drag .window-no-drag,
 .window-drag .window-no-drag * {
+  app-region: no-drag;
   -webkit-app-region: no-drag;
 }
 

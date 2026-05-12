@@ -8,6 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const creatingViewPath = path.join(__dirname, "CreatingView.tsx");
 const firstWorkspacePanePath = path.join(__dirname, "FirstWorkspacePane.tsx");
 const onboardingShellPath = path.join(__dirname, "OnboardingShell.tsx");
+const baseCssPath = path.join(__dirname, "../../styles/base.css");
 
 test("creating view uses the publish-flow shell DNA: rounded card on bg-fg-2 canvas with subtle shadow", async () => {
   const source = await readFile(creatingViewPath, "utf8");
@@ -101,4 +102,15 @@ test("first workspace pane wraps the flow in the bg-fg-2 full-screen canvas via 
   // Canvas chrome (bg-fg-2 + macOS draggable region) lives inside the shell.
   assert.match(shellSource, /bg-fg-2/);
   assert.match(shellSource, /titlebar-drag-region/);
+  assert.doesNotMatch(shellSource, /titlebar-drag-region pointer-events-none/);
+  assert.match(shellSource, /<header className="window-drag /);
+});
+
+test("onboarding title bar drag class maps to Electron drag regions", async () => {
+  const source = await readFile(baseCssPath, "utf8");
+
+  assert.match(
+    source,
+    /\.window-drag,\s*\.titlebar-drag-region \{\s*app-region: drag;\s*-webkit-app-region: drag;/,
+  );
 });

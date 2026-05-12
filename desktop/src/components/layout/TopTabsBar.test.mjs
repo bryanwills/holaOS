@@ -23,9 +23,10 @@ test("top tabs bar exposes a control center action alongside integrated title ba
   assert.match(source, /controlCenterActive\?: boolean;/);
   assert.match(source, /onOpenControlCenter\?: \(\) => void;/);
   assert.match(source, /!controlCenterActive \? \(/);
-  assert.match(source, /variant="outline"\s*size="sm"/);
+  assert.match(source, /variant="bordered"\s*size="icon-sm"/);
   assert.match(source, /onClick=\{\(\) => onOpenControlCenter\?\.\(\)\}/);
-  assert.match(source, /Control Center/);
+  assert.match(source, /Open control center/);
+  assert.match(source, /Control center/);
   assert.match(
     source,
     /const isWindowsIntegratedTitleBar =\s*integratedTitleBar && desktopPlatform === "win32";/,
@@ -35,4 +36,25 @@ test("top tabs bar exposes a control center action alongside integrated title ba
   assert.match(source, /window\.electronAPI\.ui\.closeWindow\(\)/);
   assert.match(source, /aria-label="Minimize window"/);
   assert.match(source, /aria-label="Close window"/);
+});
+
+test("top tabs bar keeps broad integrated title bar space draggable in workspace mode", async () => {
+  const source = await readFile(TOP_TABS_BAR_PATH, "utf8");
+
+  assert.match(
+    source,
+    /<div className="hidden min-w-0 items-center gap-1\.5 lg:flex">\s*\{showLayoutPicker && onLayoutModeChange \? \(/,
+  );
+  assert.match(
+    source,
+    /<div className="flex min-w-0 items-center justify-self-end gap-1\.5">/,
+  );
+  assert.doesNotMatch(
+    source,
+    /className=\{`\$\{integratedTitleBar \? "window-no-drag " : ""\}hidden min-w-0 items-center gap-1\.5 lg:flex`\}/,
+  );
+  assert.doesNotMatch(
+    source,
+    /className=\{`\$\{integratedTitleBar \? "window-no-drag " : ""\}flex min-w-0 items-center justify-self-end gap-1\.5`\}/,
+  );
 });

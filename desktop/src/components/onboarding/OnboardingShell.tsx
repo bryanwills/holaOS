@@ -32,10 +32,10 @@ export function OnboardingShell({
   return (
     <div className="relative z-10 flex min-h-0 flex-1 flex-col bg-fg-2">
       {/* macOS draggable region */}
-      <div className="titlebar-drag-region pointer-events-none fixed top-0 right-0 left-0 z-10 h-[38px]" />
+      <div className="titlebar-drag-region fixed top-0 right-0 left-0 z-10 h-[38px]" />
 
       {/* Brand row — logo + label, no wrapping square. */}
-      <header className="relative z-20 flex shrink-0 items-center justify-between gap-3 px-7 pt-[44px] pb-4 sm:px-9">
+      <header className="window-drag relative z-20 flex shrink-0 items-center justify-between gap-3 px-7 pt-[44px] pb-4 sm:px-9">
         <div className="flex min-w-0 items-center gap-2.5">
           <img
             src={holabossLogoUrl}
