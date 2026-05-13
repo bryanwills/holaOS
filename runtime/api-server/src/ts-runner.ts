@@ -1025,9 +1025,14 @@ function isFrontSessionKind(value: string | null | undefined): boolean {
   return normalized === "main_session" || normalized === "onboarding";
 }
 
+function isLabControllerSessionKind(value: string | null | undefined): boolean {
+  const normalized = normalizedSessionKindValue(value);
+  return normalized === "workspace_onboarding" || normalized === "meeting_mode";
+}
+
 function isDelegatingFrontSessionKind(value: string | null | undefined): boolean {
   const normalized = normalizedSessionKindValue(value);
-  return normalized === "main_session";
+  return normalized === "main_session" || isLabControllerSessionKind(normalized);
 }
 
 function allowedRuntimeToolIdsForFrontSession(
@@ -1043,7 +1048,7 @@ function projectBrowserToolIdsForSession(params: {
   browserToolIds: string[];
 }): string[] {
   const normalized = normalizedSessionKindValue(params.sessionKind);
-  if (normalized === "subagent") {
+  if (normalized === "subagent" || isLabControllerSessionKind(normalized)) {
     return [...params.browserToolIds];
   }
   return [];
@@ -1056,6 +1061,9 @@ function projectRuntimeToolIdsForSession(params: {
   if (isFrontSessionKind(params.sessionKind)) {
     const allowed = allowedRuntimeToolIdsForFrontSession(params.sessionKind);
     return params.runtimeToolIds.filter((toolId) => allowed.has(toolId));
+  }
+  if (isLabControllerSessionKind(params.sessionKind)) {
+    return [...params.runtimeToolIds];
   }
   return params.runtimeToolIds.filter(
     (toolId) =>
@@ -1073,6 +1081,9 @@ function projectExtraToolIdsForSession(params: {
     const allowed = allowedRuntimeToolIdsForFrontSession(params.sessionKind);
     return params.extraToolIds.filter((toolId) => allowed.has(toolId));
   }
+  if (isLabControllerSessionKind(params.sessionKind)) {
+    return Array.from(new Set([...defaultExtraTools(params.harnessId), ...params.extraToolIds]));
+  }
   return Array.from(
     new Set([
       ...defaultExtraTools(params.harnessId),
@@ -1089,7 +1100,7 @@ function projectResolvedMcpToolRefsForSession(params: {
   sessionKind: string | null | undefined;
   resolvedMcpToolRefs: CompiledWorkspaceRuntimePlan["resolved_mcp_tool_refs"];
 }): CompiledWorkspaceRuntimePlan["resolved_mcp_tool_refs"] {
-  if (!isFrontSessionKind(params.sessionKind)) {
+  if (!isFrontSessionKind(params.sessionKind) || isLabControllerSessionKind(params.sessionKind)) {
     return params.resolvedMcpToolRefs;
   }
   return [];
@@ -1099,7 +1110,7 @@ function projectResolvedMcpServerIdsForSession(params: {
   sessionKind: string | null | undefined;
   resolvedMcpServerIds: string[];
 }): string[] {
-  if (!isFrontSessionKind(params.sessionKind)) {
+  if (!isFrontSessionKind(params.sessionKind) || isLabControllerSessionKind(params.sessionKind)) {
     return params.resolvedMcpServerIds;
   }
   return [];

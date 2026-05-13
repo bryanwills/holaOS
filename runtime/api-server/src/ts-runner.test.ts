@@ -1333,6 +1333,121 @@ test("runTsRunnerCli strips subagent orchestration tools from onboarding session
   );
 });
 
+test("runTsRunnerCli gives workspace onboarding executor-grade lab tools", async () => {
+  setTempSandboxRoot("hb-ts-runner-workspace-onboarding-tools-");
+  let capturedProjectRequest: AgentRuntimeConfigCliRequest | null = null;
+
+  const stagedRuntimeTools = [
+    "holaboss_delegate_task",
+    "holaboss_get_subagent",
+    "holaboss_list_background_tasks",
+    "holaboss_cancel_subagent",
+    "holaboss_resume_subagent",
+    "holaboss_continue_subagent",
+    "holaboss_onboarding_complete",
+    "holaboss_update_workspace_instructions",
+  ];
+
+  const exitCode = await runTsRunnerCli(
+    [
+      "--request-base64",
+      encodeRequest({
+        ...baseRequest(),
+        session_kind: "workspace_onboarding",
+      }),
+    ],
+    {
+      deps: {
+        ...testDeps({
+          pluginOverrides: {
+            stageBrowserTools: () => ({
+              changed: false,
+              toolIds: ["browser_get_state"],
+            }),
+            stageRuntimeTools: () => ({
+              changed: false,
+              toolIds: stagedRuntimeTools,
+            }),
+          },
+        }),
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" },
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1",
+          };
+        },
+      },
+      io: {
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  assert.equal(
+    (capturedProjectRequest as { session_kind: string | null }).session_kind,
+    "workspace_onboarding",
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { browser_tool_ids: string[] }).browser_tool_ids,
+    ["browser_get_state"],
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { runtime_tool_ids: string[] }).runtime_tool_ids,
+    stagedRuntimeTools,
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { default_tools: string[] }).default_tools,
+    [
+      "read",
+      "edit",
+      "bash",
+      "grep",
+      "glob",
+      "list",
+      "question",
+      "todowrite",
+      "todoread",
+      "skill",
+    ],
+  );
+  const extraTools = (capturedProjectRequest as { extra_tools: string[] }).extra_tools;
+  assert.ok(extraTools.includes("web_search"));
+  assert.ok(extraTools.includes("browser_get_state"));
+  assert.ok(extraTools.includes("holaboss_delegate_task"));
+  assert.ok(extraTools.includes("holaboss_update_workspace_instructions"));
+  assert.equal(
+    (capturedProjectRequest as { delegated_session_kind?: string | null })
+      .delegated_session_kind,
+    "subagent",
+  );
+});
+
 test("runTsRunnerCli strips staged execution tools from front-of-house workspace sessions", async () => {
   setTempSandboxRoot("hb-ts-runner-runtime-tools-");
   let capturedProjectRequest: AgentRuntimeConfigCliRequest | null = null;

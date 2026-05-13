@@ -8,10 +8,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
+import {
+  composioToolkitSlugForProvider,
+  useWorkspaceDesktop,
+} from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 export type AssistantTurnPendingIntegration = {
+  workspace_id?: string | null;
   app_id: string;
   provider_id: string;
   credential_source?: string | null;
@@ -54,7 +58,7 @@ export function AssistantTurnIntegrationConnects({
   }
   const seen = new Set<string>();
   const unique = pendingIntegrations.filter((entry) => {
-    const key = `${entry.provider_id.trim().toLowerCase()}|${entry.app_id.trim()}`;
+    const key = `${entry.workspace_id?.trim() ?? ""}|${entry.provider_id.trim().toLowerCase()}|${entry.app_id.trim()}`;
     if (!key || seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -63,7 +67,7 @@ export function AssistantTurnIntegrationConnects({
     <div className="mt-3 flex flex-col gap-2">
       {unique.map((entry) => (
         <IntegrationConnectCard
-          key={`${entry.provider_id}|${entry.app_id}`}
+          key={`${entry.workspace_id ?? ""}|${entry.provider_id}|${entry.app_id}`}
           integration={entry}
           onAfterBind={onAfterBind}
         />
@@ -86,7 +90,11 @@ function IntegrationConnectCard({
   const provider = integration.provider_id.trim();
   const providerKey = provider.toLowerCase();
   const appId = integration.app_id.trim();
-  const toolkit = composioToolkitsByProvider[providerKey];
+  const targetWorkspaceId =
+    integration.workspace_id?.trim() || selectedWorkspaceId || "";
+  const toolkit =
+    composioToolkitsByProvider[composioToolkitSlugForProvider(providerKey)] ??
+    composioToolkitsByProvider[providerKey];
   const displayName = toolkit?.name ?? provider;
 
   const [state, setState] = useState<CardState>({ kind: "loading" });
@@ -94,14 +102,14 @@ function IntegrationConnectCard({
   const [errorMessage, setErrorMessage] = useState<string>("");
 
   const refresh = useCallback(async () => {
-    if (!selectedWorkspaceId) {
+    if (!targetWorkspaceId) {
       setState({ kind: "no_workspace" });
       return;
     }
     try {
       const [connectionsResp, bindingsResp] = await Promise.all([
         window.electronAPI.workspace.listIntegrationConnections(),
-        window.electronAPI.workspace.listIntegrationBindings(selectedWorkspaceId),
+        window.electronAPI.workspace.listIntegrationBindings(targetWorkspaceId),
       ]);
       const activeConnections = connectionsResp.connections.filter(
         (c) =>
@@ -137,14 +145,14 @@ function IntegrationConnectCard({
       setErrorMessage(normalizeErrorMessage(error));
       setState({ kind: "no_connection" });
     }
-  }, [selectedWorkspaceId, providerKey, appId]);
+  }, [targetWorkspaceId, providerKey, appId]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
   async function handleConnect() {
-    if (!selectedWorkspaceId) return;
+    if (!targetWorkspaceId) return;
     setBusy("connecting");
     setErrorMessage("");
     try {
@@ -159,7 +167,7 @@ function IntegrationConnectCard({
         .sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0];
       if (candidate) {
         await window.electronAPI.workspace.upsertIntegrationBinding(
-          selectedWorkspaceId,
+          targetWorkspaceId,
           "app",
           appId,
           provider,
@@ -176,12 +184,12 @@ function IntegrationConnectCard({
   }
 
   async function handleBind(connectionId: string) {
-    if (!selectedWorkspaceId) return;
+    if (!targetWorkspaceId) return;
     setBusy("binding");
     setErrorMessage("");
     try {
       await window.electronAPI.workspace.upsertIntegrationBinding(
-        selectedWorkspaceId,
+        targetWorkspaceId,
         "app",
         appId,
         provider,

@@ -1,4 +1,4 @@
-import { Folder, FolderOpen, Plug, Sparkles, X, Zap } from "lucide-react";
+import { Folder, FolderOpen, Plug, Sparkles, Wand2, X, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { firstWorkspacePaneSectionClassName } from "@/components/layout/firstWorkspacePaneLayout";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,7 @@ import {
   WorkspaceWizardLayout,
 } from "./WorkspaceWizardLayout";
 
-type SimpleStep = "welcome" | "name" | "folder";
+type SimpleStep = "welcome" | "name" | "folder" | "onboard";
 type FolderChoice = "default" | "custom";
 
 interface FirstWorkspacePaneProps {
@@ -28,11 +28,13 @@ const STEP_INDEX_FULL: Record<SimpleStep, number> = {
   welcome: 1,
   name: 2,
   folder: 3,
+  onboard: 4,
 };
 const STEP_INDEX_PANEL: Record<SimpleStep, number> = {
   welcome: 0, // unreachable in panel variant
   name: 1,
   folder: 2,
+  onboard: 3,
 };
 
 /**
@@ -70,7 +72,7 @@ export function FirstWorkspacePane({
     selectedWorkspaceFolder?.rootPath ? "custom" : "default",
   );
   const isPanelVariant = variant === "panel";
-  const totalSteps = isPanelVariant ? 2 : 3;
+  const totalSteps = isPanelVariant ? 3 : 4;
   const stepIndexMap = isPanelVariant ? STEP_INDEX_PANEL : STEP_INDEX_FULL;
 
   // Pin defaults on mount so any prior session's marketplace/copy state can't
@@ -112,7 +114,15 @@ export function FirstWorkspacePane({
   }
 
   function handleCreate() {
-    void createWorkspace().then(() => {
+    void createWorkspace({ workspaceOnboardingMode: "start" }).then(() => {
+      if (isPanelVariant) {
+        onClose?.();
+      }
+    });
+  }
+
+  function handleSkipOnboarding() {
+    void createWorkspace({ workspaceOnboardingMode: "skip" }).then(() => {
       if (isPanelVariant) {
         onClose?.();
       }
@@ -123,7 +133,9 @@ export function FirstWorkspacePane({
     !trimmedName || (folderChoice === "custom" && !customPath);
 
   const shellOnBack =
-    step === "folder"
+    step === "onboard"
+      ? () => setStep("folder")
+      : step === "folder"
       ? () => setStep("name")
       : step === "name" && !isPanelVariant
         ? () => setStep("welcome")
@@ -222,13 +234,13 @@ export function FirstWorkspacePane({
               </div>
             </WizardField>
           </WorkspaceWizardLayout>
-        ) : (
+        ) : step === "folder" ? (
           <WorkspaceWizardLayout
             description="Files run locally on this machine. Use the default location or pick a folder you control."
             errorMessage={workspaceErrorMessage || null}
             primary={{
-              label: "Create workspace",
-              onClick: handleCreate,
+              label: "Continue",
+              onClick: () => setStep("onboard"),
               disabled: createDisabled,
             }}
             secondary={{
@@ -294,6 +306,35 @@ export function FirstWorkspacePane({
                 )
               ) : null}
             </div>
+          </WorkspaceWizardLayout>
+        ) : (
+          <WorkspaceWizardLayout
+            aboveTitle={
+              <div className="mx-auto flex size-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <Wand2 className="size-5" />
+              </div>
+            }
+            description="Let the agent design and build a draft workspace in a lab before anything is finalized."
+            errorMessage={workspaceErrorMessage || null}
+            primary={{
+              label: "Start onboarding",
+              onClick: handleCreate,
+              disabled: createDisabled,
+            }}
+            secondary={{
+              label: "Back",
+              onClick: () => setStep("folder"),
+            }}
+            stepIndex={stepIndexMap.onboard}
+            stepTotal={totalSteps}
+            tertiary={{
+              label: "Skip",
+              onClick: handleSkipOnboarding,
+            }}
+            title="Ready to onboard?"
+            width="md"
+          >
+            {null}
           </WorkspaceWizardLayout>
         )}
       </section>

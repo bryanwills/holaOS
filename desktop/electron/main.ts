@@ -2593,10 +2593,21 @@ interface WorkspaceRecordPayload {
   deleted_at_utc: string | null;
   workspace_path?: string | null;
   folder_state?: "healthy" | "missing" | null;
+  workspace_role?: string | null;
+  source_workspace_id?: string | null;
+  lab_purpose?: string | null;
+  lab_status?: string | null;
 }
 
 interface WorkspaceResponsePayload {
   workspace: WorkspaceRecordPayload;
+}
+
+interface WorkspaceLabResponsePayload {
+  lab: WorkspaceRecordPayload | null;
+  source: WorkspaceRecordPayload | null;
+  session: AgentSessionRecordPayload | null;
+  created?: boolean;
 }
 
 interface WorkspaceListResponsePayload {
@@ -3287,6 +3298,7 @@ interface HolabossCreateWorkspacePayload {
   template_commit?: string | null;
   /** App names from template metadata, used for integration resolution without materialization. */
   template_apps?: string[];
+  workspace_onboarding_mode?: "start" | "skip" | null;
   /** Optional absolute path for the workspace's on-disk folder. When provided, the runtime registers this
    * as the workspace root instead of the default managed location. */
   workspace_path?: string | null;
@@ -10413,11 +10425,23 @@ async function composioConnect(payload: {
   owner_user_id: string;
   callback_url?: string;
 }): Promise<ComposioConnectResult> {
+  const provider = composioToolkitSlugForProvider(payload.provider);
   return composioFetch<ComposioConnectResult>(
     "/api/composio/connect",
     "POST",
-    payload,
+    {
+      ...payload,
+      provider,
+    },
   );
+}
+
+function composioToolkitSlugForProvider(provider: string): string {
+  const normalized = provider.trim().toLowerCase();
+  if (normalized === "x") {
+    return "twitter";
+  }
+  return normalized;
 }
 
 interface ComposioToolkit {
@@ -14800,6 +14824,14 @@ async function createLocalWorkspace(
 
     let onboardingStatus = "NOT_REQUIRED";
     let onboardingSessionId: string | null = null;
+    const wantsWorkspaceOnboarding =
+      templateMode === "empty" &&
+      payload.workspace_onboarding_mode === "start" &&
+      !wantsEmptyOnboardingScaffold;
+    const skipsWorkspaceOnboarding =
+      templateMode === "empty" &&
+      payload.workspace_onboarding_mode === "skip" &&
+      !wantsEmptyOnboardingScaffold;
     try {
       const onboardContent = await fs.readFile(
         path.join(workspaceDir, "ONBOARD.md"),
@@ -14813,6 +14845,9 @@ async function createLocalWorkspace(
       onboardingStatus = "NOT_REQUIRED";
       onboardingSessionId = null;
     }
+    if (!onboardingSessionId && skipsWorkspaceOnboarding) {
+      onboardingStatus = "COMPLETED";
+    }
 
     stageLog("activate_workspace.start", { workspaceId, onboardingStatus });
     let updated: Awaited<ReturnType<typeof runtimeClient.workspaces.update>>;
@@ -14821,6 +14856,13 @@ async function createLocalWorkspace(
         status: "active",
         onboarding_status: onboardingStatus.toLowerCase(),
         onboarding_session_id: onboardingSessionId,
+        ...(skipsWorkspaceOnboarding
+          ? {
+              onboarding_completed_at: new Date().toISOString(),
+              onboarding_completion_summary: "Workspace onboarding skipped by user",
+              onboarding_requested_by: "workspace_user",
+            }
+          : {}),
         error_message: null,
       });
       stageLog("activate_workspace.ok", { workspaceId });
@@ -14939,6 +14981,28 @@ async function createLocalWorkspace(
           .update(workspaceId, {
             error_message: contextualWorkspaceCreateError(
               "Workspace created, but automatic onboarding could not start",
+              error,
+            ),
+          })
+          .catch(() => updated);
+      }
+    }
+    if (wantsWorkspaceOnboarding) {
+      try {
+        await requestWorkspaceRuntimeJson<{
+          lab?: { id?: string | null } | null;
+          session?: { session_id?: string | null } | null;
+        }>(workspaceId, {
+          method: "POST",
+          path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/labs`,
+          payload: { purpose: "workspace_onboarding" },
+        });
+        updated = await runtimeClient.workspaces.get(workspaceId).catch(() => updated);
+      } catch (error) {
+        updated = await runtimeClient.workspaces
+          .update(workspaceId, {
+            error_message: contextualWorkspaceCreateError(
+              "Workspace created, but workspace onboarding lab could not start",
               error,
             ),
           })
@@ -15086,6 +15150,21 @@ async function createWorkspace(
     : createLocalWorkspace(payload);
 }
 
+async function createWorkspaceLab(
+  workspaceId: string,
+  purpose: "workspace_onboarding" | "meeting_mode",
+): Promise<WorkspaceLabResponsePayload> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
+  return requestWorkspaceRuntimeJson<WorkspaceLabResponsePayload>(
+    safeWorkspaceId,
+    {
+      method: "POST",
+      path: `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}/labs`,
+      payload: { purpose },
+    },
+  );
+}
+
 async function deleteWorkspace(
   workspaceId: string,
   keepFiles?: boolean,
@@ -15116,6 +15195,7 @@ const desktopWorkspaceControlPlane = createLocalWorkspaceControlPlane({
   listWorkspaces,
   workspaceRegistry,
   createWorkspace,
+  createWorkspaceLab,
   deleteWorkspace,
   activateWorkspaceRecord,
   getWorkspaceLifecycle,
@@ -22672,6 +22752,15 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, payload: HolabossCreateWorkspacePayload) =>
       desktopWorkspaceControlPlane.createWorkspace(payload),
+  );
+  handleTrustedIpc(
+    "workspace:createWorkspaceLab",
+    ["main"],
+    async (
+      _event,
+      workspaceId: string,
+      purpose: "workspace_onboarding" | "meeting_mode",
+    ) => desktopWorkspaceControlPlane.createWorkspaceLab(workspaceId, purpose),
   );
   handleTrustedIpc(
     "workspace:deleteWorkspace",

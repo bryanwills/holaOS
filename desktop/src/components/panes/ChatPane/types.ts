@@ -29,6 +29,7 @@ export interface ChatMessage {
 }
 
 export interface ChatPendingIntegration {
+  workspace_id?: string | null;
   app_id: string;
   provider_id: string;
   credential_source?: string | null;

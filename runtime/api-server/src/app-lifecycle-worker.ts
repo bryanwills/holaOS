@@ -1213,6 +1213,7 @@ export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
         ? resolveIntegrationRuntime({
             store: this.store,
             appId: params.appId,
+            workspaceId: params.workspaceId,
             appDir: params.appDir,
             resolvedApp: params.resolvedApp,
             integrationBrokerUrl

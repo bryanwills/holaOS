@@ -680,6 +680,8 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         },
         additionalProperties: false,
       };
+    case "workspace_integrations_list_catalog":
+      return { type: "object", properties: {}, additionalProperties: false };
     case "workspace_apps_install":
       return {
         type: "object",

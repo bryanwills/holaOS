@@ -4987,6 +4987,131 @@ test("claimed input fails with session reset required when pre-run compaction ca
   store.close();
 });
 
+test("claimed input skips threshold-only pre-run compaction when no turn request snapshot exists", async () => {
+  const store = makeStore("hb-claimed-input-prerun-no-snapshot-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  const { sessionManager, sessionFile } = createPiSessionFile({
+    workspaceDir,
+    sessionDir: path.join(workspaceDir, ".holaboss", "pi-sessions"),
+  });
+  sessionManager.appendMessage(piUserMessage("x".repeat(80_000)));
+  store.upsertBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    harness: "pi",
+    harnessSessionId: sessionFile,
+  });
+  const previousInput = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "previous", model: "openai_codex/gpt-5.5" },
+  });
+  store.updateInput({
+    workspaceId: workspace.id,
+    inputId: previousInput.inputId,
+    fields: { status: "DONE" },
+  });
+  store.upsertTurnResult({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: previousInput.inputId,
+    startedAt: "2026-05-11T00:00:00.000Z",
+    completedAt: "2026-05-11T00:01:00.000Z",
+    status: "completed",
+    stopReason: "completed",
+    assistantText: "previous response",
+    toolUsageSummary: {
+      total_calls: 0,
+      completed_calls: 0,
+      failed_calls: 0,
+      tool_names: [],
+      tool_ids: [],
+    },
+    permissionDenials: [],
+    promptSectionIds: [],
+    capabilityManifestFingerprint: null,
+    requestSnapshotFingerprint: null,
+    promptCacheProfile: null,
+    contextBudgetDecisions: {
+      context_usage: {
+        tokens: 40_000,
+        context_window: 65_536,
+        percent: 61,
+      },
+    },
+    tokenUsage: null,
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "synthetic follow-up", model: "openai_codex/gpt-5.5" },
+  });
+  let runnerCalled = false;
+
+  await processClaimedInput({
+    store,
+    record: queued,
+    registerRunStartedFn: async () => {},
+    relayRunEventFn: async () => {},
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      runnerCalled = true;
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "output_delta",
+        payload: { delta: "Done." },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 3,
+        event_type: "run_completed",
+        payload: { status: "completed" },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  const updated = store.getInput({
+    workspaceId: workspace.id,
+    inputId: queued.inputId,
+  });
+  const turnResult = turnResultForInput(store, queued);
+  const preRunTelemetry = recordValue(
+    recordValue(turnResult?.contextBudgetDecisions)?.pre_run_compaction,
+  );
+
+  assert.equal(runnerCalled, true);
+  assert.equal(updated?.status, "DONE");
+  assert.equal(turnResult?.status, "completed");
+  assert.ok(preRunTelemetry);
+  assert.equal(preRunTelemetry?.initial_decision, "threshold_exceeded");
+  assert.equal(preRunTelemetry?.final_decision, "threshold_exceeded");
+  assert.equal(preRunTelemetry?.compaction_attempted, false);
+  assert.equal(preRunTelemetry?.reset_required, false);
+  store.close();
+});
+
 test("claimed input retries once after a provider context overflow and succeeds after runtime compaction", async () => {
   const store = makeStore("hb-claimed-input-overflow-recovery-success-");
   const workspace = store.createWorkspace({

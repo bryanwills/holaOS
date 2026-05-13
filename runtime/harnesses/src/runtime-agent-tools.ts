@@ -178,6 +178,12 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
     policy: "inspect"
   },
   {
+    id: "workspace_integrations_list_catalog",
+    description:
+      "List the canonical integration provider ids available to app manifests and bridge clients in this workspace. Before adding any `integrations:` entry to `app.runtime.yaml` or using `createIntegrationClient(...)`, call this tool and use the exact returned `provider_id`; do not invent aliases or product names.",
+    policy: "inspect"
+  },
+  {
     id: "workspace_apps_install",
     description:
       "Install a marketplace or local-catalog app into the current workspace. Downloads the archive, extracts under `apps/<app_id>/`, registers it in `workspace.yaml`, and starts the managed app process so its MCP tools become available. The result will include `requires_session_refresh: true` along with `new_mcp_servers: [...]` — when that happens, finish your current message without invoking the new tools (they will become callable starting from the next user message). The result also surfaces `provider_id` and `credential_source`; if the app needs an external account, mention that in your message so the user can authorize it.",

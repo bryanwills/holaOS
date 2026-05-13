@@ -1349,7 +1349,12 @@ export function renderCapabilityPolicyCorePromptSection(
     `Harness: ${manifest.context.harness_id ?? "unknown"}.`,
     `Session kind: ${manifest.context.session_kind ?? "unknown"}.`,
   ];
-  if (normalizedSessionKind === "main_session" || normalizedSessionKind === "onboarding") {
+  if (
+    normalizedSessionKind === "main_session" ||
+    normalizedSessionKind === "onboarding" ||
+    normalizedSessionKind === "workspace_onboarding" ||
+    normalizedSessionKind === "meeting_mode"
+  ) {
     lines.push(
       "Use surfaced capabilities to inspect, route, or verify before making claims about workspace, app, browser, or runtime state whenever possible.",
       "If state-changing work happens in this run or through a delegated child, verify the result before claiming success or completion.",

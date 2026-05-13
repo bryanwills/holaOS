@@ -38,6 +38,24 @@ test("workspace desktop error normalization unwraps Electron IPC errors before m
   assert.match(source, /return unwrappedMessage;/);
 });
 
+test("workspace desktop maps X provider ids to the Composio Twitter toolkit", async () => {
+  const source = await readFile(WORKSPACE_DESKTOP_PATH, "utf8");
+
+  assert.match(source, /x:\s*"twitter"/);
+  assert.match(
+    source,
+    /export function composioToolkitSlugForProvider\(providerId: string\): string \{/,
+  );
+  assert.match(
+    source,
+    /composioToolkitMatchesProvider\(c\.toolkitSlug, provider\)/,
+  );
+  assert.match(
+    source,
+    /window\.electronAPI\.workspace\.composioConnect\(\{\s*provider: toolkitSlug,/,
+  );
+});
+
 test("workspace desktop hydrates workspace summaries from cached or live sources while bootstrap runs", async () => {
   const source = await readFile(WORKSPACE_DESKTOP_PATH, "utf8");
 

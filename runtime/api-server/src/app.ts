@@ -106,6 +106,7 @@ import { BrokerError, IntegrationBrokerService } from "./integration-broker.js";
 import { OAuthService } from "./oauth-service.js";
 import { ComposioService } from "./composio-service.js";
 import {
+  onboardingPayload,
   RuntimeAgentToolsService,
   RuntimeAgentToolsServiceError,
 } from "./runtime-agent-tools.js";
@@ -845,6 +846,10 @@ function workspaceRecordPayload(
     deleted_at_utc: workspace.deletedAtUtc,
     icon: workspace.icon,
     icon_color: workspace.iconColor,
+    workspace_role: workspace.workspaceRole,
+    source_workspace_id: workspace.sourceWorkspaceId,
+    lab_purpose: workspace.labPurpose,
+    lab_status: workspace.labStatus,
     workspace_path: workspacePath ?? null,
     folder_state: folderState ?? null
   };
@@ -1662,6 +1667,351 @@ function resolveOrCreateWorkspaceMainSession(params: {
     session,
     migratedLegacySessions,
   };
+}
+
+const DESIGN_TREE_EXCLUDED_DIRS = new Set([
+  ".git",
+  ".holaboss",
+  ".opencode",
+  ".output",
+  ".turbo",
+  "build",
+  "coverage",
+  "dist",
+  "node_modules",
+]);
+
+function syncDesignTree(sourceDir: string, targetDir: string): void {
+  fs.mkdirSync(targetDir, { recursive: true });
+  const sourceEntries = new Set(
+    fs.existsSync(sourceDir) ? fs.readdirSync(sourceDir) : [],
+  );
+  for (const entry of fs.readdirSync(targetDir)) {
+    if (DESIGN_TREE_EXCLUDED_DIRS.has(entry)) {
+      continue;
+    }
+    if (!sourceEntries.has(entry)) {
+      fs.rmSync(path.join(targetDir, entry), { recursive: true, force: true });
+    }
+  }
+  for (const entry of sourceEntries) {
+    if (DESIGN_TREE_EXCLUDED_DIRS.has(entry)) {
+      continue;
+    }
+    fs.cpSync(path.join(sourceDir, entry), path.join(targetDir, entry), {
+      recursive: true,
+      force: true,
+      errorOnExist: false,
+    });
+  }
+}
+
+function replaceDesignCronjobs(params: {
+  store: RuntimeStateStore;
+  sourceWorkspaceId: string;
+  targetWorkspaceId: string;
+}): void {
+  for (const existing of params.store.listCronjobs({ workspaceId: params.targetWorkspaceId })) {
+    params.store.deleteCronjob({
+      workspaceId: params.targetWorkspaceId,
+      jobId: existing.id,
+    });
+  }
+  for (const job of params.store.listCronjobs({ workspaceId: params.sourceWorkspaceId })) {
+    params.store.createCronjob({
+      workspaceId: params.targetWorkspaceId,
+      jobId: job.id,
+      initiatedBy: job.initiatedBy,
+      name: job.name,
+      cron: job.cron,
+      description: job.description,
+      instruction: job.instruction,
+      enabled: job.enabled,
+      delivery: job.delivery as Record<string, unknown>,
+      metadata: job.metadata as Record<string, unknown>,
+      nextRunAt: job.nextRunAt,
+    });
+  }
+}
+
+function replaceDesignIntegrationBindings(params: {
+  store: RuntimeStateStore;
+  sourceWorkspaceId: string;
+  targetWorkspaceId: string;
+}): void {
+  for (const existing of params.store.listIntegrationBindings({ workspaceId: params.targetWorkspaceId })) {
+    params.store.deleteIntegrationBinding(existing.bindingId);
+  }
+  for (const binding of params.store.listIntegrationBindings({ workspaceId: params.sourceWorkspaceId })) {
+    params.store.upsertIntegrationBinding({
+      bindingId: randomUUID(),
+      workspaceId: params.targetWorkspaceId,
+      targetType: binding.targetType,
+      targetId: binding.targetId,
+      integrationKey: binding.integrationKey,
+      connectionId: binding.connectionId,
+      isDefault: binding.isDefault,
+    });
+  }
+}
+
+function sessionKindForLabPurpose(purpose: string): string {
+  return purpose === "meeting_mode" ? "meeting_mode" : "workspace_onboarding";
+}
+
+const WORKSPACE_ONBOARDING_STARTER_ASSISTANT_MESSAGE =
+  "What would you like to build?";
+
+function ensureWorkspaceOnboardingStarterMessage(params: {
+  store: RuntimeStateStore;
+  workspaceId: string;
+  sessionId: string;
+}): void {
+  const existingMessageCount = params.store.countSessionMessages({
+    workspaceId: params.workspaceId,
+    sessionId: params.sessionId,
+  });
+  if (existingMessageCount > 0) {
+    return;
+  }
+  params.store.insertSessionMessage({
+    workspaceId: params.workspaceId,
+    sessionId: params.sessionId,
+    role: "assistant",
+    text: WORKSPACE_ONBOARDING_STARTER_ASSISTANT_MESSAGE,
+    messageId: `workspace-onboarding-starter:${params.sessionId}`,
+  });
+}
+
+function labPayload(params: {
+  lab: WorkspaceRecord;
+  source: WorkspaceRecord;
+  session: AgentSessionRecord | null;
+  created?: boolean;
+}): Record<string, unknown> {
+  return {
+    lab: workspaceRecordPayload(params.lab, null, null),
+    source: workspaceRecordPayload(params.source, null, null),
+    session: params.session ? agentSessionPayload(params.session) : null,
+    created: params.created === true,
+  };
+}
+
+function ensureWorkspaceLab(params: {
+  store: RuntimeStateStore;
+  sourceWorkspaceId: string;
+  purpose: string;
+}): { lab: WorkspaceRecord; source: WorkspaceRecord; session: AgentSessionRecord; created: boolean } {
+  const source = params.store.getWorkspace(params.sourceWorkspaceId);
+  if (!source) {
+    throw new Error("source workspace not found");
+  }
+  if (source.workspaceRole === "draft_lab") {
+    throw new Error("cannot create a lab from another lab workspace");
+  }
+  const existingLab = params.store.getActiveWorkspaceLab(source.id);
+  const kind = sessionKindForLabPurpose(params.purpose);
+  if (existingLab) {
+    if ((existingLab.labPurpose ?? "").trim() !== params.purpose) {
+      throw new Error(`workspace already has an active ${existingLab.labPurpose ?? "lab"} lab`);
+    }
+    const existingSessions = params.store.listSessions({
+      workspaceId: existingLab.id,
+      includeArchived: false,
+      limit: 50,
+      offset: 0,
+    });
+    const existingSession =
+      existingSessions.find((session) => session.kind === kind) ??
+      params.store.ensureSession({
+        workspaceId: existingLab.id,
+        sessionId: `${kind}-${randomUUID()}`,
+        kind,
+        title: kind === "meeting_mode" ? "Meeting Mode" : "Workspace Onboarding",
+        createdBy: "system",
+      });
+    if (params.purpose === "workspace_onboarding") {
+      ensureWorkspaceOnboardingStarterMessage({
+        store: params.store,
+        workspaceId: existingLab.id,
+        sessionId: existingSession.sessionId,
+      });
+    }
+    return { lab: existingLab, source, session: existingSession, created: false };
+  }
+
+  const lab = params.store.createWorkspace({
+    workspaceId: `lab-${randomUUID()}`,
+    name: `${source.name.trim() || "Workspace"} Lab`,
+    harness: source.harness ?? resolvedWorkspaceHarness(source),
+    status: "active",
+    onboardingStatus: "not_required",
+    workspaceRole: "draft_lab",
+    sourceWorkspaceId: source.id,
+    labPurpose: params.purpose,
+    labStatus: "active",
+  });
+  syncDesignTree(params.store.workspaceDir(source.id), params.store.workspaceDir(lab.id));
+  replaceDesignCronjobs({
+    store: params.store,
+    sourceWorkspaceId: source.id,
+    targetWorkspaceId: lab.id,
+  });
+  replaceDesignIntegrationBindings({
+    store: params.store,
+    sourceWorkspaceId: source.id,
+    targetWorkspaceId: lab.id,
+  });
+  const session = params.store.ensureSession({
+    workspaceId: lab.id,
+    sessionId: `${kind}-${randomUUID()}`,
+    kind,
+    title: kind === "meeting_mode" ? "Meeting Mode" : "Workspace Onboarding",
+    createdBy: "system",
+  });
+  if (params.purpose === "workspace_onboarding") {
+    ensureWorkspaceOnboardingStarterMessage({
+      store: params.store,
+      workspaceId: lab.id,
+      sessionId: session.sessionId,
+    });
+    params.store.updateWorkspace(source.id, {
+      onboardingStatus: "pending",
+      onboardingSessionId: session.sessionId,
+      onboardingRequestedAt: utcNowIso(),
+      onboardingRequestedBy: "workspace_user",
+    });
+  }
+  return {
+    lab,
+    source: params.store.getWorkspace(source.id) ?? source,
+    session,
+    created: true,
+  };
+}
+
+function resolveSessionWorkspaceScope(params: {
+  store: RuntimeStateStore;
+  workspaceId: string;
+  sessionId: string;
+}): { workspaceId: string; workspace: WorkspaceRecord } | null {
+  const workspace = params.store.getWorkspace(params.workspaceId);
+  if (!workspace) {
+    return null;
+  }
+  if (
+    params.store.getSession({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+    })
+  ) {
+    return { workspaceId: params.workspaceId, workspace };
+  }
+  const activeLab = params.store.getActiveWorkspaceLab(params.workspaceId);
+  if (
+    activeLab &&
+    params.store.getSession({
+      workspaceId: activeLab.id,
+      sessionId: params.sessionId,
+    })
+  ) {
+    return { workspaceId: activeLab.id, workspace: activeLab };
+  }
+  return { workspaceId: params.workspaceId, workspace };
+}
+
+function completeWorkspaceLab(params: {
+  store: RuntimeStateStore;
+  labId: string;
+  summary: string;
+}): { lab: WorkspaceRecord; source: WorkspaceRecord; session: AgentSessionRecord | null; created: boolean } {
+  const lab = params.store.getWorkspace(params.labId);
+  if (!lab || lab.workspaceRole !== "draft_lab") {
+    throw new Error("lab workspace not found");
+  }
+  if (lab.labStatus !== "active") {
+    throw new Error("lab is not active");
+  }
+  const sourceWorkspaceId = lab.sourceWorkspaceId?.trim() || "";
+  const source = sourceWorkspaceId ? params.store.getWorkspace(sourceWorkspaceId) : null;
+  if (!source) {
+    throw new Error("source workspace not found");
+  }
+  syncDesignTree(params.store.workspaceDir(lab.id), params.store.workspaceDir(source.id));
+  replaceDesignCronjobs({
+    store: params.store,
+    sourceWorkspaceId: lab.id,
+    targetWorkspaceId: source.id,
+  });
+  replaceDesignIntegrationBindings({
+    store: params.store,
+    sourceWorkspaceId: lab.id,
+    targetWorkspaceId: source.id,
+  });
+  const completedAt = utcNowIso();
+  const updatedLab = params.store.updateWorkspace(lab.id, {
+    labStatus: "merged",
+  });
+  const sourceUpdates: Parameters<RuntimeStateStore["updateWorkspace"]>[1] = {};
+  if (lab.labPurpose === "workspace_onboarding") {
+    sourceUpdates.onboardingStatus = "completed";
+    sourceUpdates.onboardingCompletedAt = completedAt;
+    sourceUpdates.onboardingCompletionSummary = params.summary;
+    sourceUpdates.onboardingRequestedBy = "workspace_user";
+  }
+  const updatedSource =
+    Object.keys(sourceUpdates).length > 0
+      ? params.store.updateWorkspace(source.id, sourceUpdates)
+      : source;
+  const session =
+    params.store
+      .listSessions({
+        workspaceId: lab.id,
+        includeArchived: false,
+        limit: 50,
+        offset: 0,
+      })
+      .find((item) => item.kind === sessionKindForLabPurpose(lab.labPurpose ?? "")) ?? null;
+  return { lab: updatedLab, source: updatedSource, session, created: false };
+}
+
+function abandonWorkspaceLab(params: {
+  store: RuntimeStateStore;
+  labId: string;
+  summary?: string | null;
+}): { lab: WorkspaceRecord; source: WorkspaceRecord; session: AgentSessionRecord | null; created: boolean } {
+  const lab = params.store.getWorkspace(params.labId);
+  if (!lab || lab.workspaceRole !== "draft_lab") {
+    throw new Error("lab workspace not found");
+  }
+  const sourceWorkspaceId = lab.sourceWorkspaceId?.trim() || "";
+  const source = sourceWorkspaceId ? params.store.getWorkspace(sourceWorkspaceId) : null;
+  if (!source) {
+    throw new Error("source workspace not found");
+  }
+  const updatedLab = params.store.updateWorkspace(lab.id, {
+    labStatus: "abandoned",
+  });
+  let updatedSource = source;
+  if (lab.labPurpose === "workspace_onboarding") {
+    updatedSource = params.store.updateWorkspace(source.id, {
+      onboardingStatus: "completed",
+      onboardingCompletedAt: utcNowIso(),
+      onboardingCompletionSummary:
+        params.summary?.trim() || "Workspace onboarding abandoned without merging",
+      onboardingRequestedBy: "workspace_user",
+    });
+  }
+  const session =
+    params.store
+      .listSessions({
+        workspaceId: lab.id,
+        includeArchived: false,
+        limit: 50,
+        offset: 0,
+      })
+      .find((item) => item.kind === sessionKindForLabPurpose(lab.labPurpose ?? "")) ?? null;
+  return { lab: updatedLab, source: updatedSource, session, created: false };
 }
 
 function outputTypeForArtifact(artifactType: string): string {
@@ -4390,12 +4740,25 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
   app.get("/api/v1/capabilities/runtime-tools/onboarding/status", async (request, reply) => {
     try {
-      return runtimeAgentToolsService.onboardingStatus(
-        requiredCapabilityWorkspaceId({
-          headers: request.headers as Record<string, unknown>,
-          query: isRecord(request.query) ? request.query : null
-        })
-      );
+      const workspaceId = requiredCapabilityWorkspaceId({
+        headers: request.headers as Record<string, unknown>,
+        query: isRecord(request.query) ? request.query : null
+      });
+      const workspace = store.getWorkspace(workspaceId);
+      if (workspace?.workspaceRole === "draft_lab") {
+        const sourceWorkspaceId = workspace.sourceWorkspaceId?.trim() || "";
+        const source = sourceWorkspaceId ? store.getWorkspace(sourceWorkspaceId) : null;
+        if (!source) {
+          return sendError(reply, 404, "source workspace not found");
+        }
+        return {
+          ...onboardingPayload(source),
+          lab_workspace_id: workspace.id,
+          lab_purpose: workspace.labPurpose,
+          lab_status: workspace.labStatus,
+        };
+      }
+      return runtimeAgentToolsService.onboardingStatus(workspaceId);
     } catch (error) {
       if (error instanceof RuntimeAgentToolsServiceError) {
         return sendError(reply, error.statusCode, error.message);
@@ -4409,11 +4772,24 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
     try {
+      const workspaceId = requiredCapabilityWorkspaceId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body
+      });
+      const workspace = store.getWorkspace(workspaceId);
+      if (workspace?.workspaceRole === "draft_lab") {
+        const result = completeWorkspaceLab({
+          store,
+          labId: workspace.id,
+          summary: requiredString(request.body.summary, "summary"),
+        });
+        return {
+          ...workspaceRecordPayload(result.source),
+          lab: workspaceRecordPayload(result.lab),
+        };
+      }
       return runtimeAgentToolsService.completeOnboarding({
-        workspaceId: requiredCapabilityWorkspaceId({
-          headers: request.headers as Record<string, unknown>,
-          body: request.body
-        }),
+        workspaceId,
         summary: requiredString(request.body.summary, "summary"),
         requestedBy: optionalString(request.body.requested_by)
       });
@@ -4424,7 +4800,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       if (error instanceof RuntimeAgentToolsServiceError) {
         return sendError(reply, error.statusCode, error.message);
       }
-      return sendError(reply, 400, error instanceof Error ? error.message : "runtime onboarding completion failed");
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime onboarding complete failed");
     }
   });
 
@@ -5345,10 +5721,19 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   app.get("/api/v1/background-tasks", async (request, reply) => {
     const query = isRecord(request.query) ? request.query : {};
     try {
+      const workspaceId = requiredString(query.workspace_id, "workspace_id");
+      const ownerMainSessionId =
+        nullableString(query.owner_main_session_id) ?? undefined;
+      const scope = ownerMainSessionId
+        ? resolveSessionWorkspaceScope({
+            store,
+            workspaceId,
+            sessionId: ownerMainSessionId,
+          })
+        : null;
       return runtimeAgentToolsService.listBackgroundTasks({
-        workspaceId: requiredString(query.workspace_id, "workspace_id"),
-        ownerMainSessionId:
-          nullableString(query.owner_main_session_id) ?? undefined,
+        workspaceId: scope?.workspaceId ?? workspaceId,
+        ownerMainSessionId,
         statuses: optionalStringList(query.statuses),
         limit: hasOwn(query, "limit")
           ? optionalInteger(query.limit, 200)
@@ -5370,11 +5755,20 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const params = request.params as { subagentId: string };
     const query = isRecord(request.query) ? request.query : {};
     try {
+      const workspaceId = requiredString(query.workspace_id, "workspace_id");
+      const ownerMainSessionId =
+        nullableString(query.owner_main_session_id) ?? undefined;
+      const scope = ownerMainSessionId
+        ? resolveSessionWorkspaceScope({
+            store,
+            workspaceId,
+            sessionId: ownerMainSessionId,
+          })
+        : null;
       return runtimeAgentToolsService.getBackgroundTask({
-        workspaceId: requiredString(query.workspace_id, "workspace_id"),
+        workspaceId: scope?.workspaceId ?? workspaceId,
         subagentId: requiredString(params.subagentId, "subagentId"),
-        ownerMainSessionId:
-          nullableString(query.owner_main_session_id) ?? undefined,
+        ownerMainSessionId,
       });
     } catch (error) {
       if (error instanceof RuntimeAgentToolsServiceError) {
@@ -5396,11 +5790,20 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         return sendError(reply, 400, "request body must be an object");
       }
       try {
+        const workspaceId = requiredString(request.body.workspace_id, "workspace_id");
+        const ownerMainSessionId =
+          nullableString(request.body.owner_main_session_id) ?? undefined;
+        const scope = ownerMainSessionId
+          ? resolveSessionWorkspaceScope({
+              store,
+              workspaceId,
+              sessionId: ownerMainSessionId,
+            })
+          : null;
         return runtimeAgentToolsService.archiveBackgroundTask({
-          workspaceId: requiredString(request.body.workspace_id, "workspace_id"),
+          workspaceId: scope?.workspaceId ?? workspaceId,
           subagentId: requiredString(params.subagentId, "subagentId"),
-          ownerMainSessionId:
-            nullableString(request.body.owner_main_session_id) ?? undefined,
+          ownerMainSessionId,
         });
       } catch (error) {
         if (error instanceof RuntimeAgentToolsServiceError) {
@@ -5443,6 +5846,30 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
           reply,
           400,
           error instanceof Error ? error.message : "workspace_apps_find failed",
+        );
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/capabilities/runtime-tools/workspace-integrations/catalog",
+    async (request, reply) => {
+      const body = isRecord(request.body) ? request.body : {};
+      try {
+        return runtimeAgentToolsService.listIntegrationCatalog({
+          workspaceId: requiredCapabilityWorkspaceId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }),
+        });
+      } catch (error) {
+        if (error instanceof RuntimeAgentToolsServiceError) {
+          return sendError(reply, error.statusCode, error.message);
+        }
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "workspace_integrations_list_catalog failed",
         );
       }
     },
@@ -6138,7 +6565,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         onboardingStatus: optionalString(request.body.onboarding_status) ?? "not_required",
         onboardingSessionId: nullableString(request.body.onboarding_session_id) ?? null,
         errorMessage: nullableString(request.body.error_message) ?? null,
-        workspacePath: optionalString(request.body.workspace_path)
+        workspacePath: optionalString(request.body.workspace_path),
+        workspaceRole: optionalString(request.body.workspace_role) ?? "source",
+        sourceWorkspaceId: nullableString(request.body.source_workspace_id) ?? null,
+        labPurpose: nullableString(request.body.lab_purpose) ?? null,
+        labStatus: nullableString(request.body.lab_status) ?? null
       });
 
       let workspace = created;
@@ -6241,6 +6672,83 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     };
   });
 
+  app.post("/api/v1/workspaces/:workspaceId/labs", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { workspaceId: string };
+    const purpose = requiredString(request.body.purpose, "purpose");
+    if (!["workspace_onboarding", "meeting_mode"].includes(purpose)) {
+      return sendError(reply, 400, "purpose must be workspace_onboarding or meeting_mode");
+    }
+    try {
+      const lab = ensureWorkspaceLab({
+        store,
+        sourceWorkspaceId: params.workspaceId,
+        purpose,
+      });
+      return labPayload(lab);
+    } catch (error) {
+      return sendError(reply, 400, error instanceof Error ? error.message : "workspace lab creation failed");
+    }
+  });
+
+  app.get("/api/v1/workspaces/:workspaceId/labs/active", async (request, reply) => {
+    const params = request.params as { workspaceId: string };
+    const source = store.getWorkspace(params.workspaceId);
+    if (!source) {
+      return sendError(reply, 404, "workspace not found");
+    }
+    const lab = store.getActiveWorkspaceLab(params.workspaceId);
+    if (!lab) {
+      return { lab: null, source: workspaceRecordPayload(source), session: null };
+    }
+    const session =
+      store
+        .listSessions({
+          workspaceId: lab.id,
+          includeArchived: false,
+          limit: 50,
+          offset: 0,
+        })
+        .find((item) => item.kind === sessionKindForLabPurpose(lab.labPurpose ?? "")) ?? null;
+    return labPayload({ lab, source, session });
+  });
+
+  app.post("/api/v1/workspace-labs/:labId/complete", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { labId: string };
+    try {
+      return labPayload(
+        completeWorkspaceLab({
+          store,
+          labId: params.labId,
+          summary: requiredString(request.body.summary, "summary"),
+        }),
+      );
+    } catch (error) {
+      return sendError(reply, 400, error instanceof Error ? error.message : "workspace lab completion failed");
+    }
+  });
+
+  app.post("/api/v1/workspace-labs/:labId/abandon", async (request, reply) => {
+    const body = isRecord(request.body) ? request.body : {};
+    const params = request.params as { labId: string };
+    try {
+      return labPayload(
+        abandonWorkspaceLab({
+          store,
+          labId: params.labId,
+          summary: optionalString(body.summary),
+        }),
+      );
+    } catch (error) {
+      return sendError(reply, 400, error instanceof Error ? error.message : "workspace lab abandon failed");
+    }
+  });
+
   app.patch("/api/v1/workspaces/:workspaceId", async (request, reply) => {
     if (!isRecord(request.body)) {
       return sendError(reply, 400, "request body must be an object");
@@ -6281,6 +6789,18 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       }
       if (hasOwn(request.body, "icon_color")) {
         fields.iconColor = nullableString(request.body.icon_color);
+      }
+      if (hasOwn(request.body, "workspace_role")) {
+        fields.workspaceRole = nullableString(request.body.workspace_role);
+      }
+      if (hasOwn(request.body, "source_workspace_id")) {
+        fields.sourceWorkspaceId = nullableString(request.body.source_workspace_id);
+      }
+      if (hasOwn(request.body, "lab_purpose")) {
+        fields.labPurpose = nullableString(request.body.lab_purpose);
+      }
+      if (hasOwn(request.body, "lab_status")) {
+        fields.labStatus = nullableString(request.body.lab_status);
       }
 
       // Workspace path relocation. This is intentionally a separate branch
@@ -7636,10 +8156,6 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!requireHealthyWorkspaceFolder(store, workspaceId, reply)) {
       return;
     }
-    const blockingApps = blockingWorkspaceApps({ store, workspaceId });
-    if (blockingApps.length > 0) {
-      return sendError(reply, 409, blockingWorkspaceAppsMessage(blockingApps));
-    }
 
     let resolvedSessionId: string;
     try {
@@ -7647,8 +8163,32 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     } catch (error) {
       return sendError(reply, 409, error instanceof Error ? error.message : "workspace session is not configured");
     }
+    let executionWorkspaceId = workspaceId;
+    let executionWorkspace = workspace;
+    const activeLab = store.getActiveWorkspaceLab(workspaceId);
+    if (
+      activeLab &&
+      store.getSession({
+        workspaceId: activeLab.id,
+        sessionId: resolvedSessionId,
+      })
+    ) {
+      executionWorkspaceId = activeLab.id;
+      executionWorkspace = activeLab;
+    }
 
-    const workspaceDir = store.workspaceDir(workspaceId);
+    if (
+      executionWorkspaceId !== workspaceId &&
+      !requireHealthyWorkspaceFolder(store, executionWorkspaceId, reply)
+    ) {
+      return;
+    }
+    const blockingApps = blockingWorkspaceApps({ store, workspaceId: executionWorkspaceId });
+    if (blockingApps.length > 0) {
+      return sendError(reply, 409, blockingWorkspaceAppsMessage(blockingApps));
+    }
+
+    const workspaceDir = store.workspaceDir(executionWorkspaceId);
     const trimmedText = (optionalString(request.body.text) ?? "").trim();
     let attachments: SessionInputAttachmentPayload[];
     try {
@@ -7667,33 +8207,33 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
 
     const existingSession = store.getSession({
-      workspaceId,
+      workspaceId: executionWorkspaceId,
       sessionId: resolvedSessionId
     });
-    const inferredKind = inferredSessionKind(workspace, resolvedSessionId);
+    const inferredKind = existingSession?.kind ?? inferredSessionKind(executionWorkspace, resolvedSessionId);
     const generatedSessionTitle = sessionTitleFromFirstUserInput(trimmedText, attachments, imageUrls);
 
     store.ensureSession({
-      workspaceId,
+      workspaceId: executionWorkspaceId,
       sessionId: resolvedSessionId,
       kind: inferredKind,
       title: existingSession?.title?.trim() ? undefined : generatedSessionTitle
     });
-    if (!store.getBinding({ workspaceId, sessionId: resolvedSessionId })) {
+    if (!store.getBinding({ workspaceId: executionWorkspaceId, sessionId: resolvedSessionId })) {
       store.upsertBinding({
-        workspaceId,
+        workspaceId: executionWorkspaceId,
         sessionId: resolvedSessionId,
-        harness: resolvedWorkspaceHarness(workspace),
+        harness: resolvedWorkspaceHarness(executionWorkspace),
         harnessSessionId: resolvedSessionId
       });
     }
     const runtimeStateBeforeQueue =
       store.getRuntimeState({
-        workspaceId,
+        workspaceId: executionWorkspaceId,
         sessionId: resolvedSessionId,
       }) ??
       store.ensureRuntimeState({
-        workspaceId,
+        workspaceId: executionWorkspaceId,
         sessionId: resolvedSessionId,
         status: "IDLE"
       });
@@ -7702,7 +8242,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         existingSession?.kind ?? inferredKind,
       )
         ? store.listPendingMainSessionEvents({
-            workspaceId,
+            workspaceId: executionWorkspaceId,
             ownerMainSessionId: resolvedSessionId,
             deliveryBucket: "background_update",
             limit: 200,
@@ -7712,7 +8252,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       (event) => event.eventId,
     );
     const record = store.enqueueInput({
-      workspaceId,
+      workspaceId: executionWorkspaceId,
       sessionId: resolvedSessionId,
       priority: optionalInteger(request.body.priority, 0),
       idempotencyKey: nullableString(request.body.idempotency_key) ?? null,
@@ -7738,14 +8278,14 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     });
     if (inlineBackgroundUpdateIds.length > 0) {
       store.markMainSessionEventsMaterialized({
-        workspaceId,
+        workspaceId: executionWorkspaceId,
         eventIds: inlineBackgroundUpdateIds,
         materializedInputId: record.inputId,
       });
     }
     createInputMemoryUpdateProposals({
       store,
-      workspaceId,
+      workspaceId: executionWorkspaceId,
       sessionId: resolvedSessionId,
       inputId: record.inputId,
       sourceMessageId: `user-${record.inputId}`,
@@ -7753,7 +8293,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     });
     if (runtimeStateHasClaimedActiveInput(store, runtimeStateBeforeQueue)) {
       store.updateRuntimeState({
-        workspaceId,
+        workspaceId: executionWorkspaceId,
         sessionId: resolvedSessionId,
         status: runtimeStateBeforeQueue?.status ?? "BUSY",
         currentInputId: runtimeStateBeforeQueue?.currentInputId ?? null,
@@ -7764,7 +8304,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       });
     } else {
       store.updateRuntimeState({
-        workspaceId,
+        workspaceId: executionWorkspaceId,
         sessionId: resolvedSessionId,
         status: "QUEUED",
         currentInputId: record.inputId,
@@ -7775,7 +8315,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       });
     }
     const runtimeStateAfterQueue = store.getRuntimeState({
-      workspaceId,
+      workspaceId: executionWorkspaceId,
       sessionId: resolvedSessionId,
     });
     const queueAwareState = effectiveSessionState(runtimeStateAfterQueue, true);
@@ -7807,9 +8347,15 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!queueWorker?.pauseSessionRun) {
       return sendError(reply, 409, "runtime pause is not available");
     }
+    const scope = resolveSessionWorkspaceScope({
+      store,
+      workspaceId,
+      sessionId: params.sessionId,
+    });
+    const effectiveWorkspaceId = scope?.workspaceId ?? workspaceId;
 
     const paused = await queueWorker.pauseSessionRun({
-      workspaceId,
+      workspaceId: effectiveWorkspaceId,
       sessionId: params.sessionId,
     });
     if (!paused) {
@@ -7836,14 +8382,20 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!workspace) {
       return sendError(reply, 404, "workspace not found");
     }
+    const scope = resolveSessionWorkspaceScope({
+      store,
+      workspaceId,
+      sessionId: params.sessionId,
+    });
+    const effectiveWorkspaceId = scope?.workspaceId ?? workspaceId;
 
     const input = store.getInput({
-      workspaceId,
+      workspaceId: effectiveWorkspaceId,
       inputId: params.inputId,
     });
     if (
       !input ||
-      input.workspaceId !== workspaceId ||
+      input.workspaceId !== effectiveWorkspaceId ||
       input.sessionId !== params.sessionId
     ) {
       return sendError(reply, 404, "queued input not found");
@@ -7865,7 +8417,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
 
     const updated = store.updateInput({
-      workspaceId,
+      workspaceId: effectiveWorkspaceId,
       inputId: params.inputId,
       fields: {
         payload: {
@@ -7906,6 +8458,16 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         limit: Math.max(1, Math.min(200, optionalInteger(query.limit, 100))),
         offset: Math.max(0, optionalInteger(query.offset, 0))
       })
+      .concat(
+        store.getActiveWorkspaceLab(workspaceId)
+          ? store.listSessions({
+              workspaceId: store.getActiveWorkspaceLab(workspaceId)!.id,
+              includeArchived: optionalBoolean(query.include_archived, false),
+              limit: 200,
+              offset: 0,
+            })
+          : [],
+      )
       .map((item: AgentSessionRecord) => agentSessionPayload(item, store));
     return { items, count: items.length };
   });
@@ -7922,31 +8484,40 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!resolvedWorkspaceId) {
       return sendError(reply, 422, "workspace_id or profile_id is required");
     }
+    const scope = resolveSessionWorkspaceScope({
+      store,
+      workspaceId: resolvedWorkspaceId,
+      sessionId: params.sessionId,
+    });
+    const effectiveWorkspaceId = scope?.workspaceId ?? resolvedWorkspaceId;
     const runtimeState = store.getRuntimeState({
       sessionId: params.sessionId,
-      workspaceId: resolvedWorkspaceId
+      workspaceId: effectiveWorkspaceId
     });
     const hasQueued = store.hasAvailableInputsForSession({
       sessionId: params.sessionId,
-      workspaceId: resolvedWorkspaceId
+      workspaceId: effectiveWorkspaceId
     });
     return effectiveSessionState(runtimeState, hasQueued);
   });
 
   app.get("/api/v1/agent-sessions/by-workspace/:workspaceId/runtime-states", async (request) => {
     const params = request.params as { workspaceId: string };
-    const items = store
+    const activeLab = store.getActiveWorkspaceLab(params.workspaceId);
+    const states = store
       .listRuntimeStates(params.workspaceId)
+      .concat(activeLab ? store.listRuntimeStates(activeLab.id) : []);
+    const items = states
       .map((item: SessionRuntimeStateRecord) => {
         const hasQueuedInputs = store.hasAvailableInputsForSession({
-          workspaceId: params.workspaceId,
+          workspaceId: item.workspaceId,
           sessionId: item.sessionId,
         });
         return runtimeStateListItemPayload({
           record: item,
           lastTurnResult:
             store.listTurnResults({
-              workspaceId: params.workspaceId,
+              workspaceId: item.workspaceId,
               sessionId: item.sessionId,
               limit: 1,
               offset: 0,
@@ -7970,22 +8541,32 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 404, "workspace not found");
     }
 
-    const session = store.getSession({
+    const scope = resolveSessionWorkspaceScope({
+      store,
       workspaceId,
+      sessionId: params.sessionId,
+    });
+    if (!scope) {
+      return sendError(reply, 404, "workspace not found");
+    }
+    const effectiveWorkspaceId = scope.workspaceId;
+    const effectiveWorkspace = scope.workspace;
+    const session = store.getSession({
+      workspaceId: effectiveWorkspaceId,
       sessionId: params.sessionId,
     });
     if (!session) {
       return sendError(reply, 404, "session not found");
     }
-    const binding = store.getBinding({ workspaceId, sessionId: params.sessionId });
+    const binding = store.getBinding({ workspaceId: effectiveWorkspaceId, sessionId: params.sessionId });
 
     const limit = Math.max(1, Math.min(1000, optionalInteger(query.limit, 200)));
     const offset = Math.max(0, optionalInteger(query.offset, 0));
     const order = optionalString(query.order) === "desc" ? "desc" : "asc";
-    const total = store.countSessionMessages({ workspaceId, sessionId: params.sessionId });
+    const total = store.countSessionMessages({ workspaceId: effectiveWorkspaceId, sessionId: params.sessionId });
     const messages = store
       .listSessionMessages({
-        workspaceId,
+        workspaceId: effectiveWorkspaceId,
         sessionId: params.sessionId,
         limit,
         offset,
@@ -7996,7 +8577,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         const inputAttachments = inputId
           ? attachmentsFromInputPayload(
               store.getInput({
-                workspaceId,
+                workspaceId: effectiveWorkspaceId,
                 inputId,
               })?.payload.attachments
             )
@@ -8007,7 +8588,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     return {
       workspace_id: workspaceId,
       session_id: params.sessionId,
-      harness: binding?.harness ?? resolvedWorkspaceHarness(workspace),
+      harness: binding?.harness ?? resolvedWorkspaceHarness(effectiveWorkspace),
       harness_session_id: binding?.harnessSessionId ?? "",
       source: "sandbox_local_storage",
       messages,
@@ -8031,18 +8612,24 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!workspace) {
       return sendError(reply, 404, "workspace not found");
     }
+    const scope = resolveSessionWorkspaceScope({
+      store,
+      workspaceId,
+      sessionId: params.sessionId,
+    });
+    const effectiveWorkspaceId = scope?.workspaceId ?? workspaceId;
 
     const inputId = optionalString(query.input_id);
     const limit = Math.max(1, Math.min(1000, optionalInteger(query.limit, 200)));
     const offset = Math.max(0, optionalInteger(query.offset, 0));
     const total = store.countTurnResults({
-      workspaceId,
+      workspaceId: effectiveWorkspaceId,
       sessionId: params.sessionId,
       inputId: inputId ?? undefined,
     });
     const items = store
       .listTurnResults({
-        workspaceId,
+        workspaceId: effectiveWorkspaceId,
         sessionId: params.sessionId,
         inputId: inputId ?? undefined,
         limit,
@@ -8077,9 +8664,15 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const inputId = optionalString(query.input_id);
     const limit = Math.max(1, Math.min(1000, optionalInteger(query.limit, 200)));
     const offset = Math.max(0, optionalInteger(query.offset, 0));
+    const scope = resolveSessionWorkspaceScope({
+      store,
+      workspaceId,
+      sessionId: params.sessionId,
+    });
+    const effectiveWorkspaceId = scope?.workspaceId ?? workspaceId;
     const items = store
       .listTurnRequestSnapshots({
-        workspaceId,
+        workspaceId: effectiveWorkspaceId,
         sessionId: params.sessionId,
         inputId: inputId ?? undefined,
         limit,
@@ -8111,13 +8704,19 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
 
     const inputId = optionalString(query.input_id) ?? "";
+    const scope = resolveSessionWorkspaceScope({
+      store,
+      workspaceId,
+      sessionId: params.sessionId,
+    });
+    const effectiveWorkspaceId = scope?.workspaceId ?? workspaceId;
     return {
       workspace_id: workspaceId,
       session_id: params.sessionId,
       input_id: inputId || null,
       session_resume_context: loadSessionResumeContextForApi({
         workspaceRoot: store.workspaceRoot,
-        workspaceId,
+        workspaceId: effectiveWorkspaceId,
         sessionId: params.sessionId,
       }),
     };
@@ -8177,9 +8776,15 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!resolvedWorkspaceId) {
       return sendError(reply, 422, "workspace_id or profile_id is required");
     }
+    const scope = resolveSessionWorkspaceScope({
+      store,
+      workspaceId: resolvedWorkspaceId,
+      sessionId: params.sessionId,
+    });
+    const effectiveWorkspaceId = scope?.workspaceId ?? resolvedWorkspaceId;
     const items = store
       .listOutputs({
-        workspaceId: resolvedWorkspaceId,
+        workspaceId: effectiveWorkspaceId,
         sessionId: params.sessionId,
         limit: 500,
         offset: 0,
@@ -8202,12 +8807,18 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const query = isRecord(request.query) ? request.query : {};
     const limit = Math.max(1, Math.min(100, optionalInteger(query.limit, 20)));
     const offset = Math.max(0, optionalInteger(query.offset, 0));
-    const runtimeStates = store.listRuntimeStates(params.workspaceId).slice(offset, offset + limit);
-    const outputs = store.listOutputs({
-      workspaceId: params.workspaceId,
-      limit: 1000,
-      offset: 0,
-    })
+    const activeLab = store.getActiveWorkspaceLab(params.workspaceId);
+    const workspaceIds = activeLab ? [params.workspaceId, activeLab.id] : [params.workspaceId];
+    const runtimeStates = workspaceIds
+      .flatMap((workspaceId) => store.listRuntimeStates(workspaceId))
+      .slice(offset, offset + limit);
+    const outputs = workspaceIds.flatMap((workspaceId) =>
+      store.listOutputs({
+        workspaceId,
+        limit: 1000,
+        offset: 0,
+      }),
+    )
       .sort((left, right) => {
         const leftTime = Date.parse(left.createdAt ?? "") || 0;
         const rightTime = Date.parse(right.createdAt ?? "") || 0;
@@ -8233,13 +8844,13 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const items = runtimeStates.map((row) => {
       const lastTurnResult =
         store.listTurnResults({
-          workspaceId: params.workspaceId,
+          workspaceId: row.workspaceId,
           sessionId: row.sessionId,
           limit: 1,
           offset: 0,
         })[0] ?? null;
       const hasQueuedInputs = store.hasAvailableInputsForSession({
-        workspaceId: params.workspaceId,
+        workspaceId: row.workspaceId,
         sessionId: row.sessionId,
       });
       return {
@@ -9261,6 +9872,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!workspaceId) {
       return sendError(reply, 400, "workspace_id is required");
     }
+    const scope = resolveSessionWorkspaceScope({
+      store,
+      workspaceId,
+      sessionId: params.sessionId,
+    });
+    const effectiveWorkspaceId = scope?.workspaceId ?? workspaceId;
     const inputId = optionalString(query.input_id);
     const includeHistory = optionalBoolean(query.include_history, true);
     const includeNative = optionalBoolean(query.include_native, false);
@@ -9268,7 +9885,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     let afterEventId = Math.max(0, optionalInteger(query.after_event_id, 0));
     if (!includeHistory && afterEventId <= 0) {
       afterEventId = store.latestOutputEventId({
-        workspaceId,
+        workspaceId: effectiveWorkspaceId,
         sessionId: params.sessionId,
         inputId,
         excludedEventTypes
@@ -9277,7 +9894,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
     const items = store
       .listOutputEvents({
-        workspaceId,
+        workspaceId: effectiveWorkspaceId,
         sessionId: params.sessionId,
         inputId,
         includeHistory: true,
@@ -9302,6 +9919,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!workspaceId) {
       return sendError(reply, 400, "workspace_id is required");
     }
+    const scope = resolveSessionWorkspaceScope({
+      store,
+      workspaceId,
+      sessionId: params.sessionId,
+    });
+    const effectiveWorkspaceId = scope?.workspaceId ?? workspaceId;
     const inputId = optionalString(query.input_id);
     const includeHistory = optionalBoolean(query.include_history, true);
     const includeNative = optionalBoolean(query.include_native, false);
@@ -9318,7 +9941,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         let lastEventId = includeHistory
           ? 0
           : store.latestOutputEventId({
-              workspaceId,
+              workspaceId: effectiveWorkspaceId,
               sessionId: params.sessionId,
               inputId,
               excludedEventTypes
@@ -9327,7 +9950,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
         while (true) {
           const events = store.listOutputEvents({
-            workspaceId,
+            workspaceId: effectiveWorkspaceId,
             sessionId: params.sessionId,
             inputId,
             includeHistory: true,

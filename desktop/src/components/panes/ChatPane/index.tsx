@@ -317,6 +317,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function isLabControllerSessionKind(kind: string | null | undefined) {
+  const normalized = (kind || "").trim().toLowerCase();
+  return normalized === "workspace_onboarding" || normalized === "meeting_mode";
+}
+
 function normalizeErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Request failed.";
 }
@@ -849,6 +854,26 @@ function runtimeStateEffectiveStatus(
   );
 }
 
+function backgroundTaskIsExecuting(
+  task: BackgroundTaskRecordPayload,
+): boolean {
+  const status = task.status.trim().toLowerCase();
+  if (status === "queued" || status === "running") {
+    return true;
+  }
+
+  const runtimeStatus = runtimeStateStatus(task.live_state?.runtime_status);
+  const currentInputStatus = runtimeStateStatus(
+    task.live_state?.current_input_status,
+  );
+  return (
+    runtimeStatus === "QUEUED" ||
+    runtimeStatus === "BUSY" ||
+    currentInputStatus === "QUEUED" ||
+    currentInputStatus === "CLAIMED"
+  );
+}
+
 type BrowserAudioContextConstructor = new (
   contextOptions?: AudioContextOptions,
 ) => AudioContext;
@@ -1011,34 +1036,6 @@ function runtimeStateErrorDetail(value: unknown): string {
     }
   }
   return "The run failed.";
-}
-
-function onboardingStatusLabel(value: string | null | undefined) {
-  const normalized = (value || "").trim().toLowerCase();
-  if (normalized === "awaiting_confirmation") {
-    return "Awaiting confirmation";
-  }
-  if (normalized === "in_progress") {
-    return "In progress";
-  }
-  if (normalized === "completed") {
-    return "Completed";
-  }
-  return "Pending";
-}
-
-function onboardingStatusTone(value: string | null | undefined) {
-  const normalized = (value || "").trim().toLowerCase();
-  if (normalized === "awaiting_confirmation") {
-    return "border-warning/22 bg-warning/10 text-warning";
-  }
-  if (normalized === "in_progress") {
-    return "border-primary bg-primary/10 text-primary";
-  }
-  if (normalized === "completed") {
-    return "border-success/22 bg-success/8 text-success";
-  }
-  return "border-destructive/22 bg-destructive/8 text-destructive";
 }
 
 function startCase(value: string) {
@@ -2224,15 +2221,25 @@ function isTerminalSessionOutputEventType(eventType: string) {
   return eventType === "run_completed" || eventType === "run_failed";
 }
 
-function parsePendingIntegrationsList(value: unknown): ChatPendingIntegration[] {
+function parsePendingIntegrationsList(
+  value: unknown,
+  fallbackWorkspaceId?: string | null,
+): ChatPendingIntegration[] {
   if (!Array.isArray(value)) return [];
+  const normalizedFallbackWorkspaceId =
+    typeof fallbackWorkspaceId === "string" ? fallbackWorkspaceId.trim() : "";
   return value
     .map((entry): ChatPendingIntegration | null => {
       if (!isRecord(entry)) return null;
       const appId = typeof entry.app_id === "string" ? entry.app_id.trim() : "";
       const provider = typeof entry.provider_id === "string" ? entry.provider_id.trim() : "";
+      const workspaceId =
+        typeof entry.workspace_id === "string" && entry.workspace_id.trim()
+          ? entry.workspace_id.trim()
+          : normalizedFallbackWorkspaceId;
       if (!appId || !provider) return null;
       return {
+        workspace_id: workspaceId || null,
         app_id: appId,
         provider_id: provider,
         credential_source:
@@ -2251,7 +2258,11 @@ function pendingIntegrationsFromSubagentLifecycle(
     ? payload.subagent_payload
     : null;
   if (!subagentPayload) return [];
-  return parsePendingIntegrationsList(subagentPayload.pending_integrations);
+  const workspaceId =
+    typeof subagentPayload.workspace_id === "string"
+      ? subagentPayload.workspace_id
+      : null;
+  return parsePendingIntegrationsList(subagentPayload.pending_integrations, workspaceId);
 }
 
 const PENDING_INTEGRATION_TOOL_NAMES = new Set([
@@ -2282,13 +2293,29 @@ function pendingIntegrationsFromToolResult(
   if (!result) {
     return [];
   }
-  const direct = parsePendingIntegrationsList(result.pending_integrations);
+  const resultWorkspaceId =
+    typeof result.workspace_id === "string" ? result.workspace_id : null;
+  const direct = parsePendingIntegrationsList(result.pending_integrations, resultWorkspaceId);
   if (direct.length > 0) return direct;
   if (isRecord(result.details)) {
-    const detailsDirect = parsePendingIntegrationsList(result.details.pending_integrations);
+    const detailsWorkspaceId =
+      typeof result.details.workspace_id === "string"
+        ? result.details.workspace_id
+        : resultWorkspaceId;
+    const detailsDirect = parsePendingIntegrationsList(
+      result.details.pending_integrations,
+      detailsWorkspaceId,
+    );
     if (detailsDirect.length > 0) return detailsDirect;
     if (isRecord(result.details.raw)) {
-      const fromRaw = parsePendingIntegrationsList(result.details.raw.pending_integrations);
+      const rawWorkspaceId =
+        typeof result.details.raw.workspace_id === "string"
+          ? result.details.raw.workspace_id
+          : detailsWorkspaceId;
+      const fromRaw = parsePendingIntegrationsList(
+        result.details.raw.pending_integrations,
+        rawWorkspaceId,
+      );
       if (fromRaw.length > 0) return fromRaw;
     }
   }
@@ -2312,7 +2339,9 @@ function pendingIntegrationsFromTextBlob(text: string): ChatPendingIntegration[]
   try {
     const parsed = JSON.parse(text) as unknown;
     if (!isRecord(parsed)) return [];
-    const direct = parsePendingIntegrationsList(parsed.pending_integrations);
+    const parsedWorkspaceId =
+      typeof parsed.workspace_id === "string" ? parsed.workspace_id : null;
+    const direct = parsePendingIntegrationsList(parsed.pending_integrations, parsedWorkspaceId);
     if (direct.length > 0) return direct;
     // Subagent metadata wraps the lifecycle payload under various nesting
     // keys depending on which orchestration tool returned it. Walk a few
@@ -2326,7 +2355,14 @@ function pendingIntegrationsFromTextBlob(text: string): ChatPendingIntegration[]
     ];
     for (const candidate of candidates) {
       if (!isRecord(candidate)) continue;
-      const list = parsePendingIntegrationsList(candidate.pending_integrations);
+      const candidateWorkspaceId =
+        typeof candidate.workspace_id === "string"
+          ? candidate.workspace_id
+          : parsedWorkspaceId;
+      const list = parsePendingIntegrationsList(
+        candidate.pending_integrations,
+        candidateWorkspaceId,
+      );
       if (list.length > 0) return list;
     }
   } catch {
@@ -2434,8 +2470,8 @@ function assistantHistoryStateFromOutputEvents(
 
     if (event.event_type === "tool_call") {
       for (const integration of pendingIntegrationsFromToolResult(eventPayload)) {
-        const key = integration.provider_id.trim().toLowerCase();
-        if (!pendingIntegrations.some((existing) => existing.provider_id.trim().toLowerCase() === key)) {
+        const key = `${integration.workspace_id ?? ""}|${integration.app_id.trim().toLowerCase()}|${integration.provider_id.trim().toLowerCase()}`;
+        if (!pendingIntegrations.some((existing) => `${existing.workspace_id ?? ""}|${existing.app_id.trim().toLowerCase()}|${existing.provider_id.trim().toLowerCase()}` === key)) {
           pendingIntegrations.push(integration);
         }
       }
@@ -2443,8 +2479,8 @@ function assistantHistoryStateFromOutputEvents(
 
     if (event.event_type === "subagent_lifecycle_update") {
       for (const integration of pendingIntegrationsFromSubagentLifecycle(eventPayload)) {
-        const key = integration.provider_id.trim().toLowerCase();
-        if (!pendingIntegrations.some((existing) => existing.provider_id.trim().toLowerCase() === key)) {
+        const key = `${integration.workspace_id ?? ""}|${integration.app_id.trim().toLowerCase()}|${integration.provider_id.trim().toLowerCase()}`;
+        if (!pendingIntegrations.some((existing) => `${existing.workspace_id ?? ""}|${existing.app_id.trim().toLowerCase()}|${existing.provider_id.trim().toLowerCase()}` === key)) {
           pendingIntegrations.push(integration);
         }
       }
@@ -2648,6 +2684,9 @@ interface ChatPaneProps {
   ) => void;
   onJumpToSessionBrowser?: (sessionId: string, requestKey: number) => void;
   onOpenSessions?: () => void;
+  onOpenMeetingMode?: () => void;
+  meetingModeBusy?: boolean;
+  meetingModeError?: string;
   onOpenInbox?: () => void;
   inboxUnreadCount?: number;
   onOpenAutomations?: () => void;
@@ -2689,6 +2728,9 @@ export function ChatPane({
   onBrowserJumpRequestConsumed,
   onJumpToSessionBrowser,
   onOpenSessions,
+  onOpenMeetingMode,
+  meetingModeBusy = false,
+  meetingModeError = "",
   onOpenInbox,
   inboxUnreadCount = 0,
   onOpenAutomations,
@@ -2849,6 +2891,10 @@ export function ChatPane({
   const [totalHistoryMessageCount, setTotalHistoryMessageCount] = useState(0);
   const [isResponding, setIsResponding] = useState(false);
   const [isSubmittingMessage, setIsSubmittingMessage] = useState(false);
+  const [
+    activeControllerSubagentExecutionCount,
+    setActiveControllerSubagentExecutionCount,
+  ] = useState(0);
   const [isPausePending, setIsPausePending] = useState(false);
   const [chatErrorMessage, setChatErrorMessage] = useState("");
   const [backgroundDeliveryStatusMessage, setBackgroundDeliveryStatusMessage] =
@@ -3816,12 +3862,23 @@ export function ChatPane({
   function shouldShowExecutionInternalsForSession(
     sessionId: string | null | undefined,
   ) {
-    if (isOnboardingVariant) {
-      return true;
-    }
     const normalizedSessionId = (sessionId || "").trim();
     const mainSessionId = desktopMainSessionIdRef.current.trim();
-    return Boolean(normalizedSessionId && normalizedSessionId !== mainSessionId);
+    if (!normalizedSessionId || normalizedSessionId === mainSessionId) {
+      return false;
+    }
+    const onboardingSessionId = (
+      selectedWorkspaceRef.current?.onboarding_session_id || ""
+    ).trim();
+    if (normalizedSessionId === onboardingSessionId) {
+      return false;
+    }
+    const sessionKind =
+      sessionRecordOverrides[normalizedSessionId]?.kind?.trim() || "";
+    if (isLabControllerSessionKind(sessionKind)) {
+      return false;
+    }
+    return true;
   }
 
   function maybePlayMainSessionCompletionChime(params: {
@@ -4625,20 +4682,62 @@ export function ChatPane({
           }
         }
 
-        const [runtimeStates, mainSessionResponse] = await Promise.all([
+        const [runtimeStates, sessionListResponse] = await Promise.all([
           window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId),
-          window.electronAPI.workspace.ensureMainSession(selectedWorkspaceId),
+          window.electronAPI.workspace
+            .listAgentSessions({
+              workspaceId: selectedWorkspaceId,
+              includeArchived: false,
+              limit: 100,
+              offset: 0,
+            })
+            .catch(() => ({ items: [], count: 0 })),
         ]);
         if (cancelled) {
           return;
         }
-        setDesktopMainSession(mainSessionResponse.session ?? null);
+        const onboardingSessionId = (
+          selectedWorkspaceRef.current?.onboarding_session_id || ""
+        ).trim();
+        const sessionRecords = sessionListResponse.items ?? [];
+        const activeLabControllerSession =
+          sessionRecords.find((session) =>
+            isLabControllerSessionKind(session.kind),
+          ) ?? null;
+        const onboardingSessionRecord = onboardingSessionId
+          ? (sessionRecords.find(
+              (session) => session.session_id.trim() === onboardingSessionId,
+            ) ?? null)
+          : null;
+        if (activeLabControllerSession) {
+          upsertSessionRecordOverride(activeLabControllerSession);
+        }
+        if (onboardingSessionRecord) {
+          upsertSessionRecordOverride(onboardingSessionRecord);
+        }
+        const preferredControllerSessionId =
+          hasSessionJumpRequest && requestedSessionId
+            ? ""
+            : isOnboardingVariant
+              ? activeLabControllerSession?.session_id?.trim() ||
+                onboardingSessionId
+              : "";
+        const mainSessionResponse = preferredControllerSessionId
+          ? null
+          : await window.electronAPI.workspace.ensureMainSession(
+              selectedWorkspaceId,
+            );
+        if (cancelled) {
+          return;
+        }
+        setDesktopMainSession(mainSessionResponse?.session ?? null);
 
         const nextSessionId =
           (hasSessionJumpRequest && requestedSessionId
             ? requestedSessionId
             : null) ||
-          mainSessionResponse.session?.session_id?.trim() ||
+          preferredControllerSessionId ||
+          mainSessionResponse?.session?.session_id?.trim() ||
           null;
         const resolvedSessionId = nextSessionId || null;
         draftParentSessionIdRef.current = null;
@@ -4753,13 +4852,27 @@ export function ChatPane({
           return;
         }
 
-        const runtimeStates =
-          await window.electronAPI.workspace.listRuntimeStates(
-            selectedWorkspaceId,
-          );
+        const [runtimeStates, sessionListResponse] = await Promise.all([
+          window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId),
+          window.electronAPI.workspace
+            .listAgentSessions({
+              workspaceId: selectedWorkspaceId,
+              includeArchived: false,
+              limit: 100,
+              offset: 0,
+            })
+            .catch(() => ({ items: [], count: 0 })),
+        ]);
         if (cancelled || isSessionOpenRequestConsumed(requestKey)) {
           historyLoaded = true;
           return;
+        }
+        const requestedSessionRecord =
+          (sessionListResponse.items ?? []).find(
+            (session) => session.session_id.trim() === requestedSessionId,
+          ) ?? null;
+        if (requestedSessionRecord) {
+          upsertSessionRecordOverride(requestedSessionRecord);
         }
         await loadSessionConversation(
           requestedSessionId,
@@ -5560,6 +5673,10 @@ export function ChatPane({
     ) {
       return;
     }
+    if (controllerSubagentExecutingDisabledReason) {
+      setChatErrorMessage(controllerSubagentExecutingDisabledReason);
+      return;
+    }
     if (
       browserJumpRequest &&
       activeSessionIdRef.current &&
@@ -5581,7 +5698,7 @@ export function ChatPane({
       setChatErrorMessage("Create or select a workspace first.");
       return;
     }
-    if (!isOnboardingVariant && !workspaceAppsReady) {
+    if (!isControllerSession && !workspaceAppsReady) {
       setChatErrorMessage(
         workspaceBlockingReason ||
           workspaceErrorMessage ||
@@ -5589,7 +5706,7 @@ export function ChatPane({
       );
       return;
     }
-    if (!isOnboardingVariant && !resolvedChatModel) {
+    if (!isControllerSession && !resolvedChatModel) {
       setChatErrorMessage(
         modelSelectionUnavailableReason || "No models available.",
       );
@@ -5847,8 +5964,8 @@ export function ChatPane({
         attachments: stagedAttachments,
         session_id: targetSessionId,
         priority: 0,
-        model: resolvedChatModel || null,
-        thinking_value: effectiveThinkingValue,
+        model: isControllerSession ? null : resolvedChatModel || null,
+        thinking_value: isControllerSession ? null : effectiveThinkingValue,
       });
       rememberSubmittedComposerInput(text, selectedWorkspace.id);
       setActiveSession(queued.session_id);
@@ -6402,6 +6519,64 @@ export function ChatPane({
     });
   };
 
+  const openPrimaryControllerSession = async () => {
+    if (!isOnboardingVariant) {
+      await openMainSession();
+      return;
+    }
+
+    const parentSessionId =
+      activeSessionRecord?.parent_session_id?.trim() || "";
+    const workspaceOnboardingSessionId =
+      selectedWorkspace?.onboarding_session_id?.trim() || "";
+    let controllerSessionId =
+      parentSessionId ||
+      Object.values(sessionRecordOverrides)
+        .find((session) => isLabControllerSessionKind(session.kind))
+        ?.session_id?.trim() ||
+      workspaceOnboardingSessionId;
+
+    if (!controllerSessionId && selectedWorkspaceId?.trim()) {
+      try {
+        const response = await window.electronAPI.workspace.listAgentSessions({
+          workspaceId: selectedWorkspaceId,
+          includeArchived: false,
+          limit: 100,
+          offset: 0,
+        });
+        const records = response.items ?? [];
+        const controllerRecord =
+          records.find((session) =>
+            isLabControllerSessionKind(session.kind),
+          ) ??
+          (workspaceOnboardingSessionId
+            ? records.find(
+                (session) =>
+                  session.session_id.trim() === workspaceOnboardingSessionId,
+              )
+            : null);
+        if (controllerRecord) {
+          upsertSessionRecordOverride(controllerRecord);
+          controllerSessionId = controllerRecord.session_id.trim();
+        }
+      } catch (error) {
+        setChatErrorMessage(normalizeErrorMessage(error));
+        return;
+      }
+    }
+
+    if (!controllerSessionId) {
+      setChatErrorMessage("No onboarding session found for this workspace.");
+      return;
+    }
+
+    setLocalSessionOpenRequestState({
+      sessionId: controllerSessionId,
+      requestKey: Date.now(),
+      readOnly: false,
+    });
+  };
+
   const handleOpenReadOnlyAgentSession = (
     session: AgentSessionRecordPayload,
   ) => {
@@ -6783,11 +6958,114 @@ export function ChatPane({
   const activeSessionKind = (activeSessionRecord?.kind || "")
     .trim()
     .toLowerCase();
+  const isLabControllerSession =
+    isLabControllerSessionKind(activeSessionKind);
+  const activeSessionIdValue = activeSessionId.trim();
+  const workspaceOnboardingSessionId =
+    selectedWorkspace?.onboarding_session_id?.trim() || "";
+  const isWorkspaceOnboardingControllerSession =
+    isOnboardingVariant &&
+    (isLabControllerSession ||
+      (activeSessionIdValue.length > 0 &&
+        activeSessionIdValue === workspaceOnboardingSessionId) ||
+      (!activeSessionIdValue && Boolean(workspaceOnboardingSessionId)));
+  const isControllerSession =
+    isLabControllerSession || isWorkspaceOnboardingControllerSession;
+  const activeSessionWorkspaceId =
+    (activeSessionRecord?.workspace_id || "").trim() ||
+    (selectedWorkspaceId || "").trim();
+  const controllerBackgroundTasksWorkspaceId = isControllerSession
+    ? activeSessionWorkspaceId
+    : (selectedWorkspaceId || "").trim();
+  const controllerBackgroundTasksOwnerMainSessionId = isControllerSession
+    ? (activeSessionId || "").trim()
+    : null;
   const isViewingBoundMainSession =
     !activeSessionId ||
     activeSessionId === (desktopMainSession?.session_id || "").trim();
   const isReadOnlyInspectionSession =
-    !isViewingBoundMainSession && !isOnboardingVariant;
+    activeSessionReadOnly ||
+    (!isViewingBoundMainSession && !isControllerSession);
+  useEffect(() => {
+    const workspaceId = controllerBackgroundTasksWorkspaceId.trim();
+    const controllerSessionId = (
+      controllerBackgroundTasksOwnerMainSessionId || ""
+    ).trim();
+    if (!isControllerSession || !workspaceId || !controllerSessionId) {
+      setActiveControllerSubagentExecutionCount(0);
+      return;
+    }
+
+    let cancelled = false;
+    let requestInFlight = false;
+    setActiveControllerSubagentExecutionCount(0);
+
+    const refreshControllerSubagentExecution = async () => {
+      if (cancelled || requestInFlight) {
+        return;
+      }
+      requestInFlight = true;
+      try {
+        const response = await window.electronAPI.workspace.listBackgroundTasks({
+          workspaceId,
+          ownerMainSessionId: controllerSessionId,
+          statuses: ["queued", "running"],
+          limit: 50,
+        });
+        if (cancelled) {
+          return;
+        }
+        const executingCount = (response.tasks ?? []).filter(
+          backgroundTaskIsExecuting,
+        ).length;
+        setActiveControllerSubagentExecutionCount((current) =>
+          current === executingCount ? current : executingCount,
+        );
+      } catch {
+        if (!cancelled) {
+          setActiveControllerSubagentExecutionCount(0);
+        }
+      } finally {
+        requestInFlight = false;
+      }
+    };
+
+    const refreshVisibleControllerSubagentExecution = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      void refreshControllerSubagentExecution();
+    };
+
+    void refreshControllerSubagentExecution();
+    const intervalId = window.setInterval(
+      refreshVisibleControllerSubagentExecution,
+      1000,
+    );
+    window.addEventListener("focus", refreshVisibleControllerSubagentExecution);
+    document.addEventListener(
+      "visibilitychange",
+      refreshVisibleControllerSubagentExecution,
+    );
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener(
+        "focus",
+        refreshVisibleControllerSubagentExecution,
+      );
+      document.removeEventListener(
+        "visibilitychange",
+        refreshVisibleControllerSubagentExecution,
+      );
+    };
+  }, [
+    controllerBackgroundTasksOwnerMainSessionId,
+    controllerBackgroundTasksWorkspaceId,
+    isControllerSession,
+  ]);
+
   const activeSessionTitle = isViewingBoundMainSession
     ? (desktopMainSession?.title?.trim() ||
         selectedWorkspace?.name?.trim() ||
@@ -6800,8 +7078,7 @@ export function ChatPane({
     : isReadOnlyInspectionSession
       ? `${inspectableSessionLabel(activeSessionRecord)} · Read-only inspection`
       : "Session view";
-  const showSessionExecutionInternals =
-    isReadOnlyInspectionSession || isOnboardingVariant;
+  const showSessionExecutionInternals = isReadOnlyInspectionSession;
   const displayMessages = useMemo(
     () =>
       messages.filter((message) =>
@@ -6833,7 +7110,7 @@ export function ChatPane({
     isLoadingOlderHistory ||
     loadedHistoryMessageCount < totalHistoryMessageCount;
   const readinessMessage =
-    !selectedWorkspace || isOnboardingVariant || workspaceAppsReady
+    !selectedWorkspace || isControllerSession || workspaceAppsReady
       ? ""
       : workspaceBlockingReason ||
         workspaceErrorMessage ||
@@ -6844,7 +7121,7 @@ export function ChatPane({
     ? "Select a workspace to start chatting."
     : isLoadingBootstrap || isLoadingHistory
       ? "Loading workspace context..."
-      : !isOnboardingVariant && !workspaceAppsReady
+      : !isControllerSession && !workspaceAppsReady
         ? readinessMessage || "Workspace apps are still starting."
         : "";
   const isSignedIn = Boolean(sessionUserId(authSessionState.data));
@@ -7041,7 +7318,7 @@ export function ChatPane({
             ? selectedDefaultThinkingValue
             : (selectedThinkingValues[0] ?? null);
   const showThinkingValueSelector =
-    !isOnboardingVariant &&
+    !isControllerSession &&
     selectedModelSupportsReasoning &&
     selectedThinkingValues.length > 0;
   const setSelectedThinkingValue = (value: string | null) => {
@@ -7068,15 +7345,25 @@ export function ChatPane({
       : hasPendingConfiguredProviderCatalog
         ? "Managed models are finishing setup. Refresh runtime binding or use another provider."
         : "No models available. Configure a provider to start chatting.";
+  const controllerSubagentExecutingDisabledReason =
+    activeControllerSubagentExecutionCount > 0
+      ? activeControllerSubagentExecutionCount === 1
+        ? "Subagent is implementing the approved design. Wait for it to finish before sending another message."
+        : `${activeControllerSubagentExecutionCount} subagents are implementing the approved design. Wait for them to finish before sending another message.`
+      : "";
+  const readOnlyInspectionDisabledReason = isReadOnlyInspectionSession
+    ? isOnboardingVariant
+      ? "Inspection sessions are read-only. Return to the onboarding session to continue the conversation."
+      : "Inspection sessions are read-only. Return to the main session to continue the conversation."
+    : "";
   const composerBaseDisabledReason =
-    (isReadOnlyInspectionSession
-      ? "Inspection sessions are read-only. Return to the main session to continue the conversation."
-      : "") ||
+    readOnlyInspectionDisabledReason ||
     baseComposerDisabledReason ||
+    controllerSubagentExecutingDisabledReason ||
     (usesHostedManagedCredits && isOutOfCredits
       ? "You're out of credits for managed usage."
       : "") ||
-    (!isOnboardingVariant && !resolvedChatModel
+    (!isControllerSession && !resolvedChatModel
       ? modelSelectionUnavailableReason
       : "");
   const composerDisabledReason =
@@ -7110,6 +7397,8 @@ export function ChatPane({
         session_output_count: sessionOutputs.length,
         live_segment_count: liveAssistantSegments.length,
         live_execution_item_count: liveExecutionItems.length,
+        active_controller_subagent_execution_count:
+          activeControllerSubagentExecutionCount,
       },
       composer: {
         input_length: input.length,
@@ -7159,6 +7448,7 @@ export function ChatPane({
     }),
     [
       activeQueuedSessionInputs.length,
+      activeControllerSubagentExecutionCount,
       activeSessionId,
       artifactBrowserOpen,
       attachmentGateMessage,
@@ -7387,33 +7677,6 @@ export function ChatPane({
       <div className="relative flex h-full min-h-0 min-w-0 flex-col">
         <div className="theme-chat-composer-glow pointer-events-none absolute inset-x-8 bottom-0 h-44 rounded-full blur-2xl" />
 
-        {isOnboardingVariant && selectedWorkspace ? (
-          <div className="shrink-0 px-4 pt-4 sm:px-5">
-            <div className="bg-muted overflow-hidden rounded-2xl border border-primary/20 shadow-2xs">
-              <div className="bg-[radial-gradient(circle_at_top_left,rgba(247,90,84,0.12),transparent_42%),radial-gradient(circle_at_92%_12%,rgba(247,170,126,0.12),transparent_36%)] px-4 py-4 sm:px-5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-[10px] font-medium uppercase text-primary">
-                      Workspace onboarding
-                    </div>
-                    <div className="mt-2 text-lg font-semibold text-foreground">
-                      {selectedWorkspace.name.trim() || "Workspace setup"}
-                    </div>
-                  </div>
-
-                  <div
-                    className={`inline-flex shrink-0 items-center rounded-full border px-3 py-1 text-[10px] font-medium uppercase ${onboardingStatusTone(
-                      selectedWorkspace.onboarding_status,
-                    )}`}
-                  >
-                    {onboardingStatusLabel(selectedWorkspace.onboarding_status)}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : null}
-
         {!isOnboardingVariant ? (
           <div className="shrink-0 px-4 py-2 sm:px-5">
             <ChatHeader
@@ -7423,22 +7686,33 @@ export function ChatPane({
                 isViewingBoundMainSession ? undefined : activeSessionTitle
               }
               onReturnToMainSession={
-                isReadOnlyInspectionSession
+                isReadOnlyInspectionSession ||
+                (!isOnboardingVariant && isLabControllerSession)
                   ? () => {
-                      void openMainSession();
+                      void openPrimaryControllerSession();
                     }
                   : undefined
               }
               onOpenInbox={onOpenInbox}
               inboxUnreadCount={inboxUnreadCount}
               onOpenSessions={onOpenSessions}
+              onOpenMeetingMode={onOpenMeetingMode}
+              meetingModeBusy={meetingModeBusy}
               onOpenAutomations={onOpenAutomations}
               onOpenArtifacts={onOpenArtifacts}
             />
           </div>
         ) : null}
 
-        {!isOnboardingVariant && isReadOnlyInspectionSession ? (
+        {!isOnboardingVariant && meetingModeError ? (
+          <div className="shrink-0 px-4 pb-2 sm:px-5">
+            <div className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              {meetingModeError}
+            </div>
+          </div>
+        ) : null}
+
+        {isReadOnlyInspectionSession ? (
           <div className="shrink-0 px-4 pt-2 sm:px-5">
             <div className="flex items-center justify-between gap-2 rounded-md bg-fg-4 px-3 py-1.5 text-xs">
               <span className="min-w-0 truncate text-muted-foreground">
@@ -7452,12 +7726,12 @@ export function ChatPane({
                 variant="ghost"
                 size="xs"
                 onClick={() => {
-                  void openMainSession();
+                  void openPrimaryControllerSession();
                 }}
                 className="shrink-0 text-muted-foreground hover:text-foreground"
               >
                 <ArrowLeft className="size-3" />
-                Main session
+                {isOnboardingVariant ? "Onboarding session" : "Main session"}
               </Button>
             </div>
           </div>
@@ -7572,11 +7846,14 @@ export function ChatPane({
         ) : null}
 
         <div className="relative flex min-h-0 flex-1 flex-col">
-          {!isOnboardingVariant && !isReadOnlyInspectionSession ? (
+          {!isReadOnlyInspectionSession ? (
             <div className="pointer-events-none absolute inset-x-0 top-2 z-20 flex justify-center px-4">
               <div className="pointer-events-auto">
                 <BackgroundTasksPane
-                  workspaceId={selectedWorkspaceId}
+                  workspaceId={controllerBackgroundTasksWorkspaceId}
+                  ownerMainSessionId={
+                    controllerBackgroundTasksOwnerMainSessionId
+                  }
                   variant="inline"
                   onOpenTaskSession={handleOpenBackgroundTaskSession}
                 />
@@ -7768,7 +8045,7 @@ export function ChatPane({
                             pendingImageInputUnsupportedMessage,
                           )}
                           placeholder={textareaPlaceholder}
-                          showModelSelector={!isOnboardingVariant}
+                          showModelSelector={!isControllerSession}
                           onModelChange={setChatModelPreference}
                           onThinkingValueChange={setSelectedThinkingValue}
                           onOpenModelProviders={() =>
@@ -7879,7 +8156,7 @@ export function ChatPane({
                         pendingImageInputUnsupportedMessage,
                       )}
                       placeholder={textareaPlaceholder}
-                      showModelSelector={!isOnboardingVariant}
+                      showModelSelector={!isControllerSession}
                       onModelChange={setChatModelPreference}
                       onThinkingValueChange={setSelectedThinkingValue}
                       onOpenModelProviders={() =>

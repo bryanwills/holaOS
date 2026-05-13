@@ -457,12 +457,23 @@ interface RuntimeNotificationListOptionsPayload {
     deleted_at_utc: string | null;
     icon?: string | null;
     icon_color?: string | null;
+    workspace_role?: string | null;
+    source_workspace_id?: string | null;
+    lab_purpose?: string | null;
+    lab_status?: string | null;
     workspace_path?: string | null;
     folder_state?: "healthy" | "missing" | null;
   }
 
   interface WorkspaceResponsePayload {
     workspace: WorkspaceRecordPayload;
+  }
+
+  interface WorkspaceLabResponsePayload {
+    lab: WorkspaceRecordPayload | null;
+    source: WorkspaceRecordPayload | null;
+    session: AgentSessionRecordPayload | null;
+    created?: boolean;
   }
 
   interface WorkspaceListResponsePayload {
@@ -1280,6 +1291,7 @@ interface RuntimeNotificationListOptionsPayload {
     template_ref?: string | null;
     template_commit?: string | null;
     template_apps?: string[];
+    workspace_onboarding_mode?: "start" | "skip" | null;
     workspace_path?: string | null;
   }
 
@@ -1747,6 +1759,10 @@ interface RuntimeNotificationListOptionsPayload {
       listSkills: (workspaceId: string) => Promise<WorkspaceSkillListResponsePayload>;
       getWorkspaceRoot: (workspaceId: string) => Promise<string>;
       createWorkspace: (payload: HolabossCreateWorkspacePayload) => Promise<WorkspaceResponsePayload>;
+      createWorkspaceLab: (
+        workspaceId: string,
+        purpose: "workspace_onboarding" | "meeting_mode",
+      ) => Promise<WorkspaceLabResponsePayload>;
       deleteWorkspace: (workspaceId: string, keepFiles?: boolean) => Promise<WorkspaceResponsePayload>;
       updateAppearance: (
         workspaceId: string,

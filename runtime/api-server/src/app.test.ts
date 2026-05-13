@@ -835,6 +835,11 @@ test("runtime tools capability routes expose local onboarding and cronjob action
     assert.ok(
       capabilityStatus
         .json()
+        .tools.some((tool: { id: string }) => tool.id === "workspace_integrations_list_catalog")
+    );
+    assert.ok(
+      capabilityStatus
+        .json()
         .tools.some((tool: { id: string }) => tool.id === "workspace_apps_build")
     );
     assert.ok(
@@ -886,6 +891,18 @@ test("runtime tools capability routes expose local onboarding and cronjob action
     assert.equal(onboardingComplete.statusCode, 200);
     assert.equal(onboardingComplete.json().onboarding_status, "completed");
     assert.equal(onboardingComplete.json().onboarding_completion_summary, "ready to work");
+
+    const integrationCatalog = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/workspace-integrations/catalog",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1"
+      },
+      payload: {}
+    });
+    assert.equal(integrationCatalog.statusCode, 200);
+    assert.ok(integrationCatalog.json().provider_ids.includes("twitter"));
+    assert.equal(integrationCatalog.json().provider_ids.includes("x"), false);
 
     const createdJob = await app.inject({
       method: "POST",
@@ -3407,6 +3424,241 @@ test("workspace CRUD routes preserve local payload shape", async () => {
   assert.equal(deleted.statusCode, 200);
   assert.equal(deleted.json().workspace.status, "deleted");
   assert.equal(fs.existsSync(workspaceDir), false);
+
+  await app.close();
+  store.close();
+});
+
+test("workspace lab routes create hidden drafts and merge accepted design state", async () => {
+  const root = makeTempDir("hb-runtime-api-lab-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const source = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Lab Source",
+    harness: "pi",
+    status: "active"
+  });
+  const sourceDir = store.workspaceDir(source.id);
+  fs.writeFileSync(path.join(sourceDir, "AGENTS.md"), "old manager\n", "utf8");
+  fs.writeFileSync(path.join(sourceDir, "old.txt"), "remove me\n", "utf8");
+  const originalJob = store.createCronjob({
+    workspaceId: source.id,
+    initiatedBy: "workspace_agent",
+    name: "Old job",
+    cron: "0 8 * * *",
+    description: "Old recurring work",
+    instruction: "Old recurring work",
+    delivery: { mode: "announce", channel: "session_run", to: null }
+  });
+  const googleConnection = store.upsertIntegrationConnection({
+    connectionId: "conn-google",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "user@example.com",
+    authMode: "oauth_app",
+    grantedScopes: ["gmail.send"],
+    status: "active",
+    secretRef: "token-google",
+  });
+  store.upsertIntegrationBinding({
+    bindingId: "bind-source-google",
+    workspaceId: source.id,
+    targetType: "app",
+    targetId: "gmail-helper",
+    integrationKey: "google",
+    connectionId: googleConnection.connectionId,
+    isDefault: false,
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const created = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspaces/${source.id}/labs`,
+    payload: { purpose: "workspace_onboarding" }
+  });
+  assert.equal(created.statusCode, 200);
+  const createdPayload = created.json() as {
+    created: boolean;
+    lab: { id: string; workspace_role: string; lab_purpose: string; lab_status: string };
+    source: { onboarding_status: string; onboarding_session_id: string | null };
+    session: { session_id: string; kind: string };
+  };
+  assert.equal(createdPayload.created, true);
+  assert.equal(createdPayload.lab.workspace_role, "draft_lab");
+  assert.equal(createdPayload.lab.lab_purpose, "workspace_onboarding");
+  assert.equal(createdPayload.session.kind, "workspace_onboarding");
+  assert.equal(createdPayload.source.onboarding_status, "pending");
+  assert.equal(createdPayload.source.onboarding_session_id, createdPayload.session.session_id);
+  assert.deepEqual(
+    store
+      .listSessionMessages({
+        workspaceId: createdPayload.lab.id,
+        sessionId: createdPayload.session.session_id,
+      })
+      .map((message) => ({ role: message.role, text: message.text })),
+    [{ role: "assistant", text: "What would you like to build?" }],
+  );
+
+  const listed = await app.inject({ method: "GET", url: "/api/v1/workspaces" });
+  assert.equal(listed.statusCode, 200);
+  assert.deepEqual(
+    listed.json().items.map((item: { id: string }) => item.id),
+    [source.id],
+  );
+
+  const active = await app.inject({
+    method: "GET",
+    url: `/api/v1/workspaces/${source.id}/labs/active`
+  });
+  assert.equal(active.statusCode, 200);
+  assert.equal(active.json().lab.id, createdPayload.lab.id);
+  assert.deepEqual(
+    store.listIntegrationBindings({ workspaceId: createdPayload.lab.id }).map((binding) => ({
+      targetId: binding.targetId,
+      integrationKey: binding.integrationKey,
+      connectionId: binding.connectionId,
+    })),
+    [
+      {
+        targetId: "gmail-helper",
+        integrationKey: "google",
+        connectionId: googleConnection.connectionId,
+      },
+    ],
+  );
+
+  const labSubagent = store.createSubagentRun({
+    workspaceId: createdPayload.lab.id,
+    parentSessionId: createdPayload.session.session_id,
+    originMainSessionId: createdPayload.session.session_id,
+    ownerMainSessionId: createdPayload.session.session_id,
+    childSessionId: "subagent-lab-1",
+    title: "Build accepted onboarding design",
+    goal: "Build accepted onboarding design",
+    status: "running",
+  });
+  const listedLabBackgroundTasksFromSource = await app.inject({
+    method: "GET",
+    url:
+      `/api/v1/background-tasks?workspace_id=${encodeURIComponent(source.id)}` +
+      `&owner_main_session_id=${encodeURIComponent(createdPayload.session.session_id)}`,
+  });
+  assert.equal(listedLabBackgroundTasksFromSource.statusCode, 200);
+  assert.equal(listedLabBackgroundTasksFromSource.json().count, 1);
+  assert.equal(
+    listedLabBackgroundTasksFromSource.json().tasks[0].subagent_id,
+    labSubagent.subagentId,
+  );
+  assert.equal(
+    listedLabBackgroundTasksFromSource.json().tasks[0].workspace_id,
+    createdPayload.lab.id,
+  );
+
+  const blockedMeeting = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspaces/${source.id}/labs`,
+    payload: { purpose: "meeting_mode" }
+  });
+  assert.equal(blockedMeeting.statusCode, 400);
+  assert.match(blockedMeeting.json().detail, /active workspace_onboarding lab/);
+
+  const onboardingStatus = await app.inject({
+    method: "GET",
+    url: `/api/v1/capabilities/runtime-tools/onboarding/status?workspace_id=${encodeURIComponent(createdPayload.lab.id)}`
+  });
+  assert.equal(onboardingStatus.statusCode, 200);
+  assert.equal(onboardingStatus.json().workspace_id, source.id);
+  assert.equal(onboardingStatus.json().lab_workspace_id, createdPayload.lab.id);
+  assert.equal(onboardingStatus.json().lab_status, "active");
+
+  const labDir = store.workspaceDir(createdPayload.lab.id);
+  assert.equal(fs.readFileSync(path.join(labDir, "AGENTS.md"), "utf8"), "old manager\n");
+  fs.writeFileSync(path.join(labDir, "AGENTS.md"), "new manager\n", "utf8");
+  fs.rmSync(path.join(labDir, "old.txt"), { force: true });
+  fs.mkdirSync(path.join(labDir, "skills"), { recursive: true });
+  fs.writeFileSync(path.join(labDir, "skills", "research.md"), "skill\n", "utf8");
+  store.deleteCronjob({ workspaceId: createdPayload.lab.id, jobId: originalJob.id });
+  store.createCronjob({
+    workspaceId: createdPayload.lab.id,
+    jobId: "lab-job",
+    initiatedBy: "workspace_agent",
+    name: "New job",
+    cron: "0 9 * * *",
+    description: "New recurring work",
+    instruction: "New recurring work",
+    delivery: { mode: "announce", channel: "session_run", to: null }
+  });
+  for (const binding of store.listIntegrationBindings({ workspaceId: createdPayload.lab.id })) {
+    store.deleteIntegrationBinding(binding.bindingId);
+  }
+  const githubConnection = store.upsertIntegrationConnection({
+    connectionId: "conn-github",
+    providerId: "github",
+    ownerUserId: "user-1",
+    accountLabel: "user@example.com",
+    authMode: "oauth_app",
+    grantedScopes: ["repo"],
+    status: "active",
+    secretRef: "token-github",
+  });
+  store.upsertIntegrationBinding({
+    bindingId: "bind-lab-github",
+    workspaceId: createdPayload.lab.id,
+    targetType: "app",
+    targetId: "github-helper",
+    integrationKey: "github",
+    connectionId: githubConnection.connectionId,
+    isDefault: false,
+  });
+
+  const completed = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspace-labs/${createdPayload.lab.id}/complete`,
+    payload: { summary: "Accepted design" }
+  });
+  assert.equal(completed.statusCode, 200);
+  assert.equal(completed.json().lab.lab_status, "merged");
+  assert.equal(completed.json().source.onboarding_status, "completed");
+  assert.equal(completed.json().source.onboarding_completion_summary, "Accepted design");
+  assert.equal(fs.readFileSync(path.join(sourceDir, "AGENTS.md"), "utf8"), "new manager\n");
+  assert.equal(fs.existsSync(path.join(sourceDir, "old.txt")), false);
+  assert.equal(fs.readFileSync(path.join(sourceDir, "skills", "research.md"), "utf8"), "skill\n");
+  assert.deepEqual(
+    store.listCronjobs({ workspaceId: source.id }).map((job) => job.id),
+    ["lab-job"],
+  );
+  assert.deepEqual(
+    store.listIntegrationBindings({ workspaceId: source.id }).map((binding) => ({
+      targetId: binding.targetId,
+      integrationKey: binding.integrationKey,
+      connectionId: binding.connectionId,
+    })),
+    [
+      {
+        targetId: "github-helper",
+        integrationKey: "github",
+        connectionId: githubConnection.connectionId,
+      },
+    ],
+  );
+
+  const meeting = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspaces/${source.id}/labs`,
+    payload: { purpose: "meeting_mode" }
+  });
+  assert.equal(meeting.statusCode, 200);
+  assert.equal(meeting.json().session.kind, "meeting_mode");
+  const abandoned = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspace-labs/${meeting.json().lab.id}/abandon`,
+    payload: { summary: "Discarded meeting lab" }
+  });
+  assert.equal(abandoned.statusCode, 200);
+  assert.equal(abandoned.json().lab.lab_status, "abandoned");
 
   await app.close();
   store.close();

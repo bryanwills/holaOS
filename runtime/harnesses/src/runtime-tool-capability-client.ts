@@ -23,6 +23,7 @@ const RUNTIME_TOOLS_WORKSPACE_INSTRUCTIONS_PATH = "/api/v1/capabilities/runtime-
 const RUNTIME_TOOLS_SKILL_PATH = "/api/v1/capabilities/runtime-tools/skill";
 const RUNTIME_TOOLS_TERMINAL_SESSIONS_PATH = "/api/v1/capabilities/runtime-tools/terminal-sessions";
 const RUNTIME_TOOLS_WORKSPACE_APPS_PATH = "/api/v1/capabilities/runtime-tools/workspace-apps";
+const RUNTIME_TOOLS_WORKSPACE_INTEGRATIONS_PATH = "/api/v1/capabilities/runtime-tools/workspace-integrations";
 const RUNTIME_TOOLS_WORKSPACE_APPS_PORTS_PATH = "/api/v1/capabilities/runtime-tools/workspace-apps/ports";
 const RUNTIME_TOOLS_WORKSPACE_DATA_TABLES_PATH = "/api/v1/capabilities/runtime-tools/workspace-data/tables";
 const RUNTIME_TOOLS_WORKSPACE_DATA_QUERY_PATH = "/api/v1/capabilities/runtime-tools/workspace-data/query";
@@ -711,6 +712,12 @@ function requestPlan(
         method: "POST",
         requestPath: `${RUNTIME_TOOLS_WORKSPACE_APPS_PATH}/find`,
         body: createWorkspaceAppFindBody(toolParams),
+      };
+    case "workspace_integrations_list_catalog":
+      return {
+        method: "POST",
+        requestPath: `${RUNTIME_TOOLS_WORKSPACE_INTEGRATIONS_PATH}/catalog`,
+        body: {},
       };
     case "workspace_apps_install":
       return {

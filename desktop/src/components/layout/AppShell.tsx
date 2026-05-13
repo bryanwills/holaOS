@@ -1514,6 +1514,8 @@ function AppShellContent() {
   } | null>(null);
   const [chatSessionOpenRequest, setChatSessionOpenRequest] =
     useState<ChatSessionOpenRequest | null>(null);
+  const [isStartingMeetingMode, setIsStartingMeetingMode] = useState(false);
+  const [meetingModeError, setMeetingModeError] = useState("");
   const [chatImagePreviewOpen, setChatImagePreviewOpen] = useState(false);
   const [
     chatBrowserJumpRequestKeysBySessionId,
@@ -3013,6 +3015,7 @@ function AppShellContent() {
 
   useEffect(() => {
     setChatSessionOpenRequest(null);
+    setMeetingModeError("");
     setChatBrowserJumpRequestKeysBySessionId({});
     setActiveChatSessionId(null);
     setChatScheduleEditContext(null);
@@ -4727,6 +4730,62 @@ function AppShellContent() {
     });
   };
 
+  const handleOpenMeetingMode = useCallback(async () => {
+    const workspaceId = selectedWorkspaceId?.trim() || "";
+    if (!workspaceId || isStartingMeetingMode) {
+      return;
+    }
+
+    setIsStartingMeetingMode(true);
+    setMeetingModeError("");
+    try {
+      const response = await window.electronAPI.workspace.createWorkspaceLab(
+        workspaceId,
+        "meeting_mode",
+      );
+      const sessionId = response.session?.session_id?.trim() || "";
+      if (!sessionId) {
+        throw new Error("Meeting mode session was not created.");
+      }
+
+      if (response.created) {
+        await window.electronAPI.workspace.queueSessionInput({
+          workspace_id: workspaceId,
+          session_id: sessionId,
+          text:
+            "Start meeting mode. Use the lab copied from the current workspace. Invite the user to rapidly critique what has not worked well, build a concrete change backlog from their feedback, and only implement changes after the user confirms priorities.",
+          image_urls: null,
+          attachments: [],
+          priority: 0,
+          model: null,
+          thinking_value: null,
+        });
+      }
+
+      setActiveShellView("space");
+      setSpaceVisibility((previous) => ({
+        ...previous,
+        agent: true,
+      }));
+      setAgentView({ type: "chat" });
+      setChatSessionJumpRequest(null);
+      setChatSessionOpenRequest({
+        sessionId,
+        mode: "session",
+        requestKey: nextChatSessionOpenRequestKey(),
+      });
+      setChatFocusRequestKey((current) => current + 1);
+    } catch (error) {
+      setMeetingModeError(normalizeErrorMessage(error));
+    } finally {
+      setIsStartingMeetingMode(false);
+    }
+  }, [
+    isStartingMeetingMode,
+    nextChatSessionOpenRequestKey,
+    selectedWorkspaceId,
+  ]);
+
   const controlCenterMode = activeShellView === "control_center";
   const spaceMode = activeShellView === "space";
 
@@ -5064,6 +5123,9 @@ function AppShellContent() {
           onBrowserJumpRequestConsumed={consumeChatBrowserJumpRequest}
           onJumpToSessionBrowser={handleJumpToSessionBrowser}
           onOpenSessions={handleOpenSessionsPane}
+          onOpenMeetingMode={handleOpenMeetingMode}
+          meetingModeBusy={isStartingMeetingMode}
+          meetingModeError={meetingModeError}
           onOpenInbox={handleOpenInboxPane}
           inboxUnreadCount={unreadTaskProposalCount}
           onOpenAutomations={handleOpenAutomationsPane}
@@ -5131,6 +5193,7 @@ function AppShellContent() {
     handleMissingInternalResource,
     handleOpenInboxPane,
     handleOpenSessionsPane,
+    handleOpenMeetingMode,
     handleOpenAutomationsPane,
     handleOpenArtifactsPane,
     handleOpenAutomationRunSession,
@@ -5150,12 +5213,14 @@ function AppShellContent() {
     isLoadingProactiveStatus,
     isLoadingProactiveWorkspaceEnabled,
     isLoadingTaskProposals,
+    isStartingMeetingMode,
     isTriggeringTaskProposal,
     proposalAction,
     proactiveHeartbeatConfig?.cron,
     proactiveHeartbeatError,
     proactiveStatus,
     proactiveTaskProposalsError,
+    meetingModeError,
     proactiveWorkspaceEnabled,
     selectedWorkspace?.name,
     selectedWorkspace?.folder_state,

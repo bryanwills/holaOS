@@ -4138,57 +4138,70 @@ export async function processClaimedInput(params: {
           after_session_tokens: null,
           estimated_request_tokens: initialPreRunDecision.estimatedRequestTokens,
           projected_total_tokens: initialPreRunDecision.projectedTotalTokens,
-          compaction_attempted: true,
+          compaction_attempted: Boolean(snapshotPayload),
           compaction_changed_branch: false,
           reset_required: false,
         };
         preRunCompaction = initialPreRunCompaction;
-        const liveSessionState =
-          params.sessionCheckpointSessionOps?.currentLeafCheckpointState(
-            checkpointHarnessSessionId,
-          ) ?? currentPiSessionLeafState(checkpointHarnessSessionId);
-        const compactionResult = await forceCompactSessionWithSnapshotMerge({
-          store,
-          workspaceId: record.workspaceId,
-          sessionId: record.sessionId,
-          inputId: record.inputId,
-          harnessSessionId: checkpointHarnessSessionId,
-          baseLeafId: liveSessionState.leafId,
-          baseLatestCompactionId: liveSessionState.latestCompactionId,
-          runPiSessionCompactionFn: params.runPiSessionCompactionFn,
-          resolveRuntimeModelClientFn: params.resolveRuntimeModelClientFn,
-          sessionOps: params.sessionCheckpointSessionOps,
-        });
-        const finalPreRunDecision = evaluatePreRunSessionCompaction({
-          liveSessionFile: checkpointHarnessSessionId,
-          snapshotPayload,
-          selectedModel,
-          previousSelectedModel,
-          previousContextUsage: null,
-        });
-        const currentPreRunCompaction =
-          preRunCompaction ?? initialPreRunCompaction;
-        preRunCompaction = {
-          ...currentPreRunCompaction,
-          final_decision: finalPreRunDecision.decision,
-          after_session_tokens: finalPreRunDecision.currentSessionTokens,
-          estimated_request_tokens:
-            finalPreRunDecision.estimatedRequestTokens ??
-            currentPreRunCompaction.estimated_request_tokens,
-          projected_total_tokens:
-            finalPreRunDecision.projectedTotalTokens ??
-            currentPreRunCompaction.projected_total_tokens,
-          compaction_changed_branch: compactionResult.merged,
-        };
-        if (finalPreRunDecision.decision !== "fit") {
+        if (!snapshotPayload) {
+          if (initialPreRunDecision.decision === "would_overflow") {
+            preRunCompaction = {
+              ...initialPreRunCompaction,
+              final_decision: "reset_required",
+              reset_required: true,
+            };
+            throw new SessionResetRequiredError(
+              `pre-run session compaction could not make the next prompt fit ${selectedModel ?? "the selected model"}; session reset required`,
+            );
+          }
+        } else {
+          const liveSessionState =
+            params.sessionCheckpointSessionOps?.currentLeafCheckpointState(
+              checkpointHarnessSessionId,
+            ) ?? currentPiSessionLeafState(checkpointHarnessSessionId);
+          const compactionResult = await forceCompactSessionWithSnapshotMerge({
+            store,
+            workspaceId: record.workspaceId,
+            sessionId: record.sessionId,
+            inputId: record.inputId,
+            harnessSessionId: checkpointHarnessSessionId,
+            baseLeafId: liveSessionState.leafId,
+            baseLatestCompactionId: liveSessionState.latestCompactionId,
+            runPiSessionCompactionFn: params.runPiSessionCompactionFn,
+            resolveRuntimeModelClientFn: params.resolveRuntimeModelClientFn,
+            sessionOps: params.sessionCheckpointSessionOps,
+          });
+          const finalPreRunDecision = evaluatePreRunSessionCompaction({
+            liveSessionFile: checkpointHarnessSessionId,
+            snapshotPayload,
+            selectedModel,
+            previousSelectedModel,
+            previousContextUsage: null,
+          });
+          const currentPreRunCompaction =
+            preRunCompaction ?? initialPreRunCompaction;
           preRunCompaction = {
-            ...preRunCompaction,
-            final_decision: "reset_required",
-            reset_required: true,
+            ...currentPreRunCompaction,
+            final_decision: finalPreRunDecision.decision,
+            after_session_tokens: finalPreRunDecision.currentSessionTokens,
+            estimated_request_tokens:
+              finalPreRunDecision.estimatedRequestTokens ??
+              currentPreRunCompaction.estimated_request_tokens,
+            projected_total_tokens:
+              finalPreRunDecision.projectedTotalTokens ??
+              currentPreRunCompaction.projected_total_tokens,
+            compaction_changed_branch: compactionResult.merged,
           };
-          throw new SessionResetRequiredError(
-            `pre-run session compaction could not make the next prompt fit ${selectedModel ?? "the selected model"}; session reset required`,
-          );
+          if (finalPreRunDecision.decision !== "fit") {
+            preRunCompaction = {
+              ...preRunCompaction,
+              final_decision: "reset_required",
+              reset_required: true,
+            };
+            throw new SessionResetRequiredError(
+              `pre-run session compaction could not make the next prompt fit ${selectedModel ?? "the selected model"}; session reset required`,
+            );
+          }
         }
       }
       const executeRunner =

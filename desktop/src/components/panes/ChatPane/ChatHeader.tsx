@@ -1,4 +1,12 @@
-import { Boxes, Clock3, Inbox, MessageCircle } from "lucide-react";
+import {
+  ArrowLeft,
+  Boxes,
+  Clock3,
+  Inbox,
+  Loader2,
+  MessageCircle,
+  Wand2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { StatusDot } from "@/components/ui/status-dot";
@@ -15,6 +23,8 @@ interface ChatHeaderProps {
   subtitle?: string;
   onReturnToMainSession?: () => void;
   onOpenSessions?: () => void;
+  onOpenMeetingMode?: () => void;
+  meetingModeBusy?: boolean;
   onOpenInbox?: () => void;
   inboxUnreadCount: number;
   onOpenAutomations?: () => void;
@@ -27,6 +37,8 @@ export function ChatHeader({
   subtitle,
   onReturnToMainSession,
   onOpenSessions,
+  onOpenMeetingMode,
+  meetingModeBusy = false,
   onOpenInbox,
   inboxUnreadCount,
   onOpenAutomations,
@@ -52,6 +64,26 @@ export function ChatHeader({
 
       <TooltipProvider delay={250}>
         <div className="flex shrink-0 items-center gap-0.5">
+          {onReturnToMainSession ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => onReturnToMainSession()}
+                    aria-label="Main session"
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    <ArrowLeft className="size-4" />
+                  </Button>
+                }
+              />
+              <TooltipContent>Main session</TooltipContent>
+            </Tooltip>
+          ) : null}
+
           {onOpenSessions ? (
             <Tooltip>
               <TooltipTrigger
@@ -69,6 +101,31 @@ export function ChatHeader({
                 }
               />
               <TooltipContent>Sessions</TooltipContent>
+            </Tooltip>
+          ) : null}
+
+          {onOpenMeetingMode ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => onOpenMeetingMode()}
+                    aria-label="Meeting Mode"
+                    className="text-muted-foreground hover:text-foreground"
+                    disabled={meetingModeBusy}
+                  >
+                    {meetingModeBusy ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Wand2 className="size-4" />
+                    )}
+                  </Button>
+                }
+              />
+              <TooltipContent>Meeting Mode</TooltipContent>
             </Tooltip>
           ) : null}
 

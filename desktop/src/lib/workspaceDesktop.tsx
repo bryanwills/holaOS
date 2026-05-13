@@ -42,6 +42,25 @@ export interface ComposioToolkitMetadata {
   categories: string[];
 }
 
+const COMPOSIO_PROVIDER_TOOLKIT_ALIASES: Record<string, string> = {
+  x: "twitter",
+};
+
+export function composioToolkitSlugForProvider(providerId: string): string {
+  const normalized = providerId.trim().toLowerCase();
+  return COMPOSIO_PROVIDER_TOOLKIT_ALIASES[normalized] ?? normalized;
+}
+
+export function composioToolkitMatchesProvider(
+  toolkitSlug: string,
+  providerId: string,
+): boolean {
+  return (
+    toolkitSlug.trim().toLowerCase() ===
+    composioToolkitSlugForProvider(providerId)
+  );
+}
+
 /**
  * Resolves the display name + logo for an app by combining the catalog
  * entry's `provider_id` (self-declared in app.runtime.yaml) with the
@@ -52,7 +71,9 @@ export function resolveAppDisplay(
   providerId: string | null | undefined,
   toolkitsByProvider: Record<string, ComposioToolkitMetadata>,
 ): { name: string | null; logo: string | null } {
-  const slug = providerId?.trim().toLowerCase();
+  const slug = providerId
+    ? composioToolkitSlugForProvider(providerId)
+    : "";
   const toolkit = slug ? toolkitsByProvider[slug] : undefined;
   return {
     name: toolkit?.name?.trim() || null,
@@ -178,7 +199,7 @@ interface WorkspaceDesktopContextValue {
   sessionTargetId: string;
   refreshWorkspaceData: () => Promise<void>;
   chooseTemplateFolder: () => Promise<void>;
-  createWorkspace: () => Promise<void>;
+  createWorkspace: (options?: { workspaceOnboardingMode?: "start" | "skip" }) => Promise<void>;
   deleteWorkspace: (workspaceId: string) => Promise<void>;
   updateWorkspaceAppearance: (
     workspaceId: string,
@@ -742,7 +763,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     }
   }
 
-  async function createWorkspace() {
+  async function createWorkspace(options: { workspaceOnboardingMode?: "start" | "skip" } = {}) {
     setIsCreatingWorkspace(true);
     setWorkspaceCreatePhase("creating_workspace");
     setWorkspaceErrorMessage("");
@@ -785,6 +806,9 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
           harness: selectedCreateHarness,
           name: trimmedWorkspaceName,
           template_mode: templateSourceMode === "empty_onboarding" ? "empty_onboarding" : "empty",
+          ...(templateSourceMode === "empty" && options.workspaceOnboardingMode
+            ? { workspace_onboarding_mode: options.workspaceOnboardingMode }
+            : {}),
           ...(customWorkspacePath ? { workspace_path: customWorkspacePath } : {})
         });
       } else {
@@ -1078,8 +1102,9 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       // tolerate snapshot failure
     }
 
+    const toolkitSlug = composioToolkitSlugForProvider(provider);
     const link = await window.electronAPI.workspace.composioConnect({
-      provider,
+      provider: toolkitSlug,
       owner_user_id: userId,
     });
     await window.electronAPI.ui.openExternalUrl(link.redirect_url);
@@ -1105,7 +1130,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       const newConnection = current.connections.find(
         (c) =>
           !beforeIds.has(c.id) &&
-          c.toolkitSlug.toLowerCase() === provider.toLowerCase(),
+          composioToolkitMatchesProvider(c.toolkitSlug, provider),
       );
       if (newConnection) {
         await window.electronAPI.workspace.composioFinalize({

@@ -412,10 +412,21 @@ interface WorkspaceRecordPayload {
   created_at: string | null;
   updated_at: string | null;
   deleted_at_utc: string | null;
+  workspace_role?: string | null;
+  source_workspace_id?: string | null;
+  lab_purpose?: string | null;
+  lab_status?: string | null;
 }
 
 interface WorkspaceResponsePayload {
   workspace: WorkspaceRecordPayload;
+}
+
+interface WorkspaceLabResponsePayload {
+  lab: WorkspaceRecordPayload | null;
+  source: WorkspaceRecordPayload | null;
+  session: AgentSessionRecordPayload | null;
+  created?: boolean;
 }
 
 interface WorkspaceListResponsePayload {
@@ -873,6 +884,7 @@ interface HolabossCreateWorkspacePayload {
   template_name?: string | null;
   template_ref?: string | null;
   template_commit?: string | null;
+  workspace_onboarding_mode?: "start" | "skip" | null;
   workspace_path?: string | null;
 }
 
@@ -1391,6 +1403,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getWorkspaceRoot: (workspaceId: string) => ipcRenderer.invoke("workspace:getWorkspaceRoot", workspaceId) as Promise<string>,
     createWorkspace: (payload: HolabossCreateWorkspacePayload) =>
       ipcRenderer.invoke("workspace:createWorkspace", payload) as Promise<WorkspaceResponsePayload>,
+    createWorkspaceLab: (workspaceId: string, purpose: "workspace_onboarding" | "meeting_mode") =>
+      ipcRenderer.invoke("workspace:createWorkspaceLab", workspaceId, purpose) as Promise<WorkspaceLabResponsePayload>,
     deleteWorkspace: (workspaceId: string, keepFiles?: boolean) =>
       ipcRenderer.invoke("workspace:deleteWorkspace", workspaceId, keepFiles) as Promise<WorkspaceResponsePayload>,
     updateAppearance: (

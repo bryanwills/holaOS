@@ -29,6 +29,10 @@ import {
   invalidateIntegrationAccountCache,
   useIntegrationAccountMetadata,
 } from "@/lib/integrationAccountStore";
+import {
+  composioToolkitMatchesProvider,
+  composioToolkitSlugForProvider,
+} from "@/lib/workspaceDesktop";
 
 interface ComposioToolkit {
   slug: string;
@@ -465,8 +469,9 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
         // the toolkit is still detectable.
       }
 
+      const toolkitSlug = composioToolkitSlugForProvider(integration.providerId);
       const link = await window.electronAPI.workspace.composioConnect({
-        provider: integration.providerId,
+        provider: toolkitSlug,
         owner_user_id: userId,
       });
 
@@ -492,8 +497,10 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
         const newConnection = current.connections.find(
           (c) =>
             !beforeIds.has(c.id) &&
-            c.toolkitSlug.toLowerCase() ===
-              integration.providerId.toLowerCase(),
+            composioToolkitMatchesProvider(
+              c.toolkitSlug,
+              integration.providerId,
+            ),
         );
         if (newConnection) {
           await window.electronAPI.workspace.composioFinalize({
@@ -1370,4 +1377,3 @@ function ConnectedProviderCard({
     </div>
   );
 }
-

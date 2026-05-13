@@ -30,6 +30,11 @@ import { cronjobNextRunAt } from "./cron-worker.js";
 import { ensureWorkspaceDataDb } from "./ts-runner-session-state.js";
 import { generateWorkspaceImage } from "./image-generation.js";
 import { searchPublicWeb } from "./native-web-search.js";
+import {
+  INTEGRATION_CATALOG_PROVIDERS,
+  integrationCatalogProviderIds,
+} from "./integration-catalog.js";
+import { checkIntegrationReadiness } from "./integration-runtime.js";
 import { killChildProcess, spawnShellCommand } from "./runtime-shell.js";
 import { resolveSubagentExecutionProfile } from "./subagent-model.js";
 import {
@@ -76,6 +81,8 @@ function buildSessionRefreshFields(newMcpServers: string[]): JsonObject {
 }
 
 function pendingIntegrationsFromAppManifests(params: {
+  store: RuntimeStateStore;
+  workspaceId: string;
   workspaceDir: string;
   appIds: string[];
 }): JsonObject[] {
@@ -94,15 +101,28 @@ function pendingIntegrationsFromAppManifests(params: {
     } catch {
       continue;
     }
-    for (const integration of parsed.integrations ?? []) {
-      if (!integration.required) continue;
-      const key = `${appId}|${integration.provider.toLowerCase()}`;
+    const readiness = checkIntegrationReadiness({
+      store: params.store,
+      workspaceId: params.workspaceId,
+      appId,
+      resolvedApp: parsed,
+    });
+    for (const issue of readiness.issues) {
+      const integration = (parsed.integrations ?? []).find(
+        (candidate) =>
+          candidate.key === issue.integrationKey ||
+          candidate.provider === issue.provider,
+      );
+      if (!integration?.required) continue;
+      const key = `${params.workspaceId}|${appId}|${integration.provider.toLowerCase()}`;
       if (seen.has(key)) continue;
       seen.add(key);
       out.push({
+        workspace_id: params.workspaceId,
         app_id: appId,
         provider_id: integration.provider,
         credential_source: integration.credentialSource,
+        status: issue.code,
       });
     }
   }
@@ -1128,6 +1148,12 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/workspace-apps/find",
     description: runtimeToolBaseDefinition("workspace_apps_find").description
+  },
+  {
+    id: runtimeToolBaseDefinition("workspace_integrations_list_catalog").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/workspace-integrations/catalog",
+    description: runtimeToolBaseDefinition("workspace_integrations_list_catalog").description
   },
   {
     id: runtimeToolBaseDefinition("workspace_apps_install").id,
@@ -4372,6 +4398,26 @@ export class RuntimeAgentToolsService {
     };
   }
 
+  listIntegrationCatalog(params: { workspaceId: string }): JsonObject {
+    this.requireWorkspace(params.workspaceId);
+    return {
+      workspace_id: params.workspaceId,
+      provider_ids: integrationCatalogProviderIds(),
+      providers: INTEGRATION_CATALOG_PROVIDERS.map((provider) => ({
+        provider_id: provider.provider_id,
+        display_name: provider.display_name,
+        description: provider.description,
+        auth_modes: provider.auth_modes,
+        supports_oss: provider.supports_oss,
+        supports_managed: provider.supports_managed,
+        default_scopes: provider.default_scopes,
+        docs_url: provider.docs_url,
+      })),
+      requirement:
+        "Use these exact provider_id values in app.runtime.yaml integrations and createIntegrationClient(...). Product names or aliases such as 'x' are invalid; use 'twitter' for X.",
+    };
+  }
+
   async installWorkspaceApp(
     params: RuntimeAgentToolsInstallWorkspaceAppParams,
   ): Promise<JsonObject> {
@@ -4435,6 +4481,7 @@ export class RuntimeAgentToolsService {
       entry.providerId
         ? [
             {
+              workspace_id: params.workspaceId,
               app_id: appId,
               provider_id: entry.providerId,
               credential_source: entry.credentialSource,
@@ -4794,6 +4841,8 @@ export class RuntimeAgentToolsService {
     const mcpServersAfter = readWorkspaceMcpRegistryServerNames(workspaceDir);
     const newMcpServers = [...mcpServersAfter].filter((name) => !mcpServersBefore.has(name));
     const pendingIntegrations = pendingIntegrationsFromAppManifests({
+      store: this.store,
+      workspaceId: params.workspaceId,
       workspaceDir,
       appIds: targetAppIds,
     });

@@ -535,6 +535,34 @@ test("composeAgentPrompt teaches subagents to prefer workspace app catalog insta
   );
 });
 
+test("composeAgentPrompt makes integration catalog lookup mandatory for provider-backed app work", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read"],
+    extraTools: ["workspace_integrations_list_catalog", "workspace_apps_scaffold"],
+    runtimeToolIds: ["workspace_integrations_list_catalog", "workspace_apps_scaffold"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+  });
+
+  const prompt = composeAgentPrompt("You are concise.", {
+    defaultTools: ["read"],
+    extraTools: ["workspace_integrations_list_catalog", "workspace_apps_scaffold"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "subagent",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+  });
+
+  assert.match(
+    prompt.systemPrompt,
+    /Hard requirement: before adding any `integrations:` entry to `app\.runtime\.yaml` or using `createIntegrationClient\(\.\.\.\)`, call `workspace_integrations_list_catalog`/,
+  );
+  assert.match(prompt.systemPrompt, /Do not invent provider names or aliases/i);
+});
+
 test("composeAgentPrompt can inject a run-specific routing recovery override for polluted browser retries", () => {
   const capabilityManifest = buildAgentCapabilityManifest({
     defaultTools: ["read", "edit"],
@@ -745,6 +773,78 @@ test("composeAgentPrompt keeps onboarding sessions free of subagent delegation d
     /delegate instead of replying that this run lacks those tools\./,
   );
   assert.doesNotMatch(prompt.systemPrompt, /Subagents are backstage executors\./);
+});
+
+test("composeAgentPrompt gives workspace onboarding its own design-lab prompt", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read", "edit", "bash"],
+    extraTools: ["holaboss_delegate_task", "holaboss_onboarding_complete"],
+    runtimeToolIds: ["holaboss_delegate_task", "holaboss_onboarding_complete"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+  });
+
+  const prompt = composeAgentPrompt("You are concise.", {
+    defaultTools: ["read", "edit", "bash"],
+    extraTools: ["holaboss_delegate_task", "holaboss_onboarding_complete"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_onboarding",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+  });
+
+  assert.match(prompt.systemPrompt, /workspace onboarding design lab controller/);
+  assert.match(prompt.systemPrompt, /user-facing architect and builder/);
+  assert.match(prompt.systemPrompt, /cronjobs or recurring work/);
+  assert.match(prompt.systemPrompt, /apps to install/);
+  assert.match(prompt.systemPrompt, /custom apps to create/);
+  assert.match(prompt.systemPrompt, /workspace file and folder organization/);
+  assert.match(prompt.systemPrompt, /skills or repeatable workflows/);
+  assert.match(prompt.systemPrompt, /AI manager personality and behavior/);
+  assert.match(prompt.systemPrompt, /gated design process/);
+  assert.match(prompt.systemPrompt, /converse with the user/);
+  assert.match(prompt.systemPrompt, /converge those requirements into a concrete design report/);
+  assert.match(prompt.systemPrompt, /wait for user confirmation/);
+  assert.match(prompt.systemPrompt, /Delegate implementation to subagents only after the user confirms the design report/);
+  assert.match(prompt.systemPrompt, /Keep the onboarding thread conversational and uncluttered/);
+  assert.match(prompt.systemPrompt, /Do not use main-session-style parallel UX/);
+  assert.match(prompt.systemPrompt, /waiting for implementation results before moving to verification/);
+  assert.match(prompt.systemPrompt, /verification report/);
+  assert.match(prompt.systemPrompt, /verified implementation/);
+  assert.doesNotMatch(prompt.systemPrompt, /This is an onboarding session\./);
+});
+
+test("composeAgentPrompt gives meeting mode its own critique-lab prompt", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read", "edit", "bash"],
+    extraTools: ["holaboss_delegate_task"],
+    runtimeToolIds: ["holaboss_delegate_task"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+  });
+
+  const prompt = composeAgentPrompt("You are concise.", {
+    defaultTools: ["read", "edit", "bash"],
+    extraTools: ["holaboss_delegate_task"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "meeting_mode",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+  });
+
+  assert.match(prompt.systemPrompt, /meeting-mode design lab controller/);
+  assert.match(prompt.systemPrompt, /already used/);
+  assert.match(prompt.systemPrompt, /critique what did not work well/);
+  assert.match(prompt.systemPrompt, /concrete backlog first/);
+  assert.match(prompt.systemPrompt, /confirms priorities/);
+  assert.match(prompt.systemPrompt, /explicit user acceptance before merging/);
+  assert.doesNotMatch(prompt.systemPrompt, /workspace onboarding design lab controller/);
 });
 
 test("composeBaseAgentPrompt includes shared todo continuity policy when todo tools are available", () => {

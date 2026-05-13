@@ -26,6 +26,7 @@ This includes requests for dashboards, trackers, analytics surfaces, CSV visuali
 ## Deterministic Workspace Tools
 When these runtime tools are surfaced for the current run, prefer them over hand-written platform glue:
 - `workspace_apps_find` to check the marketplace/local catalog before deciding to build a new app
+- `workspace_integrations_list_catalog` to resolve canonical integration `provider_id` values before declaring provider access in app manifests or bridge clients
 - `workspace_apps_install` when the catalog already contains the app the user wants
 - `workspace_apps_scaffold` for the minimum valid app skeleton
 - `workspace_apps_register` for `workspace.yaml` registration
@@ -47,16 +48,18 @@ If `workspace_apps_find` returns an exact or clearly suitable app for the user's
 Follow this sequence for both new apps and updates to existing apps:
 1. Inspect workspace context, existing apps, data sources, and any required local files.
 2. If `workspace_apps_find` is surfaced and the request could match an existing workspace app, query the catalog before deciding to build.
-3. Decide whether to modify an existing app, install an existing catalog app, or create a new one.
-4. If an exact or clearly suitable catalog app exists, install it and stop the build path unless the user explicitly asked for a custom app.
-5. Otherwise scaffold the minimum valid app shape or edit the existing app files.
-6. Add only the capabilities the request actually needs.
-7. Register the app or update its workspace registration.
-8. Run `workspace_apps_build` when a deterministic build script exists instead of relying on ad hoc shell output.
-9. If the app was already running, prefer `workspace_apps_restart_and_wait_ready`; otherwise ensure the managed runtime is running it.
-10. Wait until runtime truth reports the app as `ready: true` if you did not already use the compound restart-and-wait tool.
-11. Verify the managed UI, MCP, data access, integrations, and outputs that the request depends on. Prefer `workspace_apps_probe_endpoints` for UI/MCP contract checks.
-12. Only then report that the app is installed, updated, or working.
+3. If the app needs external provider access and `workspace_integrations_list_catalog` is surfaced, call it before writing `integrations:` or `createIntegrationClient(...)`; use the exact returned canonical `provider_id` everywhere. For X, the canonical provider id is `twitter`, not `x`.
+4. Decide whether to modify an existing app, install an existing catalog app, or create a new one.
+5. If an exact or clearly suitable catalog app exists, install it and stop the build path unless the user explicitly asked for a custom app.
+6. Otherwise scaffold the minimum valid app shape or edit the existing app files.
+7. Add only the capabilities the request actually needs.
+8. Register the app or update its workspace registration.
+9. Run `workspace_apps_build` when a deterministic build script exists instead of relying on ad hoc shell output.
+10. If the app was already running, prefer `workspace_apps_restart_and_wait_ready`; otherwise ensure the managed runtime is running it.
+11. Wait until runtime truth reports the app as `ready: true` if you did not already use the compound restart-and-wait tool.
+12. For integration-backed apps, implement the connection flow using a live status probe pattern instead of cached connection verdicts. Add a provider client wrapper around `createIntegrationClient(...)`, expose a current `getConnectionStatus` path for UI or tools when the app depends on user authorization, and treat any persisted connection state as last-observed telemetry only.
+13. Verify the managed UI, MCP, data access, integrations, and outputs that the request depends on. Prefer `workspace_apps_probe_endpoints` for UI/MCP contract checks.
+14. Only then report that the app is installed, updated, or working.
 
 Do not treat file creation, `npm install`, or a standalone browser preview as completion.
 
@@ -442,7 +445,7 @@ Use this when the app needs provider access through holaOS-managed integrations.
 
 ```yaml
 integrations:
-  - key: primary_google
+  - key: google
     provider: google
     capability: gmail
     scopes:
@@ -471,8 +474,115 @@ const response = await gmail.proxy({
 Rules:
 - do not expect provider tokens directly in env
 - use integrations only when existing installed app data is not already sufficient
+- if `workspace_integrations_list_catalog` is available, call it before adding `integrations:` and use the exact returned `provider_id`; set `key` to the same canonical provider id because `createIntegrationClient(...)` and workspace binding both resolve by provider id
 - keep integration declarations explicit in `app.runtime.yaml`
 - after `workspace_apps_ensure_running` succeeds, the runtime reads each declared `integrations:` entry with `required: true` and surfaces a Connect button next to your reply for any provider the user has not yet authorized — you do NOT need to call any extra tool. Just tell the user the app is ready and let them click Connect.
+
+### Live Connection Status Pattern
+
+For apps that depend on user-authorized provider access, current connectivity must come from a fresh bridge-backed probe, not from app-local cached state.
+
+Use this pattern:
+- create a dedicated provider client wrapper module around `createIntegrationClient("<canonical_provider_id>")`
+- centralize proxy error mapping in that wrapper
+- add a cheap status probe that calls a lightweight provider endpoint through the bridge
+- expose the result through a server helper and, when the app benefits from it, a UI route or MCP tool such as `<app>_get_connection_status`
+- treat any persisted connection fields as diagnostics or last-observed telemetry only
+
+Do not do this:
+- do not persist `connected`, `not_connected`, `needs_connection`, or similar states and later reuse them as authoritative truth
+- do not infer current connection state from a previous refresh result
+- do not let one failed provider call permanently latch the app into a disconnected state until manual cleanup
+
+Preferred shape:
+
+```ts
+import { createIntegrationClient } from "@holaboss/bridge";
+
+type ProviderErrorCode =
+  | "not_connected"
+  | "validation_failed"
+  | "rate_limited"
+  | "upstream_error";
+
+type ProviderResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: { code: ProviderErrorCode; message: string } };
+
+const providerClient = createIntegrationClient("twitter");
+
+async function providerGet<T>(endpoint: string): Promise<ProviderResult<T>> {
+  try {
+    const response = await providerClient.proxy<T>({
+      method: "GET",
+      endpoint,
+    });
+
+    if (response.status >= 200 && response.status < 300) {
+      return { ok: true, data: response.data as T };
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      return {
+        ok: false,
+        error: {
+          code: "not_connected",
+          message: "The provider account is not currently authorized for this workspace.",
+        },
+      };
+    }
+
+    return {
+      ok: false,
+      error: {
+        code: "upstream_error",
+        message: `Provider returned HTTP ${response.status}.`,
+      },
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/not connected|no .* integration|connect via integrations/i.test(message)) {
+      return {
+        ok: false,
+        error: {
+          code: "not_connected",
+          message: "The provider account is not currently authorized for this workspace.",
+        },
+      };
+    }
+    return {
+      ok: false,
+      error: {
+        code: "upstream_error",
+        message,
+      },
+    };
+  }
+}
+
+export async function getConnectionStatus() {
+  const result = await providerGet<{ data?: { id?: string } }>(
+    "/2/users/me?user.fields=id",
+  );
+
+  if (result.ok) {
+    return { connected: true };
+  }
+
+  if (result.error.code === "not_connected") {
+    return { connected: false };
+  }
+
+  return { connected: false, error: result.error.message };
+}
+```
+
+Rules:
+- choose the cheapest provider endpoint that proves the required auth works
+- when a UI needs connection state, fetch it from the live status helper instead of replaying cached app settings
+- when an MCP tool or agent flow depends on connectivity, expose a dedicated status tool and call it before telling the user to reconnect
+- if the app stores connection-related records, label them as last-checked telemetry and refresh them from live status instead of trusting them blindly
+- if the app receives `not_connected`, recover by re-checking live status or prompting the user to authorize; do not silently keep stale disconnected state forever
 
 ### Durable Output Pattern
 
@@ -609,12 +719,13 @@ Minimum MCP contract:
 - If provider access is needed, declare `integrations` in `app.runtime.yaml`.
 - Do not assume raw provider tokens in environment variables.
 - Use brokered or platform-managed integration behavior.
+- Use a live connection-status probe pattern when app behavior depends on current authorization.
 
 Example:
 
 ```yaml
 integrations:
-  - key: primary_google
+  - key: google
     provider: google
     capability: gmail
     scopes:
@@ -660,6 +771,7 @@ integrations:
 - app-owned tables use the app's own prefix when the app writes durable state
 - mixed-source behavior is correct when the app combines installed app data and local files
 - declared integrations work through the platform bridge when needed
+- integration-backed apps derive current connectivity from a live status helper, not cached app-local connection flags
 - outputs and deep links reopen correctly when used
 - the app reaches a healthy or ready state
 
@@ -676,6 +788,8 @@ integrations:
 - duplicating another app's source data instead of reusing it
 - importing file data into durable tables when direct file use would have been enough
 - integrations expected without manifest declaration
+- integration-backed app caches `connected` or `needs_connection` and later treats that cached value as current truth
+- app tells the user to reconnect based on stale app-local state instead of a fresh bridge-backed status check
 - frontend complexity added before basic runtime health works
 
 ## Build Discipline
