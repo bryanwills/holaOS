@@ -83,7 +83,7 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
   {
     id: "write_report",
     description:
-      "Create a report artifact for the current workspace session, save it under outputs/reports/, and return the created report metadata.",
+      "Create an HTML report artifact for the current workspace session, save it under outputs/reports/, and return the created report metadata.",
     policy: "mutate"
   },
   {

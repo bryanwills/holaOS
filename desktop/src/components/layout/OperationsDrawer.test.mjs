@@ -4,16 +4,16 @@ import test from "node:test";
 
 const OPERATIONS_DRAWER_PATH = new URL("./OperationsDrawer.tsx", import.meta.url);
 
-test("operations drawer inbox hides proactive controls while keeping proposal feedback", async () => {
+test("operations drawer inbox keeps proposal feedback after proactive controls are removed", async () => {
   const source = await readFile(OPERATIONS_DRAWER_PATH, "utf8");
 
-  assert.match(source, /const showProactiveControls = false;/);
-  assert.match(source, /ProactiveLifecyclePanel/);
-  assert.match(source, /\{showProactiveControls \? \(/);
   assert.match(source, /proposalStatusMessage \?/);
   assert.match(source, /label="Sessions"/);
   assert.match(source, />\s*New Session\s*</);
-  assert.match(source, /isLoading=\{isLoadingProactiveStatus\}/);
+  assert.doesNotMatch(source, /showProactiveControls/);
+  assert.doesNotMatch(source, /ProactiveLifecyclePanel/);
+  assert.doesNotMatch(source, /Backend proposals require sign-in/);
+  assert.doesNotMatch(source, /Sign in for synced proactive controls\./);
   assert.doesNotMatch(source, /label="Running"/);
   assert.doesNotMatch(source, /InboxHeaderActions/);
 });
@@ -21,17 +21,23 @@ test("operations drawer inbox hides proactive controls while keeping proposal fe
 test("operations drawer shows proposal source lane and rationale copy", async () => {
   const source = await readFile(OPERATIONS_DRAWER_PATH, "utf8");
 
-  assert.match(source, /function proposalSourceLabel\(source: TaskProposalRecordPayload\["proposal_source"\]\): string/);
+  assert.match(
+    source,
+    /function proposalSourceLabel\(\s*source: TaskProposalRecordPayload\["proposal_source"\],\s*\): string/,
+  );
   assert.match(source, /proposalSourceLabel\(proposal\.proposal_source\)/);
-  assert.match(source, /Why: \{proposal\.task_generation_rationale\}/);
+  assert.match(
+    source,
+    /const rationale =\s*proposal\.task_generation_rationale\.trim\(\)\s*\|\|\s*"No generation rationale was recorded\."/,
+  );
 });
 
-test("operations drawer can open a centered proposal details dialog from an info control", async () => {
+test("operations drawer can open a centered proposal details dialog from the proposal row", async () => {
   const source = await readFile(OPERATIONS_DRAWER_PATH, "utf8");
 
   assert.match(source, /function ProposalDetailsDialog\(/);
-  assert.match(source, /aria-label=\{`View proposal details for \$\{proposal\.task_name\}`\}/);
   assert.match(source, /setExpandedProposalId\(proposal\.proposal_id\)/);
+  assert.match(source, /className="-mx-1 flex min-w-0 flex-1 flex-col gap-0\.5 rounded-md px-1 text-left transition-colors hover:bg-fg-2"/);
   assert.match(source, /aria-label="Proposal details"/);
   assert.match(source, /Why This Was Proposed/);
   assert.match(source, /return createPortal\(modalContent, document\.body\);/);
@@ -39,14 +45,14 @@ test("operations drawer can open a centered proposal details dialog from an info
   assert.match(source, /onDismissProposal=\{onDismissProposal\}/);
 });
 
-test("operations drawer hides the proactive sign-in notice while signed out", async () => {
+test("operations drawer no longer carries the deprecated proactive sign-in notice", async () => {
   const source = await readFile(OPERATIONS_DRAWER_PATH, "utf8");
 
-  assert.match(source, /Backend proposals require sign-in/);
-  assert.match(source, /Sign in for synced proactive controls\./);
-  assert.match(source, /size="xs"/);
-  assert.match(source, /\{showProactiveControls \? \(/);
-  assert.doesNotMatch(source, /\{isSignedIn \? \(\s*<div className="mb-3">/);
+  assert.doesNotMatch(source, /Backend proposals require sign-in/);
+  assert.doesNotMatch(source, /Sign in for synced proactive controls\./);
+  assert.doesNotMatch(source, /size="xs"/);
+  assert.doesNotMatch(source, /useDesktopAuthSession/);
+  assert.doesNotMatch(source, /LogIn size=\{12\}/);
 });
 
 test("operations drawer session rows expose pointer cursor affordance", async () => {
@@ -64,7 +70,7 @@ test("operations drawer can badge the inbox tab for unread proposals", async () 
   assert.match(source, /unreadProposalCount: number;/);
   assert.match(source, /showIndicator=\{unreadProposalCount > 0\}/);
   assert.match(source, /showIndicator = false,/);
-  assert.match(source, /absolute -right-0\.5 -top-0\.5 size-2\.5 rounded-full border-2 border-card bg-destructive/);
+  assert.match(source, /className="absolute -right-0\.5 -top-0\.5"/);
 });
 
 test("operations drawer derives a completed status from the last turn result when runtime is idle", async () => {

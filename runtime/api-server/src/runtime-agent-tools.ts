@@ -127,6 +127,8 @@ const WORKSPACE_APP_ENDPOINT_PROBE_CHECKS = [
   "mcp_initialize",
   "mcp_tools_list",
 ] as const;
+const REPORT_FILE_EXTENSION = ".html";
+const REPORT_MIME_TYPE = "text/html";
 
 type WorkspaceAppEndpointProbeCheck = (typeof WORKSPACE_APP_ENDPOINT_PROBE_CHECKS)[number];
 
@@ -1783,7 +1785,7 @@ function resolvedWorkspaceHarness(workspace: WorkspaceRecord): string {
 function sanitizeReportFilenameStem(value: string): string {
   const stem = value
     .trim()
-    .replace(/\.md$/i, "")
+    .replace(/\.(?:md|mdx|markdown|html?)$/i, "")
     .replace(/[/\\]+/g, " ")
     .replace(/[^a-zA-Z0-9._ -]+/g, "")
     .replace(/\s+/g, "-")
@@ -1827,6 +1829,8 @@ function extensionForMimeType(value: string): string {
       return ".pdf";
     case "text/plain":
       return ".txt";
+    case "text/html":
+      return ".html";
     case "text/markdown":
       return ".md";
     case "application/json":
@@ -1859,6 +1863,9 @@ function mimeTypeFromFilename(value: string): string {
       return "application/pdf";
     case ".txt":
       return "text/plain";
+    case ".html":
+    case ".htm":
+      return "text/html";
     case ".md":
       return "text/markdown";
     case ".json":
@@ -2014,10 +2021,39 @@ async function resolveDownloadTarget(params: {
   );
 }
 
+function textFromHtmlFragment(value: string): string {
+  return value
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function reportTitleFromContent(content: string): string {
+  const titleMatch = content.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
+  if (titleMatch?.[1]) {
+    const title = textFromHtmlFragment(titleMatch[1]);
+    if (title) {
+      return title;
+    }
+  }
+  const h1Match = content.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i);
+  if (h1Match?.[1]) {
+    const title = textFromHtmlFragment(h1Match[1]);
+    if (title) {
+      return title;
+    }
+  }
   const headingMatch = content.match(/^\s*#\s+(.+?)\s*$/m);
   if (headingMatch?.[1]) {
     return headingMatch[1].trim();
+  }
+  if (/<[^>]+>/.test(content)) {
+    const htmlText = textFromHtmlFragment(content);
+    if (htmlText) {
+      return htmlText.slice(0, 120);
+    }
   }
   const firstContentLine = content
     .split(/\r?\n/)
@@ -2034,7 +2070,7 @@ function defaultReportTitle(params: {
   return (
     normalizedString(params.title) ||
     reportTitleFromContent(params.content) ||
-    normalizedString(params.filename).replace(/\.md$/i, "") ||
+    normalizedString(params.filename).replace(/\.(?:md|mdx|markdown|html?)$/i, "") ||
     `Report ${utcNowIso().slice(0, 10)}`
   );
 }
@@ -2049,7 +2085,9 @@ async function reportOutputFilePath(params: {
   );
   for (let index = 0; index < 1000; index += 1) {
     const fileName =
-      index === 0 ? `${preferredStem}.md` : `${preferredStem}-${index + 1}.md`;
+      index === 0
+        ? `${preferredStem}${REPORT_FILE_EXTENSION}`
+        : `${preferredStem}-${index + 1}${REPORT_FILE_EXTENSION}`;
     const relativePath = path.posix.join("outputs", "reports", fileName);
     const absolutePath = path.join(params.workspaceDir, relativePath);
     try {
@@ -3345,7 +3383,7 @@ export class RuntimeAgentToolsService {
         change_type: "created",
         category: "document",
         artifact_type: "report",
-        mime_type: "text/markdown",
+        mime_type: REPORT_MIME_TYPE,
         size_bytes: sizeBytes,
         tool_id: "write_report",
         ...(normalizedString(params.summary)
@@ -3363,7 +3401,7 @@ export class RuntimeAgentToolsService {
       artifact_id: output.artifactId,
       title: output.title,
       file_path: relativePath,
-      mime_type: "text/markdown",
+      mime_type: REPORT_MIME_TYPE,
       size_bytes: sizeBytes,
       created_at: output.createdAt,
     };

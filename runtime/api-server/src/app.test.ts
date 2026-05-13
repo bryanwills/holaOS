@@ -2364,7 +2364,7 @@ test("runtime terminal read preview mode clips large event streams and spills fu
   }
 });
 
-test("runtime write_report tool writes a markdown report and persists it as a session output", async () => {
+test("runtime write_report tool writes an HTML report and persists it as a session output", async () => {
   const root = makeTempDir("hb-runtime-api-report-tools-");
   const workspaceRoot = path.join(root, "workspace");
   const store = new RuntimeStateStore({
@@ -2385,6 +2385,12 @@ test("runtime write_report tool writes a markdown report and persists it as a se
   });
 
   const app = buildTestRuntimeApiServer({ store });
+  const reportContent = [
+    "<!doctype html>",
+    "<html><body><h1>Tariff update brief</h1>",
+    "<ul><li>Court challenges are active.</li><li>Consumer impact remains debated.</li></ul>",
+    "</body></html>",
+  ].join("");
   try {
     const response = await app.inject({
       method: "POST",
@@ -2397,25 +2403,25 @@ test("runtime write_report tool writes a markdown report and persists it as a se
       },
       payload: {
         title: "Tariff update brief",
-        filename: "tariff-update-brief",
+        filename: "tariff-update-brief.md",
         summary: "Short research brief on current tariff developments.",
-        content: "# Tariff update brief\n\n- Court challenges are active.\n- Consumer impact remains debated.\n",
+        content: reportContent,
       },
     });
 
     assert.equal(response.statusCode, 200);
     assert.equal(response.json().title, "Tariff update brief");
-    assert.equal(response.json().file_path, "outputs/reports/tariff-update-brief.md");
-    assert.equal(response.json().mime_type, "text/markdown");
+    assert.equal(response.json().file_path, "outputs/reports/tariff-update-brief.html");
+    assert.equal(response.json().mime_type, "text/html");
     assert.ok(
-      fs.existsSync(path.join(workspaceRoot, "workspace-1", "outputs/reports/tariff-update-brief.md")),
+      fs.existsSync(path.join(workspaceRoot, "workspace-1", "outputs/reports/tariff-update-brief.html")),
     );
     assert.equal(
       fs.readFileSync(
-        path.join(workspaceRoot, "workspace-1", "outputs/reports/tariff-update-brief.md"),
+        path.join(workspaceRoot, "workspace-1", "outputs/reports/tariff-update-brief.html"),
         "utf8",
       ),
-      "# Tariff update brief\n\n- Court challenges are active.\n- Consumer impact remains debated.\n",
+      `${reportContent}\n`,
     );
 
     const outputs = store.listOutputs({
@@ -2427,10 +2433,11 @@ test("runtime write_report tool writes a markdown report and persists it as a se
     });
     assert.equal(outputs.length, 1);
     assert.equal(outputs[0].title, "Tariff update brief");
-    assert.equal(outputs[0].filePath, "outputs/reports/tariff-update-brief.md");
+    assert.equal(outputs[0].filePath, "outputs/reports/tariff-update-brief.html");
     assert.equal(outputs[0].metadata.artifact_type, "report");
     assert.equal(outputs[0].metadata.origin_type, "runtime_tool");
     assert.equal(outputs[0].metadata.tool_id, "write_report");
+    assert.equal(outputs[0].metadata.mime_type, "text/html");
     assert.equal(outputs[0].metadata.model, "openai/gpt-5.4");
   } finally {
     await app.close();
@@ -2461,6 +2468,12 @@ test("runtime write_report tool writes reports into a custom workspace path", as
   });
 
   const app = buildTestRuntimeApiServer({ store });
+  const reportContent = [
+    "<!doctype html>",
+    "<html><body><h1>Workspace custom path report</h1>",
+    "<p>Saved in the registered workspace directory.</p>",
+    "</body></html>",
+  ].join("");
   try {
     const response = await app.inject({
       method: "POST",
@@ -2473,21 +2486,21 @@ test("runtime write_report tool writes reports into a custom workspace path", as
       payload: {
         title: "Workspace custom path report",
         filename: "workspace-custom-path-report",
-        content: "# Workspace custom path report\n\n- Saved in the registered workspace directory.\n",
+        content: reportContent,
       },
     });
 
     assert.equal(response.statusCode, 200);
     assert.equal(
       response.json().file_path,
-      "outputs/reports/workspace-custom-path-report.md",
+      "outputs/reports/workspace-custom-path-report.html",
     );
     assert.equal(path.resolve(store.workspaceDir("workspace-1")), customWorkspacePath);
     assert.ok(
       fs.existsSync(
         path.join(
           customWorkspacePath,
-          "outputs/reports/workspace-custom-path-report.md",
+          "outputs/reports/workspace-custom-path-report.html",
         ),
       ),
     );
@@ -2496,7 +2509,7 @@ test("runtime write_report tool writes reports into a custom workspace path", as
         path.join(
           workspaceRoot,
           "workspace-1",
-          "outputs/reports/workspace-custom-path-report.md",
+          "outputs/reports/workspace-custom-path-report.html",
         ),
       ),
       false,

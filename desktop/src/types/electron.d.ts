@@ -616,78 +616,6 @@ interface RuntimeNotificationListOptionsPayload {
     migrated_legacy_session_count: number;
   }
 
-  interface ProactiveStatusSnapshotPayload {
-    state: string;
-    detail: string | null;
-    recorded_at: string | null;
-  }
-
-  interface ProactiveAgentStatusPayload {
-    workspace_id: string;
-    proposal_count: number;
-    heartbeat: ProactiveStatusSnapshotPayload;
-    bridge: ProactiveStatusSnapshotPayload;
-    lifecycle_state: string;
-    lifecycle_summary: string;
-    lifecycle_detail: string | null;
-  }
-
-  interface RemoteTaskProposalGenerationRequestPayload {
-    workspace_id: string;
-  }
-
-  interface RemoteTaskProposalGenerationResponsePayload {
-    accepted: boolean;
-    accepted_count: number;
-    event_count: number;
-    correlation_id: string;
-  }
-
-  interface ProactiveTaskProposalPreferenceUpdatePayload {
-    enabled: boolean;
-    holaboss_user_id?: string;
-    sandbox_id?: string;
-  }
-
-  interface ProactiveTaskProposalPreferencePayload {
-    enabled: boolean;
-    holaboss_user_id: string;
-    sandbox_id: string;
-  }
-
-  interface ProactiveHeartbeatWorkspacePayload {
-    workspace_id: string;
-    workspace_name: string | null;
-    enabled: boolean;
-    last_seen_at: string | null;
-  }
-
-  interface ProactiveHeartbeatConfigPayload {
-    holaboss_user_id: string;
-    sandbox_id: string;
-    has_schedule: boolean;
-    cron: string;
-    enabled: boolean;
-    last_run_at: string | null;
-    next_run_at: string | null;
-    workspaces: ProactiveHeartbeatWorkspacePayload[];
-  }
-
-  interface ProactiveHeartbeatConfigUpdatePayload {
-    cron?: string;
-    enabled?: boolean;
-    holaboss_user_id?: string;
-    sandbox_id?: string;
-  }
-
-  interface ProactiveHeartbeatWorkspaceUpdatePayload {
-    workspace_id: string;
-    workspace_name?: string | null;
-    enabled: boolean;
-    holaboss_user_id?: string;
-    sandbox_id?: string;
-  }
-
   interface TaskProposalStateUpdatePayload {
     proposal: TaskProposalRecordPayload;
   }
@@ -1782,26 +1710,11 @@ interface RuntimeNotificationListOptionsPayload {
         payload: MemoryUpdateProposalAcceptPayload
       ) => Promise<MemoryUpdateProposalAcceptResponsePayload>;
       dismissMemoryUpdateProposal: (workspaceId: string, proposalId: string) => Promise<MemoryUpdateProposalDismissResponsePayload>;
-      getProactiveStatus: (workspaceId: string) => Promise<ProactiveAgentStatusPayload>;
-      getProactiveTaskProposalPreference: () => Promise<ProactiveTaskProposalPreferencePayload>;
-      setProactiveTaskProposalPreference: (
-        payload: ProactiveTaskProposalPreferenceUpdatePayload
-      ) => Promise<ProactiveTaskProposalPreferencePayload>;
-      getProactiveHeartbeatConfig: () => Promise<ProactiveHeartbeatConfigPayload>;
-      setProactiveHeartbeatConfig: (
-        payload: ProactiveHeartbeatConfigUpdatePayload
-      ) => Promise<ProactiveHeartbeatConfigPayload>;
-      setProactiveHeartbeatWorkspaceEnabled: (
-        payload: ProactiveHeartbeatWorkspaceUpdatePayload
-      ) => Promise<ProactiveHeartbeatConfigPayload>;
       updateTaskProposalState: (
         workspaceId: string,
         proposalId: string,
         state: string
       ) => Promise<TaskProposalStateUpdatePayload>;
-      requestRemoteTaskProposalGeneration: (
-        payload: RemoteTaskProposalGenerationRequestPayload
-      ) => Promise<RemoteTaskProposalGenerationResponsePayload>;
       ensureMainSession: (workspaceId: string) => Promise<EnsureWorkspaceMainSessionResponsePayload>;
       listAgentSessions: (
         payload: string | ListAgentSessionsRequestPayload

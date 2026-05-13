@@ -148,6 +148,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     prompt.systemPrompt,
     /Use `write_report` for long, structured, evidence-heavy, or referenceable outputs/
   );
+  assert.match(prompt.systemPrompt, /reports should be HTML by default/i);
   assert.match(
     prompt.systemPrompt,
     /For research, investigation, comparison, timeline, or latest-news tasks across multiple sources, prefer a report artifact/

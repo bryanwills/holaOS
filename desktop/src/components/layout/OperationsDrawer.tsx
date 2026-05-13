@@ -6,47 +6,28 @@ import {
   FolderOpen,
   Inbox as InboxIcon,
   Loader2,
-  LogIn,
   Pause,
   X,
   Clock3,
 } from "lucide-react";
-import { useDesktopAuthSession } from "@/lib/auth/authClient";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusDot } from "@/components/ui/status-dot";
-import { ProactiveLifecyclePanel } from "@/components/layout/ProactiveStatusCard";
 
 export type OperationsDrawerTab = "inbox" | "running";
 
 export interface OperationsInboxPaneProps {
   proposals: TaskProposalRecordPayload[];
-  proactiveStatus: ProactiveAgentStatusPayload | null;
-  isLoadingProactiveStatus: boolean;
-  proactiveWorkspaceEnabled: boolean;
-  isLoadingProactiveWorkspaceEnabled: boolean;
-  isUpdatingProactiveWorkspaceEnabled: boolean;
-  proactiveHeartbeatCron: string;
-  isLoadingProactiveHeartbeatConfig: boolean;
-  isUpdatingProactiveHeartbeatConfig: boolean;
-  proactiveTaskProposalsError: string;
-  proactiveHeartbeatError: string;
   isLoadingProposals: boolean;
-  isTriggeringProposal: boolean;
   proposalStatusMessage: string;
   proposalAction: {
     proposalId: string;
     action: "accept" | "dismiss";
   } | null;
-  onTriggerProposal: () => void;
-  onProactiveWorkspaceEnabledChange: (enabled: boolean) => void;
-  onProactiveHeartbeatCronChange: (cron: string) => void;
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
   onProposalDetailsOpenChange?: (open: boolean) => void;
   hasWorkspace: boolean;
-  selectedWorkspaceId: string | null;
-  selectedWorkspaceName: string | null;
 }
 
 interface OperationsDrawerProps {
@@ -54,26 +35,12 @@ interface OperationsDrawerProps {
   onTabChange: (tab: OperationsDrawerTab) => void;
   proposals: TaskProposalRecordPayload[];
   unreadProposalCount: number;
-  proactiveStatus: ProactiveAgentStatusPayload | null;
-  isLoadingProactiveStatus: boolean;
-  proactiveWorkspaceEnabled: boolean;
-  isLoadingProactiveWorkspaceEnabled: boolean;
-  isUpdatingProactiveWorkspaceEnabled: boolean;
-  proactiveHeartbeatCron: string;
-  isLoadingProactiveHeartbeatConfig: boolean;
-  isUpdatingProactiveHeartbeatConfig: boolean;
-  proactiveTaskProposalsError: string;
-  proactiveHeartbeatError: string;
   isLoadingProposals: boolean;
-  isTriggeringProposal: boolean;
   proposalStatusMessage: string;
   proposalAction: {
     proposalId: string;
     action: "accept" | "dismiss";
   } | null;
-  onTriggerProposal: () => void;
-  onProactiveWorkspaceEnabledChange: (enabled: boolean) => void;
-  onProactiveHeartbeatCronChange: (cron: string) => void;
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
   onProposalDetailsOpenChange?: (open: boolean) => void;
@@ -82,7 +49,6 @@ interface OperationsDrawerProps {
   activeRunningSessionId: string | null;
   hasWorkspace: boolean;
   selectedWorkspaceId: string | null;
-  selectedWorkspaceName: string | null;
 }
 
 interface RunningSessionEntry {
@@ -110,23 +76,9 @@ export function OperationsDrawer({
   onTabChange,
   proposals,
   unreadProposalCount,
-  proactiveStatus,
-  isLoadingProactiveStatus,
-  proactiveWorkspaceEnabled,
-  isLoadingProactiveWorkspaceEnabled,
-  isUpdatingProactiveWorkspaceEnabled,
-  proactiveHeartbeatCron,
-  isLoadingProactiveHeartbeatConfig,
-  isUpdatingProactiveHeartbeatConfig,
-  proactiveTaskProposalsError,
-  proactiveHeartbeatError,
   isLoadingProposals,
-  isTriggeringProposal,
   proposalStatusMessage,
   proposalAction,
-  onTriggerProposal,
-  onProactiveWorkspaceEnabledChange,
-  onProactiveHeartbeatCronChange,
   onAcceptProposal,
   onDismissProposal,
   onProposalDetailsOpenChange,
@@ -135,7 +87,6 @@ export function OperationsDrawer({
   activeRunningSessionId,
   hasWorkspace,
   selectedWorkspaceId,
-  selectedWorkspaceName,
 }: OperationsDrawerProps) {
   const [runningSessions, setRunningSessions] = useState<RunningSessionEntry[]>(
     [],
@@ -270,36 +221,10 @@ export function OperationsDrawer({
         {activeTab === "inbox" ? (
           <OperationsInboxPane
             proposals={proposals}
-            proactiveStatus={proactiveStatus}
-            isLoadingProactiveStatus={isLoadingProactiveStatus}
-            proactiveTaskProposalsError={proactiveTaskProposalsError}
-            proactiveHeartbeatError={proactiveHeartbeatError}
             isLoadingProposals={isLoadingProposals}
             proposalStatusMessage={proposalStatusMessage}
             proposalAction={proposalAction}
             hasWorkspace={hasWorkspace}
-            selectedWorkspaceId={selectedWorkspaceId}
-            selectedWorkspaceName={selectedWorkspaceName}
-            proactiveWorkspaceEnabled={proactiveWorkspaceEnabled}
-            isLoadingProactiveWorkspaceEnabled={
-              isLoadingProactiveWorkspaceEnabled
-            }
-            isUpdatingProactiveWorkspaceEnabled={
-              isUpdatingProactiveWorkspaceEnabled
-            }
-            proactiveHeartbeatCron={proactiveHeartbeatCron}
-            isLoadingProactiveHeartbeatConfig={
-              isLoadingProactiveHeartbeatConfig
-            }
-            isUpdatingProactiveHeartbeatConfig={
-              isUpdatingProactiveHeartbeatConfig
-            }
-            isTriggeringProposal={isTriggeringProposal}
-            onTriggerProposal={onTriggerProposal}
-            onProactiveWorkspaceEnabledChange={
-              onProactiveWorkspaceEnabledChange
-            }
-            onProactiveHeartbeatCronChange={onProactiveHeartbeatCronChange}
             onAcceptProposal={onAcceptProposal}
             onDismissProposal={onDismissProposal}
             onProposalDetailsOpenChange={onProposalDetailsOpenChange}
@@ -324,66 +249,21 @@ export function OperationsDrawer({
 
 export function OperationsInboxPane({
   proposals,
-  proactiveStatus,
-  isLoadingProactiveStatus,
-  proactiveWorkspaceEnabled,
-  isLoadingProactiveWorkspaceEnabled,
-  isUpdatingProactiveWorkspaceEnabled,
-  proactiveHeartbeatCron,
-  isLoadingProactiveHeartbeatConfig,
-  isUpdatingProactiveHeartbeatConfig,
-  proactiveTaskProposalsError,
-  proactiveHeartbeatError,
   isLoadingProposals,
-  isTriggeringProposal,
   proposalStatusMessage,
   proposalAction,
-  onTriggerProposal,
-  onProactiveWorkspaceEnabledChange,
-  onProactiveHeartbeatCronChange,
   onAcceptProposal,
   onDismissProposal,
   onProposalDetailsOpenChange,
   hasWorkspace,
-  selectedWorkspaceId,
-  selectedWorkspaceName,
 }: OperationsInboxPaneProps) {
-  const {
-    data: authSession,
-    isPending: isAuthPending,
-    requestAuth,
-  } = useDesktopAuthSession();
-  const isSignedIn = Boolean(authSession?.user?.id);
-  const onRequestSignIn = () => {
-    void requestAuth();
-  };
-
   return (
     <InboxPanel
-      isSignedIn={isSignedIn}
-      onRequestSignIn={onRequestSignIn}
-      isAuthPending={isAuthPending}
       proposals={proposals}
-      proactiveStatus={proactiveStatus}
-      isLoadingProactiveStatus={isLoadingProactiveStatus}
-      proactiveTaskProposalsError={proactiveTaskProposalsError}
-      proactiveHeartbeatError={proactiveHeartbeatError}
       isLoadingProposals={isLoadingProposals}
       proposalStatusMessage={proposalStatusMessage}
       proposalAction={proposalAction}
       hasWorkspace={hasWorkspace}
-      selectedWorkspaceId={selectedWorkspaceId}
-      selectedWorkspaceName={selectedWorkspaceName}
-      proactiveWorkspaceEnabled={proactiveWorkspaceEnabled}
-      isLoadingProactiveWorkspaceEnabled={isLoadingProactiveWorkspaceEnabled}
-      isUpdatingProactiveWorkspaceEnabled={isUpdatingProactiveWorkspaceEnabled}
-      proactiveHeartbeatCron={proactiveHeartbeatCron}
-      isLoadingProactiveHeartbeatConfig={isLoadingProactiveHeartbeatConfig}
-      isUpdatingProactiveHeartbeatConfig={isUpdatingProactiveHeartbeatConfig}
-      isTriggeringProposal={isTriggeringProposal}
-      onTriggerProposal={onTriggerProposal}
-      onProactiveWorkspaceEnabledChange={onProactiveWorkspaceEnabledChange}
-      onProactiveHeartbeatCronChange={onProactiveHeartbeatCronChange}
       onAcceptProposal={onAcceptProposal}
       onDismissProposal={onDismissProposal}
       onProposalDetailsOpenChange={onProposalDetailsOpenChange}
@@ -642,42 +522,16 @@ function DrawerTabButton({
 }
 
 function InboxPanel({
-  isSignedIn,
-  onRequestSignIn,
-  isAuthPending,
   proposals,
-  proactiveStatus,
-  isLoadingProactiveStatus,
-  proactiveTaskProposalsError,
-  proactiveHeartbeatError,
   isLoadingProposals,
   proposalStatusMessage,
   proposalAction,
   hasWorkspace,
-  selectedWorkspaceId,
-  selectedWorkspaceName,
-  proactiveWorkspaceEnabled,
-  isLoadingProactiveWorkspaceEnabled,
-  isUpdatingProactiveWorkspaceEnabled,
-  proactiveHeartbeatCron,
-  isLoadingProactiveHeartbeatConfig,
-  isUpdatingProactiveHeartbeatConfig,
-  isTriggeringProposal,
-  onTriggerProposal,
-  onProactiveWorkspaceEnabledChange,
-  onProactiveHeartbeatCronChange,
   onAcceptProposal,
   onDismissProposal,
   onProposalDetailsOpenChange,
 }: {
-  isSignedIn: boolean;
-  onRequestSignIn: () => void;
-  isAuthPending: boolean;
   proposals: TaskProposalRecordPayload[];
-  proactiveStatus: ProactiveAgentStatusPayload | null;
-  isLoadingProactiveStatus: boolean;
-  proactiveTaskProposalsError: string;
-  proactiveHeartbeatError: string;
   isLoadingProposals: boolean;
   proposalStatusMessage: string;
   proposalAction: {
@@ -685,23 +539,10 @@ function InboxPanel({
     action: "accept" | "dismiss";
   } | null;
   hasWorkspace: boolean;
-  selectedWorkspaceId: string | null;
-  selectedWorkspaceName: string | null;
-  proactiveWorkspaceEnabled: boolean;
-  isLoadingProactiveWorkspaceEnabled: boolean;
-  isUpdatingProactiveWorkspaceEnabled: boolean;
-  proactiveHeartbeatCron: string;
-  isLoadingProactiveHeartbeatConfig: boolean;
-  isUpdatingProactiveHeartbeatConfig: boolean;
-  isTriggeringProposal: boolean;
-  onTriggerProposal: () => void;
-  onProactiveWorkspaceEnabledChange: (enabled: boolean) => void;
-  onProactiveHeartbeatCronChange: (cron: string) => void;
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
   onProposalDetailsOpenChange?: (open: boolean) => void;
 }) {
-  const showProactiveControls = false;
   const [expandedProposalId, setExpandedProposalId] = useState<string | null>(
     null,
   );
@@ -731,63 +572,11 @@ function InboxPanel({
   return (
     <>
       <div className="flex h-full min-h-0 flex-col">
-        {proactiveTaskProposalsError ? (
-          <div className="shrink-0 border-b border-destructive/20 px-3 py-2 text-xs text-destructive">
-            {proactiveTaskProposalsError}
-          </div>
-        ) : null}
-        {proactiveHeartbeatError ? (
-          <div className="shrink-0 border-b border-destructive/20 px-3 py-2 text-xs text-destructive">
-            {proactiveHeartbeatError}
-          </div>
-        ) : null}
-
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
           {proposalStatusMessage ? (
             <div className="mb-3 rounded-2xl border border-border bg-muted px-3 py-2 text-xs leading-relaxed text-muted-foreground">
               {proposalStatusMessage}
             </div>
-          ) : null}
-          {showProactiveControls ? (
-            isSignedIn ? (
-              <div className="mb-3">
-                <ProactiveLifecyclePanel
-                  hasWorkspace={hasWorkspace}
-                  workspaceName={selectedWorkspaceName}
-                  workspaceId={selectedWorkspaceId}
-                  proactiveStatus={proactiveStatus}
-                  isLoading={isLoadingProactiveStatus}
-                  proactiveWorkspaceEnabled={proactiveWorkspaceEnabled}
-                  isLoadingProactiveWorkspaceEnabled={
-                    isLoadingProactiveWorkspaceEnabled
-                  }
-                  isUpdatingProactiveWorkspaceEnabled={
-                    isUpdatingProactiveWorkspaceEnabled
-                  }
-                  proactiveHeartbeatCron={proactiveHeartbeatCron}
-                  isLoadingProactiveHeartbeatConfig={
-                    isLoadingProactiveHeartbeatConfig
-                  }
-                  isUpdatingProactiveHeartbeatConfig={
-                    isUpdatingProactiveHeartbeatConfig
-                  }
-                  isTriggeringProposal={isTriggeringProposal}
-                  onTriggerProposal={onTriggerProposal}
-                  onProactiveWorkspaceEnabledChange={
-                    onProactiveWorkspaceEnabledChange
-                  }
-                  onProactiveHeartbeatCronChange={
-                    onProactiveHeartbeatCronChange
-                  }
-                  compact
-                />
-              </div>
-            ) : (
-              <SignedOutInboxNotice
-                onRequestSignIn={onRequestSignIn}
-                isAuthPending={isAuthPending}
-              />
-            )
           ) : null}
           {!hasWorkspace ? (
             <EmptyState
@@ -1048,44 +837,6 @@ function ProposalDetailsDialog({
   );
 
   return createPortal(modalContent, document.body);
-}
-
-function SignedOutInboxNotice({
-  onRequestSignIn,
-  isAuthPending,
-}: {
-  onRequestSignIn: () => void;
-  isAuthPending: boolean;
-}) {
-  return (
-    <div className="rounded-2xl border border-warning/20 bg-warning/10 px-3 py-2.5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-xs font-semibold text-foreground">
-            Backend proposals require sign-in
-          </div>
-          <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
-            Sign in for synced proactive controls. Evolve proposals still show
-            here.
-          </div>
-        </div>
-        <Button
-          type="button"
-          size="xs"
-          onClick={onRequestSignIn}
-          disabled={isAuthPending}
-          className="shrink-0"
-        >
-          {isAuthPending ? (
-            <Loader2 size={12} className="animate-spin" />
-          ) : (
-            <LogIn size={12} />
-          )}
-          <span>Sign in</span>
-        </Button>
-      </div>
-    </div>
-  );
 }
 
 function RunningPanel({

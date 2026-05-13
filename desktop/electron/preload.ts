@@ -478,78 +478,6 @@ interface TaskProposalListResponsePayload {
   count: number;
 }
 
-interface ProactiveStatusSnapshotPayload {
-  state: string;
-  detail: string | null;
-  recorded_at: string | null;
-}
-
-interface ProactiveAgentStatusPayload {
-  workspace_id: string;
-  proposal_count: number;
-  heartbeat: ProactiveStatusSnapshotPayload;
-  bridge: ProactiveStatusSnapshotPayload;
-  lifecycle_state: string;
-  lifecycle_summary: string;
-  lifecycle_detail: string | null;
-}
-
-interface RemoteTaskProposalGenerationRequestPayload {
-  workspace_id: string;
-}
-
-interface RemoteTaskProposalGenerationResponsePayload {
-  accepted: boolean;
-  accepted_count: number;
-  event_count: number;
-  correlation_id: string;
-}
-
-interface ProactiveTaskProposalPreferenceUpdatePayload {
-  enabled: boolean;
-  holaboss_user_id?: string;
-  sandbox_id?: string;
-}
-
-interface ProactiveTaskProposalPreferencePayload {
-  enabled: boolean;
-  holaboss_user_id: string;
-  sandbox_id: string;
-}
-
-interface ProactiveHeartbeatWorkspacePayload {
-  workspace_id: string;
-  workspace_name: string | null;
-  enabled: boolean;
-  last_seen_at: string | null;
-}
-
-interface ProactiveHeartbeatConfigPayload {
-  holaboss_user_id: string;
-  sandbox_id: string;
-  has_schedule: boolean;
-  cron: string;
-  enabled: boolean;
-  last_run_at: string | null;
-  next_run_at: string | null;
-  workspaces: ProactiveHeartbeatWorkspacePayload[];
-}
-
-interface ProactiveHeartbeatConfigUpdatePayload {
-  cron?: string;
-  enabled?: boolean;
-  holaboss_user_id?: string;
-  sandbox_id?: string;
-}
-
-interface ProactiveHeartbeatWorkspaceUpdatePayload {
-  workspace_id: string;
-  workspace_name?: string | null;
-  enabled: boolean;
-  holaboss_user_id?: string;
-  sandbox_id?: string;
-}
-
 interface TaskProposalStateUpdatePayload {
   proposal: TaskProposalRecordPayload;
 }
@@ -1442,46 +1370,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:acceptMemoryUpdateProposal", payload) as Promise<MemoryUpdateProposalAcceptResponsePayload>,
     dismissMemoryUpdateProposal: (workspaceId: string, proposalId: string) =>
       ipcRenderer.invoke("workspace:dismissMemoryUpdateProposal", workspaceId, proposalId) as Promise<MemoryUpdateProposalDismissResponsePayload>,
-    getProactiveStatus: (workspaceId: string) =>
-      ipcRenderer.invoke("workspace:getProactiveStatus", workspaceId) as Promise<ProactiveAgentStatusPayload>,
-    getProactiveTaskProposalPreference: () =>
-      ipcRenderer.invoke(
-        "workspace:getProactiveTaskProposalPreference",
-      ) as Promise<ProactiveTaskProposalPreferencePayload>,
-    setProactiveTaskProposalPreference: (
-      payload: ProactiveTaskProposalPreferenceUpdatePayload,
-    ) =>
-      ipcRenderer.invoke(
-        "workspace:setProactiveTaskProposalPreference",
-        payload,
-      ) as Promise<ProactiveTaskProposalPreferencePayload>,
-    getProactiveHeartbeatConfig: () =>
-      ipcRenderer.invoke(
-        "workspace:getProactiveHeartbeatConfig",
-      ) as Promise<ProactiveHeartbeatConfigPayload>,
-    setProactiveHeartbeatConfig: (
-      payload: ProactiveHeartbeatConfigUpdatePayload,
-    ) =>
-      ipcRenderer.invoke(
-        "workspace:setProactiveHeartbeatConfig",
-        payload,
-      ) as Promise<ProactiveHeartbeatConfigPayload>,
-    setProactiveHeartbeatWorkspaceEnabled: (
-      payload: ProactiveHeartbeatWorkspaceUpdatePayload,
-    ) =>
-      ipcRenderer.invoke(
-        "workspace:setProactiveHeartbeatWorkspaceEnabled",
-        payload,
-      ) as Promise<ProactiveHeartbeatConfigPayload>,
     updateTaskProposalState: (workspaceId: string, proposalId: string, state: string) =>
       ipcRenderer.invoke("workspace:updateTaskProposalState", workspaceId, proposalId, state) as Promise<TaskProposalStateUpdatePayload>,
-    requestRemoteTaskProposalGeneration: (
-      payload: RemoteTaskProposalGenerationRequestPayload,
-    ) =>
-      ipcRenderer.invoke(
-        "workspace:requestRemoteTaskProposalGeneration",
-        payload,
-      ) as Promise<RemoteTaskProposalGenerationResponsePayload>,
     ensureMainSession: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:ensureMainSession", workspaceId) as Promise<EnsureWorkspaceMainSessionResponsePayload>,
     listAgentSessions: (payload: string | ListAgentSessionsRequestPayload) =>

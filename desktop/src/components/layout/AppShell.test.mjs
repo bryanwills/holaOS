@@ -672,11 +672,12 @@ test("app shell no longer renders the dedicated app mode after removing the left
   assert.doesNotMatch(source, /left rail/);
 });
 
-test("app shell requests remote task proposal generation without a separate success banner", async () => {
+test("app shell no longer exposes the deprecated manual proactive proposal trigger", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /requestRemoteTaskProposalGeneration\(/);
-  assert.match(source, /Suggestions are unavailable right now\./);
+  assert.doesNotMatch(source, /requestRemoteTaskProposalGeneration\(/);
+  assert.doesNotMatch(source, /Suggestions are unavailable right now\./);
+  assert.doesNotMatch(source, /isTriggeringTaskProposal/);
   assert.doesNotMatch(source, /Remote heartbeat accepted/);
   assert.doesNotMatch(source, /Pending cloud jobs/);
 });
@@ -898,34 +899,34 @@ test("app shell reports active non-browser operator surfaces back to Electron", 
   assert.match(source, /window\.electronAPI\.workspace\.setOperatorSurfaceContext\(\s*nextWorkspaceId,\s*reportedOperatorSurfaceContext,\s*\)/);
 });
 
-test("app shell polls proactive status for the selected workspace", async () => {
+test("app shell no longer polls proactive status for the selected workspace", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /const \[proactiveStatus, setProactiveStatus\]/);
-  assert.match(source, /workspace\.getProactiveStatus\(\s*selectedWorkspace\.id,/);
-  assert.match(source, /runtimeConfig\?\.authTokenPresent/);
-  assert.match(source, /runtimeConfig\?\.modelProxyBaseUrl/);
-  assert.match(source, /runtimeStatus\?\.status/);
+  assert.doesNotMatch(source, /const \[proactiveStatus, setProactiveStatus\]/);
+  assert.doesNotMatch(source, /workspace\.getProactiveStatus\(\s*selectedWorkspace\.id,/);
+  assert.doesNotMatch(source, /runtimeConfig\?\.authTokenPresent/);
+  assert.doesNotMatch(source, /runtimeConfig\?\.modelProxyBaseUrl/);
   assert.match(source, /const \[taskProposalDetailsDialogOpen, setTaskProposalDetailsDialogOpen\] =\s*useState\(false\);/);
-  assert.match(source, /<OperationsInboxPane[\s\S]*proactiveStatus=\{proactiveStatus\}/);
-  assert.match(source, /<OperationsInboxPane[\s\S]*isLoadingProactiveStatus=\{isLoadingProactiveStatus\}/);
+  assert.doesNotMatch(source, /<OperationsInboxPane[\s\S]*proactiveStatus=\{proactiveStatus\}/);
+  assert.doesNotMatch(source, /<OperationsInboxPane[\s\S]*isLoadingProactiveStatus=\{isLoadingProactiveStatus\}/);
   assert.match(source, /<OperationsInboxPane[\s\S]*onProposalDetailsOpenChange=\{setTaskProposalDetailsDialogOpen\}/);
 });
 
-test("app shell reloads proactive preference after workspace hydration completes", async () => {
+test("app shell no longer reloads proactive preferences after workspace hydration completes", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /const \[proactiveTaskProposalsEnabled, setProactiveTaskProposalsEnabled\] =\s*useState\(false\);/);
-  assert.match(source, /if \(!hasHydratedWorkspaceList\) \{\s*return;\s*\}/);
-  assert.match(source, /workspace\.getProactiveTaskProposalPreference\(\)/);
-  assert.match(source, /setProactiveTaskProposalsEnabled\(preference\.enabled === true\);/);
-  assert.match(source, /\}, \[hasHydratedWorkspaceList, selectedWorkspaceId\]\);/);
+  assert.doesNotMatch(source, /const \[proactiveTaskProposalsEnabled, setProactiveTaskProposalsEnabled\] =\s*useState\(false\);/);
+  assert.doesNotMatch(source, /workspace\.getProactiveTaskProposalPreference\(\)/);
+  assert.doesNotMatch(source, /setProactiveTaskProposalsEnabled\(preference\.enabled === true\);/);
+  assert.doesNotMatch(source, /setIsLoadingProactiveTaskProposalsEnabled/);
 });
 
-test("app shell keeps polling task proposals even when proactive auth preferences are unavailable", async () => {
+test("app shell keeps polling task proposals without proactive preference plumbing", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(source, /workspace\.listTaskProposals\(\s*selectedWorkspace\.id,/);
+  assert.doesNotMatch(source, /workspace\.getProactiveTaskProposalPreference\(\)/);
+  assert.doesNotMatch(source, /workspace\.getProactiveHeartbeatConfig\(\)/);
   assert.doesNotMatch(source, /if \(!hasLoadedProactiveTaskProposalsPreference\) \{\s*setIsLoadingTaskProposals\(false\);\s*return;\s*\}/);
   assert.doesNotMatch(source, /if \(!proactiveTaskProposalsEnabled\) \{\s*setIsLoadingTaskProposals\(false\);\s*return;\s*\}/);
   assert.match(source, /\}, \[selectedWorkspace, selectedWorkspaceId\]\);/);
