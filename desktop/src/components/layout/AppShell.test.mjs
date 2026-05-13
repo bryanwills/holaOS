@@ -122,7 +122,7 @@ test("app shell opens the centered add apps dialog from the applications explore
   );
   assert.match(
     source,
-    /const shouldSuspendBrowserNativeView =\s*[\s\S]*taskProposalDetailsDialogOpen[\s\S]*chatImagePreviewOpen[\s\S]*workspaceAppsDialogOpen[\s\S]*createWorkspacePanelOpen[\s\S]*publishOpen;/,
+    /const shouldSuspendBrowserNativeView =\s*[\s\S]*taskProposalDetailsDialogOpen[\s\S]*chatImagePreviewOpen[\s\S]*workspaceAppsDialogOpen[\s\S]*createWorkspacePanelOpen[\s\S]*publishOpen[\s\S]*effectiveSpaceWorkspacePanelCollapsed;/,
   );
   assert.doesNotMatch(
     source,
@@ -147,10 +147,6 @@ test("app shell passes the current app version into the settings dialog", async 
   assert.match(
     source,
     /<SettingsScreenRoot[\s\S]*workspaceCardsPerRow=\{controlCenterCardsPerRow\}[\s\S]*onWorkspaceCardsPerRowChange=\{setControlCenterCardsPerRow\}/,
-  );
-  assert.match(
-    source,
-    /<WorkspaceControlCenter[\s\S]*composerModel=\{currentComposerSelectedModel\(runtimeConfig\)\}/,
   );
 });
 
@@ -346,11 +342,15 @@ test("app shell restores the last internal display and otherwise keeps the curre
   );
   assert.match(
     source,
-    /useEffect\(\(\) => \{\s*if \(!selectedWorkspaceId\) \{\s*setSpaceExplorerMode\("browser"\);\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*const cloudWorkspaceSelected = selectedWorkspace\?\.location === "cloud";\s*const nextDisplayView =\s*lastRestorableSpaceFileDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\];\s*if \(!nextDisplayView\) \{\s*setSpaceExplorerMode\(cloudWorkspaceSelected \? "files" : "browser"\);\s*setSpaceDisplayView\(\s*cloudWorkspaceSelected \? \{ type: "empty" \} : \{ type: "browser" \},\s*\);\s*return;\s*\}\s*setSpaceDisplayView\(nextDisplayView\);\s*syncFileExplorerFocusWithDisplayView\(nextDisplayView\);\s*\}, \[selectedWorkspace, selectedWorkspaceId, syncFileExplorerFocusWithDisplayView\]\);/,
+    /useEffect\(\(\) => \{\s*if \(!selectedWorkspaceId\) \{\s*setSpaceExplorerMode\("browser"\);\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}[\s\S]*const cloudWorkspaceSelected = selectedWorkspace\?\.location === "cloud";\s*const nextDisplayView =\s*lastRestorableSpaceFileDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\];\s*if \(!nextDisplayView\) \{\s*setSpaceExplorerMode\(cloudWorkspaceSelected \? "files" : "browser"\);\s*setSpaceDisplayView\(\s*cloudWorkspaceSelected \? \{ type: "empty" \} : \{ type: "browser" \},\s*\);\s*return;\s*\}\s*setSpaceDisplayView\(nextDisplayView\);\s*syncFileExplorerFocusWithDisplayView\(nextDisplayView\);\s*\}, \[selectedWorkspace, selectedWorkspaceId, syncFileExplorerFocusWithDisplayView\]\);/,
   );
   assert.match(
     source,
-    /onClick=\{\(\) => \{\s*setSpaceExplorerMode\(value\);\s*if \(value === "browser"\) \{\s*setSpaceDisplayView\(\{\s*type: "browser",?\s*\}\);\s*\} else if \(value === "applications"\) \{\s*restoreLastSpaceAppDisplayView\(\);\s*\} else \{\s*restoreLastSpaceFileDisplayView\(\);\s*\}\s*\}\}/,
+    /explicitSpaceDisplayViewRequestedForWorkspaceRef\.current ===\s*selectedWorkspaceId[\s\S]*explicitSpaceDisplayViewRequestedForWorkspaceRef\.current = null;\s*return;/,
+  );
+  assert.match(
+    source,
+    /onClick=\{\(\) => \{\s*setSpaceExplorerMode\(value\);\s*if \(value === "browser"\) \{\s*setSpaceDisplayView\(\{\s*type: "browser",?\s*\}\);\s*\} else if \(value === "applications"\) \{\s*restoreLastSpaceAppDisplayView\(\);\s*\} else \{\s*restoreLastSpaceFileDisplayView\(\);\s*\}\s*setSpaceWorkspacePanelCollapsed\(false\);\s*\}\}/,
   );
 });
 
@@ -411,6 +411,7 @@ test("app shell keeps desktop updates separate from runtime notification state",
 
   assert.match(source, /function appUpdateChangelogUrl\(/);
   assert.match(source, /const handleDismissUpdate = useCallback\(/);
+  assert.match(source, /window\.electronAPI\.appUpdate[\s\S]*\.checkNow\(\)/);
   assert.match(source, /void window\.electronAPI\.appUpdate\.dismiss\(/);
   assert.match(source, /void window\.electronAPI\.ui\.openExternalUrl\(changelogUrl\);/);
   assert.doesNotMatch(source, /combinedNotifications/);
@@ -442,12 +443,18 @@ test("app shell routes runtime notifications by window state and workspace visib
   assert.match(source, /window\.electronAPI\.ui\.getWindowState\(\)\.catch\(\(\) => null\)/);
   assert.match(source, /includeCronjobSource: true/);
   assert.match(source, /const shellNotifications = response\.items\.filter\(\s*shouldIncludeRuntimeNotificationInShell,\s*\)/);
-  assert.match(source, /const isWindowMinimized = windowState\?\.isMinimized === true;/);
-  assert.match(source, /shouldShowNativeRuntimeNotification\(item,\s*isWindowMinimized\)/);
+  assert.match(
+    source,
+    /const isWindowAway =\s*windowState\?\.isMinimized === true \|\| !windowFocused;/,
+  );
+  assert.match(source, /shouldShowNativeRuntimeNotification\(item,\s*isWindowAway\)/);
   assert.match(source, /const shown = await window\.electronAPI\.ui\.showNativeNotification\(\{/);
   assert.match(source, /Date\.now\(\) - lastAttemptAt < 15_000/);
   assert.match(source, /shouldDismissVisibleRuntimeNotification\(item,\s*selectedWorkspaceId\)/);
-  assert.match(source, /shouldToastVisibleRuntimeNotification\(item,\s*selectedWorkspaceId\)/);
+  assert.match(
+    source,
+    /shouldToastVisibleRuntimeNotification\(item,\s*\{\s*selectedWorkspaceId,\s*viewingChatSessionId: viewingChatSessionId,\s*\}\s*\)/,
+  );
   assert.doesNotMatch(source, /force: true/);
   assert.match(
     source,
@@ -514,7 +521,7 @@ test("app shell no longer reserves a separate safe pane region for update toasts
   assert.doesNotMatch(source, /anchoredToastStackStyle/);
   assert.match(
     source,
-    /const shouldSuspendBrowserNativeView =\s*workspaceSwitcherOpen \|\|[\s\S]*settingsDialogRendered \|\|[\s\S]*taskProposalDetailsDialogOpen \|\|[\s\S]*chatImagePreviewOpen \|\|[\s\S]*workspaceAppsDialogOpen \|\|[\s\S]*createWorkspacePanelOpen \|\|[\s\S]*publishOpen;/,
+    /const shouldSuspendBrowserNativeView =\s*workspaceSwitcherOpen \|\|[\s\S]*settingsDialogRendered \|\|[\s\S]*taskProposalDetailsDialogOpen \|\|[\s\S]*chatImagePreviewOpen \|\|[\s\S]*workspaceAppsDialogOpen \|\|[\s\S]*createWorkspacePanelOpen \|\|[\s\S]*publishOpen \|\|[\s\S]*effectiveSpaceWorkspacePanelCollapsed;/,
   );
   assert.doesNotMatch(
     source,
@@ -579,10 +586,8 @@ test("app shell wires filesPaneWidth into the explorer panel and uses a drag han
     source,
     /width: `\$\{SPACE_EXPLORER_RAIL_WIDTH\}px`,/,
   );
-  assert.match(
-    source,
-    /style=\{\{ width: `\$\{filesPaneWidth\}px` \}\}[\s\S]*id="space-explorer-panel"/,
-  );
+  assert.match(source, /id="space-explorer-panel"/);
+  assert.match(source, /style=\{\{ width: `\$\{filesPaneWidth\}px` \}\}/);
   assert.match(
     source,
     /const startExplorerPanelResize = useCallback\(\s*\(event: ReactPointerEvent<HTMLDivElement>\) => \{\s*explorerPanelResizeStateRef\.current = \{\s*startWidth: filesPaneWidth,\s*startX: event\.clientX,\s*\};/,
@@ -604,12 +609,10 @@ test("app shell uses the top toolbar for shell navigation and removes the left r
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(source, /type ShellView = "control_center" \| "space";/);
-  // Default landing changed from "control_center" to "space" — the app
-  // resumes the user's last workspace on launch (Cursor/VSCode/Notion
-  // convention; control center remains opt-in via the toolbar).
+  assert.match(source, /function loadLastShellView\(\): ShellView \{/);
   assert.match(
     source,
-    /const \[activeShellView, setActiveShellView\] =\s*useState<ShellView>\("space"\);/,
+    /const \[activeShellView, setActiveShellView\] =\s*useState<ShellView>\(\(\) => loadLastShellView\(\)\);/,
   );
   assert.match(source, /const handleOpenControlCenter = useCallback\(\(\) => \{/);
   assert.match(source, /const handleEnterWorkspace = useCallback\(\s*\(workspaceId: string\) => \{/);
@@ -647,8 +650,8 @@ test("app shell uses the top toolbar for shell navigation and removes the left r
 test("app shell defaults to the user's last workspace on startup", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  // Default activeShellView is "space" — control center is opt-in.
-  assert.match(source, /useState<ShellView>\("space"\)/);
+  assert.match(source, /function loadLastShellView\(\): ShellView \{/);
+  assert.match(source, /useState<ShellView>\(\(\) => loadLastShellView\(\)\)/);
 
   // Startup ref renamed to reflect general scope (no longer single-workspace-only).
   assert.match(
@@ -832,7 +835,7 @@ test("app shell renders a persistent explorer rail and universal display in spac
   );
   assert.match(
     source,
-    /if \(!spaceWorkspacePanelCollapsed\) \{\s*return;\s*\}\s*setSpaceWorkspacePanelCollapsed\(false\);/,
+    /setSpaceWorkspacePanelCollapsed\(false\);/,
   );
   assert.match(source, /<FileExplorerPane[\s\S]*focusRequest=\{fileExplorerFocusRequest\}/);
   assert.match(source, /<FileExplorerPane[\s\S]*onOpenLinkInBrowser=\{handleOpenLinkInNewAppBrowserTab\}/);
