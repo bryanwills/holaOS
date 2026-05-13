@@ -134,6 +134,20 @@ test("workspace-scoped session lifecycle and IO APIs route through workspace run
   );
 });
 
+test("workspace runtime transport respects https session URLs for JSON and SSE requests", async () => {
+  const source = await readFile(MAIN_PATH, "utf8");
+
+  assert.match(source, /import \{ request as httpsRequest } from "node:https";/);
+  assert.match(
+    source,
+    /async function requestRuntimeJsonViaHttp<T>\([\s\S]*?const requestImpl = targetUrl\.protocol === "https:"\s*\?\s*httpsRequest\s*:\s*httpRequest;[\s\S]*?const port = targetUrl\.port \|\| \(targetUrl\.protocol === "https:" \? "443" : "80"\);[\s\S]*?const request = requestImpl\(/,
+  );
+  assert.match(
+    source,
+    /async function openSessionOutputStream\([\s\S]*?const requestImpl = url\.protocol === "https:" \? httpsRequest : httpRequest;[\s\S]*?const port = url\.port \|\| \(url\.protocol === "https:" \? "443" : "80"\);[\s\S]*?const request = requestImpl\(/,
+  );
+});
+
 test("local filesystem access goes through explicit local workspace-root helpers", async () => {
   const source = await readFile(MAIN_PATH, "utf8");
 

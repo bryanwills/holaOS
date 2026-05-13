@@ -1,6 +1,7 @@
 import { listMarketplaceTemplates as sdkListMarketplaceTemplates } from "@holaboss/app-sdk/core";
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useLayoutEffect,
@@ -109,6 +110,8 @@ interface WorkspaceDesktopContextValue {
   clientConfig: HolabossClientConfigPayload | null;
   workspaces: WorkspaceRecordPayload[];
   hasHydratedWorkspaceList: boolean;
+  isLoadingCloudWorkspaceList: boolean;
+  pendingCloudWorkspaceIds: string[];
   selectedWorkspace: WorkspaceRecordPayload | null;
   installedApps: WorkspaceInstalledAppDefinition[];
   isLoadingInstalledApps: boolean;
@@ -331,6 +334,8 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const [clientConfig, setClientConfig] = useState<HolabossClientConfigPayload | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceRecordPayload[]>([]);
   const [hasHydratedWorkspaceList, setHasHydratedWorkspaceList] = useState(false);
+  const [hasHydratedLiveWorkspaceList, setHasHydratedLiveWorkspaceList] = useState(false);
+  const [pendingCloudWorkspaceIds, setPendingCloudWorkspaceIds] = useState<string[]>([]);
   const [installedApps, setInstalledApps] = useState<WorkspaceInstalledAppDefinition[]>([]);
   const [appCatalog, setAppCatalog] = useState<AppCatalogEntryPayload[]>([]);
   const [isLoadingAppCatalog, setIsLoadingAppCatalog] = useState(false);
@@ -416,6 +421,10 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     setBrowserImportProfileDirState("");
   }, [browserImportSource]);
 
+  useEffect(() => {
+    setHasHydratedLiveWorkspaceList(false);
+  }, [signedInUserId]);
+
   // Auto-load the marketplace app catalog once the runtime is running,
   // even if the user hasn't opened the marketplace pane yet. The
   // workspace sidebar uses `appCatalog[].provider_id` to map an installed
@@ -476,10 +485,27 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     : "";
   const runtimeReadyForWorkspaceData = runtimeStatus?.status === "running";
   const canLoadLiveWorkspaceList = runtimeReadyForWorkspaceData || isSignedIn;
+  const isLoadingCloudWorkspaceList = isSignedIn && !hasHydratedLiveWorkspaceList;
   const selectedWorkspaceNeedsLocalRuntime = selectedWorkspace?.location !== "cloud";
   const workspaceLifecycleMatchesSelection = Boolean(selectedWorkspaceId) && workspaceLifecycleWorkspaceId === selectedWorkspaceId;
   const workspaceAppsReady = workspaceLifecycleMatchesSelection && workspaceAppsReadyState;
   const workspaceBlockingReason = workspaceLifecycleMatchesSelection ? workspaceBlockingReasonState : "";
+
+  const syncPendingCloudWorkspaceIds = useCallback(() => {
+    const pendingCloudWorkspaceRecords = pendingCloudWorkspaceRecordsRef.current;
+    const now = Date.now();
+    for (const [workspaceId, expiresAt] of pendingCloudWorkspaceRecords) {
+      if (expiresAt <= now) {
+        pendingCloudWorkspaceRecords.delete(workspaceId);
+      }
+    }
+    const nextIds = Array.from(pendingCloudWorkspaceRecords.keys());
+    setPendingCloudWorkspaceIds((current) =>
+      current.length === nextIds.length && current.every((id, index) => id === nextIds[index])
+        ? current
+        : nextIds,
+    );
+  }, []);
 
   function setTemplateSourceMode(value: TemplateSourceMode) {
     setWorkspaceErrorMessage("");
@@ -602,6 +628,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     for (const workspaceId of nextWorkspaceIds) {
       pendingCloudWorkspaceRecords.delete(workspaceId);
     }
+    syncPendingCloudWorkspaceIds();
 
     const optimisticCloudWorkspaces = workspaces.filter((workspace) => {
       const workspaceId = workspace.id.trim();
@@ -852,6 +879,9 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     const workspaceResponse = workspaceListSource === "live"
       ? await window.electronAPI.workspace.listWorkspaces()
       : await window.electronAPI.workspace.listWorkspacesCached();
+    if (workspaceListSource === "live") {
+      setHasHydratedLiveWorkspaceList(true);
+    }
     const nextWorkspaces = workspaceListSource === "live"
       ? mergePendingCloudWorkspaceRecords(workspaceResponse.items)
       : workspaceResponse.items;
@@ -984,6 +1014,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
           createdWorkspaceId,
           Date.now() + PENDING_CLOUD_WORKSPACE_RECORD_TTL_MS,
         );
+        syncPendingCloudWorkspaceIds();
       }
       rememberWorkspaceRecord(response.workspace);
 
@@ -1052,6 +1083,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     setWorkspaceErrorMessage("");
     try {
       pendingCloudWorkspaceRecordsRef.current.delete(trimmedWorkspaceId);
+      syncPendingCloudWorkspaceIds();
       if (selectedWorkspaceId === trimmedWorkspaceId) {
         const fallbackWorkspaceId =
           workspaces.find((workspace) => workspace.id !== trimmedWorkspaceId)?.id ??
@@ -1823,6 +1855,8 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       clientConfig,
       workspaces,
       hasHydratedWorkspaceList,
+      isLoadingCloudWorkspaceList,
+      pendingCloudWorkspaceIds,
       selectedWorkspace,
       installedApps,
       isLoadingInstalledApps,
@@ -1909,6 +1943,8 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       clientConfig,
       workspaces,
       hasHydratedWorkspaceList,
+      isLoadingCloudWorkspaceList,
+      pendingCloudWorkspaceIds,
       selectedWorkspace,
       installedApps,
       isLoadingInstalledApps,

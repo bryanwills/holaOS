@@ -27,7 +27,7 @@ test("first workspace pane passes panel variant through to the creating view", a
   const source = await readFile(firstWorkspacePanePath, "utf8");
 
   assert.match(source, /<CreatingView[\s\S]*panelVariant=\{isPanelVariant\}/);
-  assert.doesNotMatch(
+  assert.match(
     source,
     /<CreatingView[\s\S]*workspaceCreateLocation=\{workspaceCreateLocation\}/,
   );
@@ -52,8 +52,12 @@ test("first workspace pane runs the welcome → name → folder flow", async () 
   assert.match(source, /title="Welcome to holaOS"/);
   assert.match(source, /title="Name your workspace"/);
   assert.match(source, /title="Where should it live\?"/);
+  assert.match(source, /label="Workspace location"/);
+  assert.match(source, /value="local"/);
+  assert.match(source, /value="cloud"/);
   assert.match(source, /title="Use the default folder"/);
   assert.match(source, /title="Choose a custom folder"/);
+  assert.match(source, /Sign in to create a cloud workspace\./);
   assert.match(source, /chooseWorkspaceFolder/);
   // Welcome: brand-flavoured CTA only; offline skip is no longer exposed.
   assert.match(source, /useDesktopAuthSession/);
@@ -92,6 +96,8 @@ test("first workspace pane runs the welcome → name → folder flow", async () 
   assert.match(source, /setTemplateSourceMode\("empty"\)/);
   assert.doesNotMatch(source, /setTemplateSourceMode\("empty_onboarding"\)/);
   assert.match(source, /setBrowserBootstrapMode\("fresh"\)/);
+  assert.match(source, /setWorkspaceCreateLocation\("local"\)/);
+  assert.match(source, /eslint-disable-next-line react-hooks\/exhaustive-deps[\s\S]*\}, \[\]\);/);
   // The simplified flow no longer reaches into browser-profile bootstrapping
   // or marketplace template browsing.
   assert.doesNotMatch(source, /BrowserProfileStep/);

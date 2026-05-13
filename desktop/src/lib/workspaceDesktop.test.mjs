@@ -65,6 +65,10 @@ test("workspace desktop hydrates workspace summaries from cached or live sources
   );
   assert.match(
     source,
+    /const isLoadingCloudWorkspaceList = isSignedIn && !hasHydratedLiveWorkspaceList;/,
+  );
+  assert.match(
+    source,
     /const selectedWorkspaceNeedsLocalRuntime = selectedWorkspace\?\.location !== "cloud";/,
   );
   assert.match(
@@ -107,7 +111,7 @@ test("workspace activation reset clears the activating flag before wiping readin
 
   assert.match(
     source,
-    /if \(!selectedWorkspaceId \|\| !selectedWorkspaceExists \|\| !runtimeReadyForWorkspaceData\) \{\s*setInstalledApps\(\[\]\);\s*setIsLoadingInstalledApps\(false\);\s*setIsActivatingWorkspace\(false\);\s*setWorkspaceLifecycleWorkspaceId\(""\);\s*setWorkspaceAppsReadyState\(false\);\s*setWorkspaceBlockingReasonState\(""\);\s*return;\s*\}/,
+    /if \(\s*!selectedWorkspaceId \|\|\s*!selectedWorkspaceExists \|\|\s*\(selectedWorkspaceNeedsLocalRuntime && !runtimeReadyForWorkspaceData\)\s*\) \{\s*setInstalledApps\(\[\]\);\s*setIsLoadingInstalledApps\(false\);\s*setIsActivatingWorkspace\(false\);\s*setWorkspaceLifecycleWorkspaceId\(""\);\s*setWorkspaceAppsReadyState\(false\);\s*setWorkspaceBlockingReasonState\(""\);\s*return;\s*\}/,
   );
 });
 
@@ -148,7 +152,19 @@ test("workspace creation can copy an existing workspace browser profile or impor
   );
   assert.match(
     source,
+    /const \[hasHydratedLiveWorkspaceList, setHasHydratedLiveWorkspaceList\] = useState\(false\);/,
+  );
+  assert.match(
+    source,
+    /const \[pendingCloudWorkspaceIds, setPendingCloudWorkspaceIds\] = useState<string\[\]>\(\[\]\);/,
+  );
+  assert.match(
+    source,
     /const pendingCloudWorkspaceRecordsRef = useRef\(new Map<string, number>\(\)\);/,
+  );
+  assert.match(
+    source,
+    /const syncPendingCloudWorkspaceIds = useCallback\(\(\) => \{/,
   );
   assert.match(
     source,
@@ -176,6 +192,10 @@ test("workspace creation can copy an existing workspace browser profile or impor
   );
   assert.match(
     source,
+    /if \(workspaceListSource === "live"\) \{\s*setHasHydratedLiveWorkspaceList\(true\);\s*\}/,
+  );
+  assert.match(
+    source,
     /const session = await window\.electronAPI\.workspace\.openWorkspace\(workspaceId\);/,
   );
   assert.match(
@@ -194,6 +214,7 @@ test("workspace creation can copy an existing workspace browser profile or impor
     source,
     /pendingCloudWorkspaceRecordsRef\.current\.set\(\s*createdWorkspaceId,\s*Date\.now\(\) \+ PENDING_CLOUD_WORKSPACE_RECORD_TTL_MS,\s*\);/,
   );
+  assert.match(source, /syncPendingCloudWorkspaceIds\(\);/);
   assert.match(
     source,
     /await loadWorkspaceData\(\{ preserveSelection: true, allowEmpty: true \}\);/,

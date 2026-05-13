@@ -46,7 +46,6 @@ import { Button } from "@/components/ui/button";
 import { StatusDot } from "@/components/ui/status-dot";
 import { UserAvatar } from "@/components/ui/UserAvatar";
 import { WorkspaceIcon } from "@/components/ui/workspace-icon";
-import { WorkspaceIconPicker } from "@/components/ui/workspace-icon-picker";
 import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
@@ -168,11 +167,12 @@ export function TopTabsBar({
     useWorkspaceSelection();
   const {
     workspaces,
+    isLoadingCloudWorkspaceList,
+    pendingCloudWorkspaceIds,
     selectedWorkspace,
     deletingWorkspaceId,
     workspaceErrorMessage,
     deleteWorkspace,
-    updateWorkspaceAppearance,
   } = useWorkspaceDesktop();
 
   const onDeleteWorkspace = async (workspace: WorkspaceRecordPayload) => {
@@ -229,20 +229,43 @@ export function TopTabsBar({
     });
   }, [workspaceQuery, workspaces]);
 
-  const workspaceShortId = useCallback((workspaceId: string) => {
-    return workspaceId.trim().slice(0, 8);
-  }, []);
+  const pendingCloudWorkspaceIdSet = useMemo(
+    () => new Set(pendingCloudWorkspaceIds),
+    [pendingCloudWorkspaceIds],
+  );
+
+  const workspaceSections = useMemo(() => {
+    const cloudItems: WorkspaceRecordPayload[] = [];
+    const localItems: WorkspaceRecordPayload[] = [];
+    for (const workspace of filteredWorkspaces) {
+      if (workspace.location === "cloud") {
+        cloudItems.push(workspace);
+        continue;
+      }
+      localItems.push(workspace);
+    }
+
+    return [
+      {
+        key: "cloud",
+        label: "Cloud workspaces",
+        items: cloudItems,
+        isLoading: isLoadingCloudWorkspaceList,
+      },
+      {
+        key: "local",
+        label: "Local workspaces",
+        items: localItems,
+        isLoading: false,
+      },
+    ].filter((section) => section.items.length > 0 || section.isLoading);
+  }, [filteredWorkspaces, isLoadingCloudWorkspaceList]);
 
   const workspaceSwitcherMetaLabel = useCallback(
     (workspace: WorkspaceRecordPayload) => {
-      const parts = [
-        workspace.location === "cloud" ? "Cloud" : "Local",
-        workspace.status,
-        workspaceShortId(workspace.id),
-      ].filter((value) => Boolean((value || "").trim()));
-      return parts.join(" • ");
+      return workspace.location === "cloud" ? "Cloud" : "Local";
     },
-    [workspaceShortId],
+    [],
   );
 
   const handleTitleBarDoubleClick = (event: MouseEvent<HTMLElement>) => {
@@ -761,74 +784,89 @@ export function TopTabsBar({
               </div>
 
               <div className="max-h-[240px] overflow-y-auto">
-                {filteredWorkspaces.length ? (
+                {workspaceSections.length ? (
                   <div className="flex flex-col">
-                    {filteredWorkspaces.map((workspace) => {
-                      const isActive = workspace.id === selectedWorkspaceId;
-                      const isDeleting = deletingWorkspaceId === workspace.id;
-                      const folderMissing =
-                        workspace.folder_state === "missing";
-                      return (
-                        <div
-                          key={workspace.id}
-                          className={cn(
-                            "group flex items-center gap-2 px-2 py-1.5 transition-colors",
-                            isActive ? "bg-fg-6" : "hover:bg-fg-2",
-                            isDeleting && "opacity-50",
-                          )}
-                        >
-                          <WorkspaceIconPicker
-                            workspace={workspace}
-                            size="md"
-                            disabled={isDeleting}
-                            onChange={({ icon, iconColor }) => {
-                              void updateWorkspaceAppearance(workspace.id, {
-                                icon,
-                                iconColor,
-                              });
-                            }}
-                          />
-                          <button
-                            type="button"
-                            disabled={isDeleting}
-                            onClick={() => {
-                              setSelectedWorkspaceId(workspace.id);
-                              closeWorkspaceSwitcher();
-                            }}
-                            className="flex min-w-0 flex-1 items-center gap-2 px-1 text-left text-sm font-medium disabled:cursor-not-allowed"
-                          >
-                            <WorkspaceIcon workspace={workspace} size="md" />
-                            <div className="min-w-0 flex-1">
-                              <div className="truncate">{workspace.name}</div>
-                              <div className="truncate text-[11px] font-normal text-muted-foreground">
-                                {workspaceSwitcherMetaLabel(workspace)}
-                              </div>
-                            </div>
-                            {folderMissing ? (
-                              <StatusDot
-                                variant="warning"
-                                className="ml-auto"
-                                title={`Folder missing at ${workspace.workspace_path ?? "unknown"}`}
-                              />
-                            ) : null}
-                          </button>
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            aria-label={`Delete workspace ${workspace.name}`}
-                            disabled={Boolean(deletingWorkspaceId)}
-                            onClick={() => void onDeleteWorkspace(workspace)}
-                            className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
-                          >
-                            {isDeleting ? (
-                              <Loader2 className="size-3.5 animate-spin" />
-                            ) : (
-                              <Trash2 className="size-3.5" />
-                            )}
-                          </Button>
+                    {workspaceSections.map((section) => (
+                      <div
+                        key={section.key}
+                        className="flex flex-col"
+                      >
+                        <div className="flex items-center gap-2 px-2 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                          <span>{section.label}</span>
+                          {section.isLoading ? (
+                            <Loader2 className="size-3 animate-spin" />
+                          ) : null}
                         </div>
-                      );
-                    })}
+                        {section.items.length ? (
+                          section.items.map((workspace) => {
+                            const isActive = workspace.id === selectedWorkspaceId;
+                            const isDeleting = deletingWorkspaceId === workspace.id;
+                            const isCloudWorkspacePending =
+                              workspace.location === "cloud" &&
+                              pendingCloudWorkspaceIdSet.has(workspace.id);
+                            const folderMissing =
+                              workspace.folder_state === "missing";
+                            return (
+                              <div
+                                key={workspace.id}
+                                className={cn(
+                                  "group flex items-center gap-2 px-2 py-1.5 transition-colors",
+                                  isActive ? "bg-fg-6" : "hover:bg-fg-2",
+                                  isDeleting && "opacity-50",
+                                )}
+                              >
+                                <button
+                                  type="button"
+                                  disabled={isDeleting}
+                                  onClick={() => {
+                                    setSelectedWorkspaceId(workspace.id);
+                                    closeWorkspaceSwitcher();
+                                  }}
+                                  className="flex min-w-0 flex-1 items-center gap-2 px-1 text-left text-sm font-medium disabled:cursor-not-allowed"
+                                >
+                                  <WorkspaceIcon workspace={workspace} size="md" />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="truncate">{workspace.name}</div>
+                                    <div className="truncate text-[11px] font-normal text-muted-foreground">
+                                      {workspaceSwitcherMetaLabel(workspace)}
+                                    </div>
+                                  </div>
+                                </button>
+                                <div className="ml-auto flex items-center gap-1.5">
+                                  {isCloudWorkspacePending ? (
+                                    <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+                                  ) : null}
+                                  {folderMissing ? (
+                                    <StatusDot
+                                      variant="warning"
+                                      title={`Folder missing at ${workspace.workspace_path ?? "unknown"}`}
+                                    />
+                                  ) : null}
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    aria-label={`Delete workspace ${workspace.name}`}
+                                    disabled={Boolean(deletingWorkspaceId)}
+                                    onClick={() => void onDeleteWorkspace(workspace)}
+                                    className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
+                                  >
+                                    {isDeleting ? (
+                                      <Loader2 className="size-3.5 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="size-3.5" />
+                                    )}
+                                  </Button>
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : section.isLoading ? (
+                          <div className="px-2 py-2 text-xs text-muted-foreground">
+                            Syncing cloud workspaces…
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
                   </div>
                 ) : (
                   <div className="rounded-lg border border-border px-3 py-4 text-center text-xs text-muted-foreground">

@@ -4,6 +4,7 @@ import { firstWorkspacePaneSectionClassName } from "@/components/layout/firstWor
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { holabossLogoUrl } from "@/lib/assetPaths";
 import {
   type FirstWorkspaceStep as SimpleStep,
@@ -40,10 +41,9 @@ const STEP_INDEX_PANEL: Record<SimpleStep, number> = {
 };
 
 /**
- * Simplified workspace creation: name → folder choice → create. Templates and
- * remote-server selection are intentionally skipped — every workspace is
- * local. Marketplace browsing components remain in the codebase but are no
- * longer reachable from this entry.
+ * Simplified workspace creation: name → location → create. Templates,
+ * marketplace browsing, and browser-profile bootstrapping are intentionally
+ * skipped from this entry.
  */
 export function FirstWorkspacePane({
   variant = "full",
@@ -54,6 +54,8 @@ export function FirstWorkspacePane({
     setNewWorkspaceName,
     setTemplateSourceMode,
     setBrowserBootstrapMode,
+    workspaceCreateLocation,
+    setWorkspaceCreateLocation,
     selectedWorkspaceFolder,
     chooseWorkspaceFolder,
     clearSelectedWorkspaceFolder,
@@ -61,6 +63,7 @@ export function FirstWorkspacePane({
     workspaceCreatePhase,
     isCreatingWorkspace,
     workspaceErrorMessage,
+    resolvedUserId,
     createWorkspace,
     firstWorkspaceStep,
     setFirstWorkspaceStep,
@@ -129,7 +132,12 @@ export function FirstWorkspacePane({
   useEffect(() => {
     setTemplateSourceMode("empty");
     setBrowserBootstrapMode("fresh");
-  }, [setTemplateSourceMode, setBrowserBootstrapMode]);
+    setWorkspaceCreateLocation("local");
+    // These context setters are recreated by the provider, so treating them as
+    // effect dependencies would rerun this initialization after every render
+    // and immediately snap the location selector back to "local".
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const trimmedName = newWorkspaceName.trim();
   const sectionClassName = firstWorkspacePaneSectionClassName("configure");
@@ -170,11 +178,13 @@ export function FirstWorkspacePane({
   }
 
   function handleSelectDefault() {
+    setWorkspaceCreateLocation("local");
     setFolderChoice("default");
     clearSelectedWorkspaceFolder();
   }
 
   function handleSelectCustom() {
+    setWorkspaceCreateLocation("local");
     setFolderChoice("custom");
     if (!customPath) {
       void chooseWorkspaceFolder();
@@ -190,7 +200,11 @@ export function FirstWorkspacePane({
   }
 
   const createDisabled =
-    !trimmedName || (folderChoice === "custom" && !customPath);
+    !trimmedName ||
+    (workspaceCreateLocation === "local" &&
+      folderChoice === "custom" &&
+      !customPath) ||
+    (workspaceCreateLocation === "cloud" && !resolvedUserId);
   const isAuthGateBusy =
     !isSignedIn && (authSessionState.isPending || isAuthContinuationPending);
   const authGatePrimaryLabel = isSignedIn
@@ -214,6 +228,7 @@ export function FirstWorkspacePane({
         creatingViaMarketplace={false}
         panelVariant={isPanelVariant}
         sectionClassName={sectionClassName}
+        workspaceCreateLocation={workspaceCreateLocation}
         workspaceCreatePhase={workspaceCreatePhase}
       />
     </OnboardingShell>
@@ -299,7 +314,11 @@ export function FirstWorkspacePane({
           </WorkspaceWizardLayout>
         ) : (
           <WorkspaceWizardLayout
-            description="Files run locally on this machine. Use the default location or pick a folder you control."
+            description={
+              workspaceCreateLocation === "cloud"
+                ? "Cloud workspaces run in the hosted runtime and open through the remote control plane."
+                : "Files run locally on this machine. Use the default location or pick a folder you control."
+            }
             errorMessage={workspaceErrorMessage || null}
             primary={{
               label: "Create workspace",
@@ -316,58 +335,109 @@ export function FirstWorkspacePane({
             width="md"
           >
             <div className="space-y-3">
-              <FolderOption
-                active={folderChoice === "default"}
-                description={
-                  defaultRoot
-                    ? `Files live in ${defaultRoot}/workspace/<id>.`
-                    : "Holaboss-managed location on this machine."
-                }
-                icon={<Folder />}
-                onSelect={handleSelectDefault}
-                title="Use the default folder"
-              />
+              <WizardField
+                help="Local keeps files on this machine. Cloud stores them inside the hosted runtime."
+                label="Workspace location"
+              >
+                <Tabs
+                  onValueChange={(value) => {
+                    if (!value) {
+                      return;
+                    }
+                    setWorkspaceCreateLocation(value as WorkspaceLocationPayload);
+                    if (value === "local" && !selectedWorkspaceFolder?.rootPath) {
+                      setFolderChoice("default");
+                    }
+                  }}
+                  value={workspaceCreateLocation}
+                >
+                  <TabsList className="w-full">
+                    <TabsTrigger className="h-9 flex-1" value="local">
+                      Local
+                    </TabsTrigger>
+                    <TabsTrigger className="h-9 flex-1" value="cloud">
+                      Cloud
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </WizardField>
 
-              <FolderOption
-                active={folderChoice === "custom"}
-                description="Keep the workspace files on a drive or folder you control."
-                icon={<FolderOpen />}
-                onSelect={handleSelectCustom}
-                title="Choose a custom folder"
-              />
-
-              {folderChoice === "custom" ? (
-                customPath ? (
-                  <div className="flex items-center gap-2 rounded-lg bg-fg-2 px-3 py-2 shadow-2xs">
-                    <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
-                    <span
-                      className="flex-1 truncate font-mono text-[11px]"
-                      title={customPath}
-                    >
-                      {customPath}
-                    </span>
-                    <Button
-                      aria-label="Clear workspace folder"
-                      onClick={clearSelectedWorkspaceFolder}
-                      size="icon-xs"
-                      type="button"
-                      variant="ghost"
-                    >
-                      <X />
-                    </Button>
+              {workspaceCreateLocation === "cloud" ? (
+                resolvedUserId ? (
+                  <div className="rounded-lg bg-fg-2 px-3 py-2.5 text-sm text-muted-foreground shadow-2xs">
+                    Files will be stored inside the remote runtime and opened through the cloud workspace gateway.
                   </div>
                 ) : (
-                  <Button
-                    onClick={() => void chooseWorkspaceFolder()}
-                    size="sm"
-                    type="button"
-                    variant="bordered"
-                  >
-                    <Folder />
-                    Choose folder…
-                  </Button>
+                  <div className="flex items-center justify-between gap-3 rounded-lg bg-fg-2 px-3 py-2.5 shadow-2xs">
+                    <p className="text-sm text-muted-foreground">
+                      Sign in to create a cloud workspace.
+                    </p>
+                    <Button
+                      onClick={() => void window.electronAPI.auth.requestAuth()}
+                      size="sm"
+                      type="button"
+                      variant="bordered"
+                    >
+                      Connect holaOS
+                    </Button>
+                  </div>
                 )
-              ) : null}
+              ) : (
+                <>
+                  <FolderOption
+                    active={folderChoice === "default"}
+                    description={
+                      defaultRoot
+                        ? `Files live in ${defaultRoot}/workspace/<id>.`
+                        : "Holaboss-managed location on this machine."
+                    }
+                    icon={<Folder />}
+                    onSelect={handleSelectDefault}
+                    title="Use the default folder"
+                  />
+
+                  <FolderOption
+                    active={folderChoice === "custom"}
+                    description="Keep the workspace files on a drive or folder you control."
+                    icon={<FolderOpen />}
+                    onSelect={handleSelectCustom}
+                    title="Choose a custom folder"
+                  />
+
+                  {folderChoice === "custom" ? (
+                    customPath ? (
+                      <div className="flex items-center gap-2 rounded-lg bg-fg-2 px-3 py-2 shadow-2xs">
+                        <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
+                        <span
+                          className="flex-1 truncate font-mono text-[11px]"
+                          title={customPath}
+                        >
+                          {customPath}
+                        </span>
+                        <Button
+                          aria-label="Clear workspace folder"
+                          onClick={clearSelectedWorkspaceFolder}
+                          size="icon-xs"
+                          type="button"
+                          variant="ghost"
+                        >
+                          <X />
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        onClick={() => void chooseWorkspaceFolder()}
+                        size="sm"
+                        type="button"
+                        variant="bordered"
+                      >
+                        <Folder />
+                        Choose folder…
+                      </Button>
+                    )
+                  ) : null}
+                </>
+              )}
             </div>
           </WorkspaceWizardLayout>
         )}

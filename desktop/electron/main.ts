@@ -87,6 +87,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
+import { request as httpsRequest } from "node:https";
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -11773,6 +11774,10 @@ async function requestRuntimeJsonViaHttp<T>(
   extraHeaders?: Record<string, string>,
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
+    const requestImpl = targetUrl.protocol === "https:"
+      ? httpsRequest
+      : httpRequest;
+    const port = targetUrl.port || (targetUrl.protocol === "https:" ? "443" : "80");
     const serializedPayload =
       payload === undefined ? null : JSON.stringify(payload);
     const headers =
@@ -11783,10 +11788,10 @@ async function requestRuntimeJsonViaHttp<T>(
             "Content-Type": "application/json",
             "Content-Length": String(Buffer.byteLength(serializedPayload)),
           };
-    const request = httpRequest(
+    const request = requestImpl(
       {
         hostname: targetUrl.hostname,
-        port: targetUrl.port || "80",
+        port,
         path: `${targetUrl.pathname}${targetUrl.search}`,
         method,
         headers,
@@ -15149,11 +15154,13 @@ async function openSessionOutputStream(
       await new Promise<void>((resolve, reject) => {
         const abortError = new Error("Stream aborted.");
         abortError.name = "AbortError";
+        const requestImpl = url.protocol === "https:" ? httpsRequest : httpRequest;
+        const port = url.port || (url.protocol === "https:" ? "443" : "80");
 
-        const request = httpRequest(
+        const request = requestImpl(
           {
             hostname: url.hostname,
-            port: url.port || "80",
+            port,
             path: `${url.pathname}${url.search}`,
             method: "GET",
             headers: {

@@ -43,13 +43,19 @@ test("top tabs bar workspace switcher makes same-name workspaces distinguishable
 
   assert.match(source, /workspace\.id\.toLowerCase\(\)\.includes\(query\)/);
   assert.match(source, /\(workspace\.location \|\| ""\)\.toLowerCase\(\)\.includes\(query\)/);
-  assert.match(source, /const workspaceShortId = useCallback\(\(workspaceId: string\) => \{/);
-  assert.match(source, /return workspaceId\.trim\(\)\.slice\(0, 8\);/);
+  assert.match(source, /const pendingCloudWorkspaceIdSet = useMemo\(/);
+  assert.match(source, /const workspaceSections = useMemo\(/);
+  assert.match(source, /label: "Cloud workspaces"/);
+  assert.match(source, /label: "Local workspaces"/);
+  assert.match(source, /Syncing cloud workspaces…/);
+  assert.match(source, /pendingCloudWorkspaceIdSet\.has\(workspace\.id\)/);
   assert.match(source, /const workspaceSwitcherMetaLabel = useCallback\(/);
-  assert.match(source, /workspace\.location === "cloud" \? "Cloud" : "Local"/);
-  assert.match(source, /workspaceShortId\(workspace\.id\)/);
-  assert.match(source, /parts\.join\(" • "\)/);
+  assert.match(
+    source,
+    /const workspaceSwitcherMetaLabel = useCallback\(\s*\(workspace: WorkspaceRecordPayload\) => \{\s*return workspace\.location === "cloud" \? "Cloud" : "Local";\s*\},\s*\[\],\s*\);/,
+  );
   assert.match(source, /className="truncate text-\[11px\] font-normal text-muted-foreground"/);
+  assert.doesNotMatch(source, /WorkspaceIconPicker/);
 });
 
 test("top tabs bar keeps broad integrated title bar space draggable in workspace mode", async () => {
