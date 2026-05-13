@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
@@ -925,6 +926,390 @@ function ensureLocalBinding(params: {
     harnessSessionId: params.sessionId,
   });
   return binding.harnessSessionId;
+}
+
+function snapshotSafeDefaultHeaders(
+  headers: Record<string, string> | null | undefined,
+): Record<string, string> | null {
+  if (!headers) {
+    return null;
+  }
+  const sanitized = Object.fromEntries(
+    Object.entries(headers).filter(([key, value]) => {
+      if (!value.trim()) {
+        return false;
+      }
+      return !/^(authorization|proxy-authorization|x-api-key|api-key)$/i.test(
+        key,
+      );
+    }),
+  );
+  return Object.keys(sanitized).length > 0 ? sanitized : null;
+}
+
+function snapshotSafeHeaderRecord(value: unknown): Record<string, string> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const stringHeaders = Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+  return snapshotSafeDefaultHeaders(stringHeaders);
+}
+
+function snapshotFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function snapshotFingerprint(payload: Record<string, unknown>): string {
+  return createHash("sha256")
+    .update(JSON.stringify(payload))
+    .digest("hex");
+}
+
+function bestEffortModelReference(params: {
+  selectedModel: string | null;
+  defaultProviderId: string;
+}): { providerId: string; modelId: string } | null {
+  const selectedModel = nonEmptyString(params.selectedModel);
+  if (!selectedModel) {
+    return null;
+  }
+  const slashIndex = selectedModel.indexOf("/");
+  if (slashIndex > 0 && slashIndex < selectedModel.length - 1) {
+    return {
+      providerId: selectedModel.slice(0, slashIndex),
+      modelId: selectedModel.slice(slashIndex + 1),
+    };
+  }
+  const fallbackProviderId = nonEmptyString(params.defaultProviderId);
+  if (!fallbackProviderId) {
+    return null;
+  }
+  return {
+    providerId: fallbackProviderId,
+    modelId: selectedModel,
+  };
+}
+
+function syntheticWorkspaceConfigChecksum(params: {
+  workspaceId: string;
+  sessionId: string;
+  harness: string;
+}): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        workspace_id: params.workspaceId,
+        session_id: params.sessionId,
+        harness_id: params.harness,
+        synthetic: true,
+      }),
+    )
+    .digest("hex");
+}
+
+function reusableTurnRequestSnapshotTemplate(params: {
+  store: RuntimeStateStore;
+  workspaceId: string;
+  sessionId: string;
+  inputId: string;
+  harness: string;
+}): {
+  snapshotPayload: Record<string, unknown>;
+  harnessRequest: Record<string, unknown>;
+  runtimeConfig: Record<string, unknown> | null;
+} | null {
+  const snapshots = params.store.listTurnRequestSnapshots({
+    workspaceId: params.workspaceId,
+    sessionId: params.sessionId,
+    limit: 100,
+  });
+  for (const snapshot of snapshots) {
+    if (snapshot.inputId === params.inputId) {
+      continue;
+    }
+    const payload = isRecord(snapshot.payload) ? snapshot.payload : null;
+    if (!payload) {
+      continue;
+    }
+    const harnessId = nonEmptyString(payload.harness_id);
+    if (harnessId && harnessId !== params.harness) {
+      continue;
+    }
+    const harnessRequest = isRecord(payload.harness_request)
+      ? payload.harness_request
+      : null;
+    if (!harnessRequest) {
+      continue;
+    }
+    if (!nonEmptyString(harnessRequest.workspace_dir)) {
+      continue;
+    }
+    if (snapshotFiniteNumber(harnessRequest.timeout_seconds) === null) {
+      continue;
+    }
+    if (!nonEmptyString(harnessRequest.workspace_config_checksum)) {
+      continue;
+    }
+    if (!isRecord(harnessRequest.model_client)) {
+      continue;
+    }
+    return {
+      snapshotPayload: structuredClone(payload),
+      harnessRequest: structuredClone(harnessRequest),
+      runtimeConfig: isRecord(payload.runtime_config)
+        ? structuredClone(payload.runtime_config)
+        : null,
+    };
+  }
+  return null;
+}
+
+function snapshotModelClientConfig(params: {
+  template: Record<string, unknown> | null;
+  modelProxyProvider: string | null;
+  baseUrl: string | null;
+  defaultHeaders: Record<string, string> | null;
+}): Record<string, unknown> {
+  const template = params.template;
+  const templateProvider = nonEmptyString(template?.model_proxy_provider);
+  const templateApiKey = nonEmptyString(template?.api_key) ?? "[redacted]";
+  const templateBaseUrl = nonEmptyString(template?.base_url);
+  const templateHeaders = snapshotSafeHeaderRecord(template?.default_headers);
+  return {
+    ...(template ?? {}),
+    model_proxy_provider: params.modelProxyProvider ?? templateProvider ?? null,
+    api_key: templateApiKey,
+    base_url: params.baseUrl ?? templateBaseUrl ?? null,
+    default_headers: params.defaultHeaders ?? templateHeaders,
+  };
+}
+
+function ensureClaimedInputTurnRequestSnapshot(params: {
+  store: RuntimeStateStore;
+  record: SessionInputRecord;
+  sessionKind: string;
+  harness: string;
+  workspaceDir: string;
+  instruction: string;
+  attachments: SessionInputAttachment[];
+  imageUrls: string[];
+  runtimeContext: Record<string, unknown>;
+  selectedModel: string | null;
+  harnessTimeoutSeconds: number | null;
+  runtimeBinding: {
+    authToken: string;
+    userId: string;
+    sandboxId: string;
+    modelProxyBaseUrl: string;
+    defaultModel: string;
+    defaultProvider: string;
+  };
+  runtimeExecContext: Record<string, unknown>;
+  resolveRuntimeModelClientFn?: typeof resolveRuntimeModelClient;
+}): string | null {
+  const existing = params.store.getTurnRequestSnapshot({
+    workspaceId: params.record.workspaceId,
+    inputId: params.record.inputId,
+  });
+  if (existing?.fingerprint) {
+    return existing.fingerprint;
+  }
+
+  const effectiveSelectedModel =
+    nonEmptyString(params.selectedModel) ??
+    nonEmptyString(params.runtimeBinding.defaultModel);
+  const reusableTemplate = reusableTurnRequestSnapshotTemplate({
+    store: params.store,
+    workspaceId: params.record.workspaceId,
+    sessionId: params.record.sessionId,
+    inputId: params.record.inputId,
+    harness: params.harness,
+  });
+  const fallbackModelReference = bestEffortModelReference({
+    selectedModel: effectiveSelectedModel,
+    defaultProviderId: params.runtimeBinding.defaultProvider,
+  });
+  const syntheticConfigChecksum = syntheticWorkspaceConfigChecksum({
+    workspaceId: params.record.workspaceId,
+    sessionId: params.record.sessionId,
+    harness: params.harness,
+  });
+
+  let providerId = fallbackModelReference?.providerId ?? "";
+  let modelId = fallbackModelReference?.modelId ?? "";
+  let modelProxyProvider: string | null = null;
+  let modelClientBaseUrl: string | null = null;
+  let modelClientHeaders: Record<string, string> | null = null;
+
+  if (effectiveSelectedModel) {
+    try {
+      const resolved = (
+        params.resolveRuntimeModelClientFn ?? resolveRuntimeModelClient
+      )({
+        selectedModel: effectiveSelectedModel,
+        defaultProviderId:
+          nonEmptyString(params.runtimeBinding.defaultProvider) ?? providerId,
+        workspaceId: params.record.workspaceId,
+        sessionId: params.record.sessionId,
+        inputId: params.record.inputId,
+        runtimeExecModelProxyApiKey:
+          typeof params.runtimeExecContext[RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY] ===
+          "string"
+            ? params.runtimeExecContext[RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY]
+            : params.runtimeBinding.authToken,
+        runtimeExecSandboxId:
+          typeof params.runtimeExecContext[RUNTIME_EXEC_SANDBOX_ID_KEY] ===
+          "string"
+            ? params.runtimeExecContext[RUNTIME_EXEC_SANDBOX_ID_KEY]
+            : params.runtimeBinding.sandboxId,
+        runtimeExecRunId: nonEmptyString(
+          params.runtimeExecContext[RUNTIME_EXEC_RUN_ID_KEY],
+        ),
+      });
+      providerId = nonEmptyString(resolved.providerId) ?? providerId;
+      modelId = nonEmptyString(resolved.modelId) ?? modelId;
+      modelProxyProvider =
+        nonEmptyString(resolved.modelProxyProvider) ??
+        resolved.modelClient.model_proxy_provider;
+      modelClientBaseUrl = nonEmptyString(resolved.modelClient.base_url) ?? null;
+      modelClientHeaders = snapshotSafeDefaultHeaders(
+        resolved.modelClient.default_headers ?? null,
+      );
+    } catch {
+      // Keep the best-effort model reference and persist a minimal snapshot.
+    }
+  }
+
+  if (!providerId || !modelId) {
+    return null;
+  }
+
+  const templateHarnessRequest = reusableTemplate?.harnessRequest ?? null;
+  const templateRuntimeConfig = reusableTemplate?.runtimeConfig ?? null;
+  const templateModelClient = isRecord(templateHarnessRequest?.model_client)
+    ? templateHarnessRequest.model_client
+    : isRecord(templateRuntimeConfig?.model_client)
+      ? templateRuntimeConfig.model_client
+      : null;
+  const templateTimeoutSeconds = snapshotFiniteNumber(
+    templateHarnessRequest?.timeout_seconds,
+  );
+  const workspaceConfigChecksum =
+    nonEmptyString(templateHarnessRequest?.workspace_config_checksum) ??
+    nonEmptyString(templateRuntimeConfig?.workspace_config_checksum) ??
+    syntheticConfigChecksum;
+  const modelClient = snapshotModelClientConfig({
+    template: templateModelClient,
+    modelProxyProvider,
+    baseUrl: modelClientBaseUrl,
+    defaultHeaders: modelClientHeaders,
+  });
+  const harnessRequest: Record<string, unknown> = templateHarnessRequest
+    ? {
+        ...templateHarnessRequest,
+        workspace_id: params.record.workspaceId,
+        workspace_dir:
+          nonEmptyString(templateHarnessRequest.workspace_dir) ??
+          params.workspaceDir,
+        session_id: params.record.sessionId,
+        input_id: params.record.inputId,
+        instruction: params.instruction,
+        attachments: params.attachments,
+        image_urls: params.imageUrls,
+        thinking_value: params.record.payload.thinking_value ?? null,
+        debug: false,
+        provider_id: providerId,
+        model_id: modelId,
+        timeout_seconds:
+          params.harnessTimeoutSeconds ?? templateTimeoutSeconds ?? 0,
+        workspace_config_checksum: workspaceConfigChecksum,
+        model_client: modelClient,
+      }
+    : {
+        workspace_id: params.record.workspaceId,
+        workspace_dir: params.workspaceDir,
+        session_id: params.record.sessionId,
+        browser_tools_enabled: false,
+        browser_space: null,
+        input_id: params.record.inputId,
+        instruction: params.instruction,
+        context_messages: [],
+        tools: {},
+        attachments: params.attachments,
+        image_urls: params.imageUrls,
+        thinking_value: params.record.payload.thinking_value ?? null,
+        debug: false,
+        harness_session_id: null,
+        persisted_harness_session_id: null,
+        provider_id: providerId,
+        model_id: modelId,
+        timeout_seconds: params.harnessTimeoutSeconds ?? 0,
+        runtime_api_base_url: null,
+        system_prompt: "",
+        workspace_skill_dirs: [],
+        mcp_servers: [],
+        mcp_tool_refs: [],
+        workspace_config_checksum: workspaceConfigChecksum,
+        run_started_payload: null,
+        model_client: modelClient,
+      };
+  const runtimeConfig: Record<string, unknown> = templateRuntimeConfig
+    ? {
+        ...templateRuntimeConfig,
+        provider_id: providerId,
+        model_id: modelId,
+        workspace_config_checksum: workspaceConfigChecksum,
+        model_client: modelClient,
+      }
+    : {
+        provider_id: providerId,
+        model_id: modelId,
+        mode: null,
+        system_prompt: "",
+        context_messages: [],
+        prompt_sections: [],
+        prompt_layers: [],
+        prompt_cache_profile: null,
+        tools: {},
+        workspace_tool_ids: [],
+        workspace_skill_ids: [],
+        output_schema_member_id: null,
+        output_format: null,
+        workspace_config_checksum: workspaceConfigChecksum,
+        capability_manifest: null,
+        model_client: {
+          model_proxy_provider: modelProxyProvider,
+          base_url: modelClientBaseUrl,
+          default_headers: modelClientHeaders,
+        },
+      };
+  const snapshotPayload: Record<string, unknown> = {
+    schema_version: 1,
+    snapshot_kind: "harness_host_request",
+    workspace_id: params.record.workspaceId,
+    session_id: params.record.sessionId,
+    input_id: params.record.inputId,
+    harness_id: params.harness,
+    raw_instruction: params.instruction,
+    attachments: params.attachments,
+    image_urls: params.imageUrls,
+    runtime_config: runtimeConfig,
+    harness_request: harnessRequest,
+  };
+  const fingerprint = snapshotFingerprint(snapshotPayload);
+  params.store.upsertTurnRequestSnapshot({
+    workspaceId: params.record.workspaceId,
+    sessionId: params.record.sessionId,
+    inputId: params.record.inputId,
+    snapshotKind: "harness_host_request",
+    fingerprint,
+    payload: snapshotPayload,
+  });
+  return fingerprint;
 }
 
 function buildOnboardingInstruction(params: {
@@ -3960,6 +4345,23 @@ export async function processClaimedInput(params: {
       harness_timeout_seconds: harnessTimeoutSeconds,
       debug: false,
     };
+    const synthesizedRequestSnapshotFingerprint =
+      ensureClaimedInputTurnRequestSnapshot({
+        store,
+        record,
+        sessionKind,
+        harness,
+        workspaceDir,
+        instruction,
+        attachments,
+        imageUrls,
+        runtimeContext,
+        selectedModel,
+        harnessTimeoutSeconds,
+        runtimeBinding,
+        runtimeExecContext: priorExecContext,
+        resolveRuntimeModelClientFn: params.resolveRuntimeModelClientFn,
+      });
     const memoryWritebackModelContext = writebackModelContext({
       workspaceId: record.workspaceId,
       sessionId: record.sessionId,
@@ -3982,7 +4384,8 @@ export async function processClaimedInput(params: {
     let contextUsage: PiContextUsage | null = null;
     let promptSectionIds: string[] = [];
     let capabilityManifestFingerprint: string | null = null;
-    let requestSnapshotFingerprint: string | null = null;
+    let requestSnapshotFingerprint: string | null =
+      synthesizedRequestSnapshotFingerprint;
     let promptCacheProfile: Record<string, unknown> | null = null;
     let toolReplayTrimmed = false;
     let preRunCompaction: PreRunCompactionTelemetryRecord | null = null;

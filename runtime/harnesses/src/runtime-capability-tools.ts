@@ -339,12 +339,12 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         type: "object",
         properties: {
           title: { type: "string", description: "Optional report title shown in the artifact list." },
-          filename: { type: "string", description: "Optional markdown filename stem for the saved report." },
+          filename: { type: "string", description: "Optional HTML filename stem for the saved report." },
           summary: { type: "string", description: "Optional short summary for artifact metadata and follow-up context." },
           content: {
             type: "string",
             description:
-              "Full markdown report content to save as an artifact. Put the detailed research findings in this field instead of in chat.",
+              "Full self-contained HTML report content to save as an artifact. Put the detailed research findings in this field instead of in chat.",
           },
         },
         required: ["content"],
@@ -958,7 +958,8 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "If the user explicitly asked for research, latest news, analysis, comparison, or a timeline and you gathered findings from multiple sources, call `write_report` before your final answer.",
       "A step like 'summarize findings for the user' still means: save the full findings with `write_report`, then keep the chat reply brief.",
       "After calling `write_report`, keep the chat reply short: mention the report title or path and give only the key takeaways.",
-      "Write the full markdown report in `content` instead of pasting the full report inline in chat.",
+      "Write the full report as self-contained HTML in `content` instead of pasting the full report inline in chat.",
+      "Use semantic headings, tables, lists, and concise inline CSS when that improves scanability; avoid scripts and remote assets unless the user explicitly asked for them.",
     ];
   }
   if (toolId === "web_search") {
