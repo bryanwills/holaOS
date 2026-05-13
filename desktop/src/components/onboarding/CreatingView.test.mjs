@@ -26,22 +26,61 @@ test("first workspace pane passes panel variant through to the creating view", a
   const source = await readFile(firstWorkspacePanePath, "utf8");
 
   assert.match(source, /<CreatingView[\s\S]*panelVariant=\{isPanelVariant\}/);
-  assert.match(source, /<CreatingView[\s\S]*workspaceCreateLocation=\{workspaceCreateLocation\}/);
+  assert.doesNotMatch(
+    source,
+    /<CreatingView[\s\S]*workspaceCreateLocation=\{workspaceCreateLocation\}/,
+  );
 });
 
 test("first workspace pane runs the welcome → name → folder flow", async () => {
   const source = await readFile(firstWorkspacePanePath, "utf8");
 
-  assert.match(source, /type OnboardingStep =[\s\S]*\| "browser_profile"/);
-  assert.match(
-    source,
-    /onContinue=\{\(\) =>\s*cloudScratchCreateSelected\s*\?\s*void createWorkspace\(\)\s*:\s*setStep\("browser_profile"\)\s*\}/,
-  );
-  assert.match(
-    source,
-    /<BrowserProfileStep[\s\S]*onBack=\{\(\) => setStep\("configure"\)\}/,
-  );
-  assert.match(source, /listImportBrowserProfiles\(browserImportSource\)/);
+  assert.match(source, /type SimpleStep = "welcome" \| "name" \| "folder";/);
+  // Step index/total are variant-aware: full takeover = 3 (welcome→name→folder),
+  // panel variant = 2 (name→folder, no Welcome).
+  assert.match(source, /STEP_INDEX_FULL[\s\S]*welcome: 1,[\s\S]*name: 2,[\s\S]*folder: 3,/);
+  assert.match(source, /STEP_INDEX_PANEL[\s\S]*name: 1,[\s\S]*folder: 2,/);
+  assert.match(source, /const totalSteps = isPanelVariant \? 2 : 3;/);
+  // Initial step is held in useState<SimpleStep> — Welcome is in the
+  // possible state space. (Exact branch — full vs panel — is asserted via
+  // STEP_INDEX_* + totalSteps below; allows local dev to flip the
+  // initializer to force "welcome" while previewing.)
+  assert.match(source, /useState<SimpleStep>/);
+  // Three step titles.
+  assert.match(source, /title="Welcome to holaOS"/);
+  assert.match(source, /title="Name your workspace"/);
+  assert.match(source, /title="Where should it live\?"/);
+  assert.match(source, /title="Use the default folder"/);
+  assert.match(source, /title="Choose a custom folder"/);
+  assert.match(source, /chooseWorkspaceFolder/);
+  // Welcome: brand-flavoured CTA "Connect holaOS" + plain "Skip" tertiary.
+  assert.match(source, /label: "Connect holaOS"/);
+  assert.match(source, /label: "Skip"/);
+  assert.match(source, /window\.electronAPI\.auth\.requestAuth\(\)/);
+  // Welcome step renders the brand hero above the title.
+  assert.match(source, /aboveTitle=\{<WelcomeHero \/>\}/);
+  // Three static halo rings fading outward, no motion.
+  assert.match(source, /border-primary\/8/);
+  assert.match(source, /border-primary\/16/);
+  assert.match(source, /border-primary\/26/);
+  assert.doesNotMatch(source, /holaboss-splash-halo/);
+  // Three vertical FeatureCards with thin-stroked lucide icons.
+  assert.match(source, /<FeatureCard[\s\S]*art=\{<Sparkles strokeWidth=\{1\.25\} \/>\}/);
+  assert.match(source, /<FeatureCard[\s\S]*art=\{<Plug strokeWidth=\{1\.25\} \/>\}/);
+  assert.match(source, /<FeatureCard[\s\S]*art=\{<Zap strokeWidth=\{1\.25\} \/>\}/);
+  assert.match(source, /grid grid-cols-3/);
+  // Plain "empty" — "empty_onboarding" triggers the ONBOARD.md chat takeover
+  // which has nothing to run for a no-template workspace.
+  assert.match(source, /setTemplateSourceMode\("empty"\)/);
+  assert.doesNotMatch(source, /setTemplateSourceMode\("empty_onboarding"\)/);
+  assert.match(source, /setBrowserBootstrapMode\("fresh"\)/);
+  // The simplified flow no longer reaches into browser-profile bootstrapping
+  // or marketplace template browsing.
+  assert.doesNotMatch(source, /BrowserProfileStep/);
+  assert.doesNotMatch(source, /MarketplaceGallery/);
+  assert.doesNotMatch(source, /KitDetail/);
+  assert.doesNotMatch(source, /SelectAppsStep/);
+  assert.doesNotMatch(source, /ConnectIntegrationsStep/);
 });
 
 test("creating view adapts progress text for copy/import browser bootstrap modes", async () => {
