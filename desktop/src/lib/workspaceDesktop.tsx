@@ -69,6 +69,7 @@ const CLOUD_WORKSPACE_READY_TIMEOUT_MS = 10 * 60 * 1_000;
 const PENDING_CLOUD_WORKSPACE_RECORD_TTL_MS = 2 * 60 * 1_000;
 type TemplateSourceMode = "local" | "marketplace" | "empty" | "empty_onboarding";
 type WorkspaceCreateLocation = WorkspaceLocationPayload;
+export type FirstWorkspaceStep = "welcome" | "name" | "folder";
 type LifecycleStepState = "pending" | "current" | "done" | "error";
 type WorkspaceListLoadSource = "auto" | "live" | "cached";
 type WorkspaceBrowserBootstrapMode = "fresh" | "copy_workspace" | "import_browser";
@@ -198,6 +199,8 @@ interface WorkspaceDesktopContextValue {
   isResolvingIntegrations: boolean;
   resolveIntegrationsBeforeCreate: () => Promise<ResolveTemplateIntegrationsResult | null>;
   clearPendingIntegrations: () => void;
+  firstWorkspaceStep: FirstWorkspaceStep;
+  setFirstWorkspaceStep: (step: FirstWorkspaceStep) => void;
 }
 
 const WorkspaceDesktopContext = createContext<WorkspaceDesktopContextValue | null>(null);
@@ -372,6 +375,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const [pendingAppInstall, setPendingAppInstall] = useState<{ appId: string; provider: string } | null>(null);
   const [isConnectingAppIntegration, setIsConnectingAppIntegration] = useState(false);
   const pendingCloudWorkspaceRecordsRef = useRef(new Map<string, number>());
+  const [firstWorkspaceStep, setFirstWorkspaceStep] = useState<FirstWorkspaceStep>("welcome");
   // Composio toolkit metadata (name + logo + categories) keyed by toolkit
   // slug. Single source of truth for app display name + icon across the
   // shell — both the marketplace gallery and the workspace sidebar look
@@ -1895,7 +1899,9 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       pendingIntegrations,
       isResolvingIntegrations,
       resolveIntegrationsBeforeCreate,
-      clearPendingIntegrations
+      clearPendingIntegrations,
+      firstWorkspaceStep,
+      setFirstWorkspaceStep
     }),
     [
       runtimeConfig,
@@ -1966,7 +1972,8 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       pendingIntegrations,
       isResolvingIntegrations,
       resolveIntegrationsBeforeCreate,
-      clearPendingIntegrations
+      clearPendingIntegrations,
+      firstWorkspaceStep
     ]
   );
 
