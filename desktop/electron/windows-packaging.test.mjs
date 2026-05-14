@@ -60,6 +60,11 @@ test("windows packaging config and CI workflow support optional signing and NSIS
   assert.match(workflowSource, /https:\/\/login\.microsoftonline\.com\/\$env:AZURE_TENANT_ID\/oauth2\/v2\.0\/token/);
   assert.match(workflowSource, /scope = "https:\/\/codesigning\.azure\.net\/\.default"/);
   assert.match(workflowSource, /Update AZURE_CLIENT_SECRET to the client secret Value from Microsoft Entra, not the Secret ID/);
+  assert.match(workflowSource, /- name: Validate Azure Trusted Signing authorization/);
+  assert.match(workflowSource, /Install-Module -Name TrustedSigning -MinimumVersion 0\.5\.0/);
+  assert.match(workflowSource, /Invoke-TrustedSigning/);
+  assert.match(workflowSource, /Azure Trusted Signing authorization probe failed with 403 Forbidden/);
+  assert.match(workflowSource, /Get-AuthenticodeSignature -FilePath \$probePath/);
   assert.match(workflowSource, /- name: Prepare desktop \(build SDK \+ install desktop deps\)\n\s+env:\n\s+ELECTRON_SKIP_BINARY_DOWNLOAD: "1"\n\s+run: npm run desktop:prepare/);
   assert.match(workflowSource, /WINDOWS_SIGNING_ENDPOINT: \$\{\{ vars\.WINDOWS_SIGNING_ENDPOINT \}\}/);
   assert.match(workflowSource, /WINDOWS_SIGNING_ACCOUNT_NAME: \$\{\{ vars\.WINDOWS_SIGNING_ACCOUNT_NAME \}\}/);

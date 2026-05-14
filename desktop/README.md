@@ -245,6 +245,7 @@ The manual `CI` release path also requires these repository variables for Azure 
 - `WINDOWS_SIGNING_PUBLISHER_NAME`: publisher name exactly as it appears in the certificate profile
 
 The Windows signing service principal must have the `Artifact Signing Certificate Profile Signer` role on the Trusted Signing account or certificate profile.
+The Windows CI release job validates this before the build by requesting a Trusted Signing token and signing a small probe executable, so role-assignment or propagation failures fail before the expensive installer build.
 
 When manually triggering `CI`, provide:
 

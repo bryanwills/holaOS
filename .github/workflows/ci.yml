@@ -661,6 +661,68 @@ jobs:
 
           Write-Host "Azure Trusted Signing service principal credentials validated."
 
+      - name: Validate Azure Trusted Signing authorization
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_ENDPOINT: ${{ vars.WINDOWS_SIGNING_ENDPOINT }}
+          WINDOWS_SIGNING_ACCOUNT_NAME: ${{ vars.WINDOWS_SIGNING_ACCOUNT_NAME }}
+          WINDOWS_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.WINDOWS_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          try {
+            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser
+          } catch {
+            Write-Host "NuGet package provider setup did not complete cleanly; continuing because it may already be installed."
+            Write-Host $_
+          }
+
+          Install-Module -Name TrustedSigning -MinimumVersion 0.5.0 -Force -Repository PSGallery -Scope CurrentUser
+          Import-Module TrustedSigning -MinimumVersion 0.5.0 -Force
+
+          $probeDir = Join-Path $env:RUNNER_TEMP "trusted-signing-probe"
+          New-Item -ItemType Directory -Force -Path $probeDir | Out-Null
+          $probePath = Join-Path $probeDir "trusted-signing-probe.exe"
+          $probeSource = @"
+          public static class TrustedSigningProbe
+          {
+              public static int Main(string[] args)
+              {
+                  return 0;
+              }
+          }
+          "@
+
+          Add-Type `
+            -TypeDefinition $probeSource `
+            -OutputAssembly $probePath `
+            -OutputType ConsoleApplication
+
+          try {
+            Invoke-TrustedSigning `
+              -Endpoint $env:WINDOWS_SIGNING_ENDPOINT `
+              -CertificateProfileName $env:WINDOWS_SIGNING_CERTIFICATE_PROFILE_NAME `
+              -CodeSigningAccountName $env:WINDOWS_SIGNING_ACCOUNT_NAME `
+              -TimestampRfc3161 "http://timestamp.acs.microsoft.com" `
+              -TimestampDigest "SHA256" `
+              -FileDigest "SHA256" `
+              -Files $probePath
+          } catch {
+            $signingError = $_ | Out-String
+            if ($signingError -match "403|Forbidden") {
+              throw "Azure Trusted Signing authorization probe failed with 403 Forbidden. Confirm the service principal has Artifact Signing Certificate Profile Signer on the certificate profile or account, then wait for Azure role propagation."
+            }
+            throw
+          }
+
+          $probeSignature = Get-AuthenticodeSignature -FilePath $probePath
+          if ($probeSignature.Status -ne "Valid") {
+            throw "Azure Trusted Signing authorization probe did not produce a valid Authenticode signature. Status: $($probeSignature.Status). $($probeSignature.StatusMessage)"
+          }
+
+          Write-Host "Azure Trusted Signing authorization validated with a signed probe executable."
+
       - name: Prepare desktop (build SDK + install desktop deps)
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
