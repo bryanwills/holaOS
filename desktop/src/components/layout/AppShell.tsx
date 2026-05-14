@@ -5175,9 +5175,11 @@ function AppShellContent() {
           setSpaceWorkspacePanelCollapsed(false);
         }
       }
+      const minWidth =
+        state.startWidth === 0 ? 0 : MIN_EXPLORER_PANEL_WIDTH;
       setExplorerRevealDragWidth(
         Math.max(
-          0,
+          minWidth,
           Math.min(MAX_EXPLORER_PANEL_WIDTH, state.startWidth + delta),
         ),
       );
@@ -5194,13 +5196,18 @@ function AppShellContent() {
       setIsUtilityPaneResizing(false);
       document.body.style.removeProperty("cursor");
       document.body.style.removeProperty("user-select");
+      const isRevealDrag = state.startWidth === 0;
       setExplorerRevealDragWidth((current) => {
         if (current === null) return null;
-        if (current < EXPLORER_REVEAL_SNAP_THRESHOLD) {
-          setSpaceWorkspacePanelCollapsed(true);
+        if (isRevealDrag) {
+          if (current < EXPLORER_REVEAL_SNAP_THRESHOLD) {
+            setSpaceWorkspacePanelCollapsed(true);
+          } else {
+            setFilesPaneWidth(clampExplorerPanelWidth(current));
+            setSpaceWorkspacePanelCollapsed(false);
+          }
         } else {
           setFilesPaneWidth(clampExplorerPanelWidth(current));
-          setSpaceWorkspacePanelCollapsed(false);
         }
         return null;
       });
