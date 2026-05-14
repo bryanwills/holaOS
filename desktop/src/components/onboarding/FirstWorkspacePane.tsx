@@ -1,10 +1,15 @@
-import { Folder, FolderOpen, Plug, Sparkles, Wand2, X, Zap } from "lucide-react";
+import { Folder, FolderOpen, Plug, Sparkles, X, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { firstWorkspacePaneSectionClassName } from "@/components/layout/firstWorkspacePaneLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { trackUmamiEvent } from "@/lib/analytics/umami";
+import { useDesktopAuthSession } from "@/lib/auth/authClient";
 import { holabossLogoUrl } from "@/lib/assetPaths";
-import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
+import {
+  type FirstWorkspaceStep as SimpleStep,
+  useWorkspaceDesktop,
+} from "@/lib/workspaceDesktop";
 import { cn } from "@/lib/utils";
 import { CreatingView } from "./CreatingView";
 import { OnboardingShell } from "./OnboardingShell";
@@ -13,8 +18,8 @@ import {
   WorkspaceWizardLayout,
 } from "./WorkspaceWizardLayout";
 
-type SimpleStep = "welcome" | "name" | "folder" | "onboard";
 type FolderChoice = "default" | "custom";
+const AUTH_CONTINUE_TIMEOUT_MS = 120_000;
 
 interface FirstWorkspacePaneProps {
   variant?: "full" | "panel";
@@ -28,13 +33,11 @@ const STEP_INDEX_FULL: Record<SimpleStep, number> = {
   welcome: 1,
   name: 2,
   folder: 3,
-  onboard: 4,
 };
 const STEP_INDEX_PANEL: Record<SimpleStep, number> = {
   welcome: 0, // unreachable in panel variant
   name: 1,
   folder: 2,
-  onboard: 3,
 };
 
 /**
@@ -60,19 +63,64 @@ export function FirstWorkspacePane({
     isCreatingWorkspace,
     workspaceErrorMessage,
     createWorkspace,
+    firstWorkspaceStep,
+    setFirstWorkspaceStep,
   } = useWorkspaceDesktop();
+  const authSessionState = useDesktopAuthSession();
 
-  // Welcome lands first when launched as the full takeover (no workspaces
-  // yet); the panel variant skips it since the user is already inside a
-  // signed-in session and is creating an additional workspace.
-  const [step, setStep] = useState<SimpleStep>(
-    variant === "panel" ? "name" : "welcome",
-  );
+  // Step lives in the provider so a transient remount of this pane (the
+  // auth-completion sync flips AppShell's render gates briefly) doesn't
+  // snap useState back to "welcome".
+  const isPanelVariant = variant === "panel";
+  const step: SimpleStep =
+    isPanelVariant && firstWorkspaceStep === "welcome"
+      ? "name"
+      : firstWorkspaceStep;
+  const setStep = setFirstWorkspaceStep;
+  const signedInUserId = authSessionState.data?.user?.id?.trim() || "";
+  const isSignedIn = Boolean(signedInUserId);
+  const [isAuthContinuationPending, setIsAuthContinuationPending] =
+    useState(false);
+  const [authGateError, setAuthGateError] = useState("");
+
+  useEffect(() => {
+    if (isPanelVariant && firstWorkspaceStep === "welcome") {
+      setFirstWorkspaceStep("name");
+    }
+  }, [isPanelVariant, firstWorkspaceStep, setFirstWorkspaceStep]);
+
+  useEffect(() => {
+    if (!isAuthContinuationPending || !isSignedIn) {
+      return;
+    }
+    setIsAuthContinuationPending(false);
+    setAuthGateError("");
+    setStep("name");
+  }, [isAuthContinuationPending, isSignedIn, setStep]);
+
+  useEffect(() => {
+    if (!isAuthContinuationPending || !authSessionState.error) {
+      return;
+    }
+    setIsAuthContinuationPending(false);
+    setAuthGateError(authSessionState.error.message || "Sign-in failed.");
+  }, [authSessionState.error, isAuthContinuationPending]);
+
+  useEffect(() => {
+    if (!isAuthContinuationPending || isSignedIn) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setIsAuthContinuationPending(false);
+      setAuthGateError("Sign-in did not finish. Try connecting holaOS again.");
+    }, AUTH_CONTINUE_TIMEOUT_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [isAuthContinuationPending, isSignedIn]);
+
   const [folderChoice, setFolderChoice] = useState<FolderChoice>(() =>
     selectedWorkspaceFolder?.rootPath ? "custom" : "default",
   );
-  const isPanelVariant = variant === "panel";
-  const totalSteps = isPanelVariant ? 3 : 4;
+  const totalSteps = isPanelVariant ? 2 : 3;
   const stepIndexMap = isPanelVariant ? STEP_INDEX_PANEL : STEP_INDEX_FULL;
 
   // Pin defaults on mount so any prior session's marketplace/copy state can't
@@ -83,6 +131,13 @@ export function FirstWorkspacePane({
     setTemplateSourceMode("empty");
     setBrowserBootstrapMode("fresh");
   }, [setTemplateSourceMode, setBrowserBootstrapMode]);
+
+  useEffect(() => {
+    trackUmamiEvent("onboarding_step_viewed", {
+      step,
+      variant: isPanelVariant ? "panel" : "full",
+    });
+  }, [step, isPanelVariant]);
 
   const trimmedName = newWorkspaceName.trim();
   const sectionClassName = firstWorkspacePaneSectionClassName("configure");
@@ -96,9 +151,30 @@ export function FirstWorkspacePane({
     setStep("folder");
   }
 
-  function handleSignInThenContinue() {
-    void window.electronAPI.auth.requestAuth();
-    setStep("name");
+  async function handleSignInThenContinue() {
+    setAuthGateError("");
+    if (isSignedIn) {
+      setStep("name");
+      return;
+    }
+
+    setIsAuthContinuationPending(true);
+    try {
+      await authSessionState.requestAuth();
+      const user = await window.electronAPI.auth.getUser().catch(() => null);
+      if (user?.id?.trim()) {
+        setIsAuthContinuationPending(false);
+        setAuthGateError("");
+        setStep("name");
+      }
+    } catch (error) {
+      setIsAuthContinuationPending(false);
+      setAuthGateError(
+        error instanceof Error && error.message.trim()
+          ? error.message
+          : "Failed to start sign-in.",
+      );
+    }
   }
 
   function handleSelectDefault() {
@@ -114,15 +190,13 @@ export function FirstWorkspacePane({
   }
 
   function handleCreate() {
-    void createWorkspace({ workspaceOnboardingMode: "start" }).then(() => {
-      if (isPanelVariant) {
-        onClose?.();
-      }
+    trackUmamiEvent("first_workspace_create_started", {
+      folder_choice: folderChoice,
     });
-  }
-
-  function handleSkipOnboarding() {
-    void createWorkspace({ workspaceOnboardingMode: "skip" }).then(() => {
+    void createWorkspace({ workspaceOnboardingMode: "start" }).then(() => {
+      trackUmamiEvent("first_workspace_created", {
+        folder_choice: folderChoice,
+      });
       if (isPanelVariant) {
         onClose?.();
       }
@@ -131,11 +205,16 @@ export function FirstWorkspacePane({
 
   const createDisabled =
     !trimmedName || (folderChoice === "custom" && !customPath);
+  const isAuthGateBusy =
+    !isSignedIn && (authSessionState.isPending || isAuthContinuationPending);
+  const authGatePrimaryLabel = isSignedIn
+    ? "Continue"
+    : isAuthGateBusy
+      ? "Waiting for sign-in"
+      : "Connect holaOS";
 
   const shellOnBack =
-    step === "onboard"
-      ? () => setStep("folder")
-      : step === "folder"
+    step === "folder"
       ? () => setStep("name")
       : step === "name" && !isPanelVariant
         ? () => setStep("welcome")
@@ -161,17 +240,15 @@ export function FirstWorkspacePane({
         {step === "welcome" ? (
           <WorkspaceWizardLayout
             aboveTitle={<WelcomeHero />}
-            description="Local AI workspace. Connect to sync, or stay offline."
+            description="Local AI workspace. Connect holaOS to sync your workspace."
             primary={{
-              label: "Connect holaOS",
+              label: authGatePrimaryLabel,
               onClick: handleSignInThenContinue,
+              loading: isAuthGateBusy,
             }}
+            errorMessage={authGateError || null}
             stepIndex={stepIndexMap.welcome}
             stepTotal={totalSteps}
-            tertiary={{
-              label: "Skip",
-              onClick: () => setStep("name"),
-            }}
             title="Welcome to holaOS"
             width="md"
           >
@@ -234,13 +311,13 @@ export function FirstWorkspacePane({
               </div>
             </WizardField>
           </WorkspaceWizardLayout>
-        ) : step === "folder" ? (
+        ) : (
           <WorkspaceWizardLayout
             description="Files run locally on this machine. Use the default location or pick a folder you control."
             errorMessage={workspaceErrorMessage || null}
             primary={{
-              label: "Continue",
-              onClick: () => setStep("onboard"),
+              label: "Create workspace",
+              onClick: handleCreate,
               disabled: createDisabled,
             }}
             secondary={{
@@ -306,35 +383,6 @@ export function FirstWorkspacePane({
                 )
               ) : null}
             </div>
-          </WorkspaceWizardLayout>
-        ) : (
-          <WorkspaceWizardLayout
-            aboveTitle={
-              <div className="mx-auto flex size-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                <Wand2 className="size-5" />
-              </div>
-            }
-            description="Let the agent design and build a draft workspace in a lab before anything is finalized."
-            errorMessage={workspaceErrorMessage || null}
-            primary={{
-              label: "Start onboarding",
-              onClick: handleCreate,
-              disabled: createDisabled,
-            }}
-            secondary={{
-              label: "Back",
-              onClick: () => setStep("folder"),
-            }}
-            stepIndex={stepIndexMap.onboard}
-            stepTotal={totalSteps}
-            tertiary={{
-              label: "Skip",
-              onClick: handleSkipOnboarding,
-            }}
-            title="Ready to onboard?"
-            width="md"
-          >
-            {null}
           </WorkspaceWizardLayout>
         )}
       </section>

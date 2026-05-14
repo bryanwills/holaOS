@@ -285,7 +285,7 @@ function responseDeliveryPolicyPromptSection(): string {
     "Default to concise answers.",
     "Keep short lookups and straightforward explanations inline.",
     "Do not create a report just because tools were used.",
-    "Use `write_report` for long, structured, evidence-heavy, or referenceable outputs; if it is unavailable, write the artifact under `outputs/reports/`.",
+    "Use `write_report` for long, structured, evidence-heavy, or referenceable outputs; reports should be HTML by default. If the tool is unavailable, write a self-contained HTML artifact under `outputs/reports/`.",
     "For research, investigation, comparison, timeline, or latest-news tasks across multiple sources, prefer a report artifact and keep the chat reply to a brief summary unless the user asks for inline detail.",
     "When you create a report, mention only the report path or title and the most important takeaways in chat."
   ]);
@@ -850,9 +850,9 @@ export function buildBaseAgentPromptSections(
   ];
   if (hasWorkspaceInstructionUpdateTool(request)) {
     executionLines.push(
-      "Record durable workspace knowledge in root `AGENTS.md` with `holaboss_update_workspace_instructions` instead of relying only on transient context.",
+      "Record durable workspace knowledge in root `AGENTS.md` with `holaboss_update_workspace_instructions` when it is clearly stable, likely to recur, or explicitly confirmed by the user instead of relying only on transient context.",
       "This includes durable requirements or preferences, verified commands or procedures, stable facts, conventions, decisions, and recurring blockers from the user, direct inspection, or grounded tool or subagent results.",
-      "Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state. Skip persistence only if the user explicitly says not to persist it."
+      "Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state. When in doubt, leave it out until the pattern repeats or the user confirms it should persist."
     );
   }
   if (capabilityManifest?.browser_tools.length) {
@@ -956,9 +956,9 @@ export function buildMainSessionPromptSections(
   ];
   if (hasWorkspaceInstructionUpdateTool(request)) {
     conversationLines.push(
-      "Record durable workspace knowledge in root `AGENTS.md` with `holaboss_update_workspace_instructions` instead of relying only on transient context.",
+      "Record durable workspace knowledge in root `AGENTS.md` with `holaboss_update_workspace_instructions` when it is clearly stable, likely to recur, or explicitly confirmed by the user instead of relying only on transient context.",
       "This includes durable requirements or preferences, verified commands or procedures, stable facts, conventions, decisions, and recurring blockers from the user, direct inspection, or grounded tool or subagent results.",
-      "Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state. Skip persistence only if the user explicitly says not to persist it."
+      "Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state. When in doubt, leave it out until the pattern repeats or the user confirms it should persist."
     );
   }
   if (normalizedSessionKind === "onboarding") {

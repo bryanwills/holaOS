@@ -148,6 +148,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     prompt.systemPrompt,
     /Use `write_report` for long, structured, evidence-heavy, or referenceable outputs/
   );
+  assert.match(prompt.systemPrompt, /reports should be HTML by default/i);
   assert.match(
     prompt.systemPrompt,
     /For research, investigation, comparison, timeline, or latest-news tasks across multiple sources, prefer a report artifact/
@@ -650,7 +651,7 @@ test("composeAgentPrompt instructs main sessions to record durable workspace kno
 
   assert.match(
     prompt.systemPrompt,
-    /Record durable workspace knowledge in root `AGENTS\.md` with `holaboss_update_workspace_instructions`/i,
+    /Record durable workspace knowledge in root `AGENTS\.md` with `holaboss_update_workspace_instructions` when it is clearly stable, likely to recur, or explicitly confirmed by the user/i,
   );
   assert.match(
     prompt.systemPrompt,
@@ -658,7 +659,7 @@ test("composeAgentPrompt instructs main sessions to record durable workspace kno
   );
   assert.match(
     prompt.systemPrompt,
-    /Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state\./i,
+    /Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state\. When in doubt, leave it out until the pattern repeats or the user confirms it should persist\./i,
   );
 });
 
@@ -685,7 +686,7 @@ test("composeBaseAgentPrompt instructs direct sessions to record durable workspa
 
   assert.match(
     prompt.systemPrompt,
-    /Record durable workspace knowledge in root `AGENTS\.md` with `holaboss_update_workspace_instructions`/i,
+    /Record durable workspace knowledge in root `AGENTS\.md` with `holaboss_update_workspace_instructions` when it is clearly stable, likely to recur, or explicitly confirmed by the user/i,
   );
   assert.match(
     prompt.systemPrompt,
@@ -693,7 +694,7 @@ test("composeBaseAgentPrompt instructs direct sessions to record durable workspa
   );
   assert.match(
     prompt.systemPrompt,
-    /Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state\./i,
+    /Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state\. When in doubt, leave it out until the pattern repeats or the user confirms it should persist\./i,
   );
 });
 

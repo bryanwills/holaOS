@@ -91,7 +91,7 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { URL } from "node:url";
+import { URL, pathToFileURL } from "node:url";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
@@ -1105,6 +1105,7 @@ let desktopBrowserServiceUrl = "";
 let desktopBrowserServiceAuthToken = "";
 let appUpdateCheckTimer: NodeJS.Timeout | null = null;
 let appUpdateCheckPromise: Promise<AppUpdateStatusPayload> | null = null;
+let appUpdateDownloadPromise: Promise<Array<string>> | null = null;
 let appUpdateEventsConfigured = false;
 let appUpdatePreferences: AppUpdatePreferencesPayload = {};
 let notificationPreferences: { enabled: boolean } = { enabled: true };
@@ -1914,6 +1915,23 @@ function clampDownloadProgressPercent(progress: ProgressInfo) {
   return Math.max(0, Math.min(100, progress.percent));
 }
 
+function trackAppUpdateDownload(
+  downloadPromise: Promise<Array<string>> | null | undefined,
+) {
+  if (!downloadPromise || appUpdateDownloadPromise) {
+    return;
+  }
+
+  let trackedDownloadPromise: Promise<Array<string>>;
+  trackedDownloadPromise = downloadPromise.finally(() => {
+    if (appUpdateDownloadPromise === trackedDownloadPromise) {
+      appUpdateDownloadPromise = null;
+    }
+  });
+  appUpdateDownloadPromise = trackedDownloadPromise;
+  void trackedDownloadPromise.catch(() => undefined);
+}
+
 function applyAutoUpdaterChannelConfiguration() {
   const channel = effectiveAppUpdateChannel();
   autoUpdater.allowPrerelease = channel === "beta";
@@ -1969,6 +1987,7 @@ function configureAutoUpdater() {
   });
 
   autoUpdater.on("update-downloaded", (info) => {
+    appUpdateDownloadPromise = null;
     applyAppUpdateInfo(info, {
       available: false,
       downloaded: true,
@@ -1978,6 +1997,7 @@ function configureAutoUpdater() {
   });
 
   autoUpdater.on("update-not-available", (info) => {
+    appUpdateDownloadPromise = null;
     applyAppUpdateInfo(info, {
       available: false,
       downloaded: false,
@@ -1987,6 +2007,7 @@ function configureAutoUpdater() {
   });
 
   autoUpdater.on("error", (error) => {
+    appUpdateDownloadPromise = null;
     appUpdateStatus = {
       ...appUpdateStatus,
       supported: appUpdateSupported(),
@@ -2014,6 +2035,10 @@ async function checkForAppUpdates(): Promise<AppUpdateStatusPayload> {
     return appUpdateStatus;
   }
 
+  if (appUpdateDownloadPromise) {
+    return appUpdateStatus;
+  }
+
   if (appUpdateCheckPromise) {
     return appUpdateCheckPromise;
   }
@@ -2031,7 +2056,8 @@ async function checkForAppUpdates(): Promise<AppUpdateStatusPayload> {
 
   appUpdateCheckPromise = (async () => {
     try {
-      await autoUpdater.checkForUpdates();
+      const result = await autoUpdater.checkForUpdates();
+      trackAppUpdateDownload(result?.downloadPromise);
     } catch (error) {
       appUpdateStatus = {
         ...appUpdateStatus,
@@ -2147,14 +2173,25 @@ async function setAppUpdateChannel(
   return checkForAppUpdates();
 }
 
-function installAppUpdateNow() {
+async function installAppUpdateNow() {
   if (!appUpdateSupported()) {
     throw new Error("In-app updates are unavailable on this build.");
   }
   if (!appUpdateStatus.downloaded) {
     throw new Error("No downloaded update is ready to install.");
   }
-  // Treat the toast action as an immediate in-place restart, not a manual installer flow.
+  // electron-updater's NSIS flow spawns the installer before app.quit().
+  // Finish our own runtime/browser-service teardown first so Windows doesn't
+  // spend a long time waiting on locked files while replacing the app.
+  await ensureAppQuitCleanup();
+  // Windows silent installs give the user no visible progress while the large
+  // packaged app is being replaced, which reads like the app vanished. Let
+  // NSIS show its update progress there; keep macOS on the restart-in-place
+  // path.
+  if (process.platform === "win32") {
+    autoUpdater.quitAndInstall(false, false);
+    return;
+  }
   autoUpdater.quitAndInstall(true, true);
 }
 
@@ -2621,6 +2658,12 @@ interface DiagnosticsExportRequestPayload {
   workspaceId?: string | null;
 }
 
+interface HtmlToPdfExportRequestPayload {
+  html: string;
+  suggestedName?: string;
+  basePath?: string | null;
+}
+
 interface SubmissionListResponsePayload {
   submissions: Array<{
     id: string;
@@ -2791,10 +2834,6 @@ interface MemoryUpdateProposalDismissResponsePayload {
   proposal: MemoryUpdateProposalRecordPayload;
 }
 
-interface RemoteTaskProposalGenerationRequestPayload {
-  workspace_id: string;
-}
-
 interface RemoteTaskProposalGenerationResponsePayload {
   accepted: boolean;
   accepted_count: number;
@@ -2804,67 +2843,6 @@ interface RemoteTaskProposalGenerationResponsePayload {
 
 interface ProactiveContextCaptureResponsePayload {
   context: Record<string, unknown>;
-}
-
-interface ProactiveTaskProposalPreferenceUpdatePayload {
-  enabled: boolean;
-  holaboss_user_id?: string;
-  sandbox_id?: string;
-}
-
-interface ProactiveTaskProposalPreferencePayload {
-  enabled: boolean;
-  holaboss_user_id: string;
-  sandbox_id: string;
-}
-
-interface ProactiveHeartbeatWorkspacePayload {
-  workspace_id: string;
-  workspace_name: string | null;
-  enabled: boolean;
-  last_seen_at: string | null;
-}
-
-interface ProactiveHeartbeatConfigPayload {
-  holaboss_user_id: string;
-  sandbox_id: string;
-  has_schedule: boolean;
-  cron: string;
-  enabled: boolean;
-  last_run_at: string | null;
-  next_run_at: string | null;
-  workspaces: ProactiveHeartbeatWorkspacePayload[];
-}
-
-interface ProactiveHeartbeatConfigUpdatePayload {
-  cron?: string;
-  enabled?: boolean;
-  holaboss_user_id?: string;
-  sandbox_id?: string;
-}
-
-interface ProactiveHeartbeatWorkspaceUpdatePayload {
-  workspace_id: string;
-  workspace_name?: string | null;
-  enabled: boolean;
-  holaboss_user_id?: string;
-  sandbox_id?: string;
-}
-
-interface ProactiveHeartbeatCronjobRecordResponsePayload {
-  sandbox_id: string;
-  holaboss_user_id: string;
-  cron: string;
-  enabled: boolean;
-  last_run_at: string | null;
-  next_run_at: string | null;
-}
-
-interface ProactiveHeartbeatConfigResponsePayload {
-  holaboss_user_id: string;
-  sandbox_id: string;
-  cronjob: ProactiveHeartbeatCronjobRecordResponsePayload | null;
-  workspaces: ProactiveHeartbeatWorkspacePayload[];
 }
 
 interface TaskProposalStateUpdatePayload {
@@ -5780,27 +5758,10 @@ function browserSurfaceSummary(
     useVisibleAgentSession: true,
   });
   const activeTabId = tabSpace?.activeTabId ?? "";
-  if (activeTabId) {
-    syncBrowserState(
-      workspaceId,
-      activeTabId,
-      space,
-      space === "agent" ? browserVisibleAgentSessionId(workspace) : null,
-    );
-  }
-  const refreshedWorkspace = browserWorkspaceFromMap(workspaceId);
-  const refreshedTabSpace = browserTabSpaceState(
-    refreshedWorkspace,
-    space,
-    null,
-    {
-      useVisibleAgentSession: true,
-    },
-  );
-  const tabCount = browserTabSpaceTabCount(refreshedTabSpace);
+  const tabCount = browserTabSpaceTabCount(tabSpace);
   const activeTab =
-    activeTabId && refreshedTabSpace?.tabs.size
-      ? refreshedTabSpace.tabs.get(activeTabId) ?? null
+    activeTabId && tabSpace?.tabs.size
+      ? tabSpace.tabs.get(activeTabId) ?? null
       : null;
   const spaceLabel = space === "user" ? "User browser" : "Agent browser";
   const tabSummary = `${tabCount} open ${tabCount === 1 ? "tab" : "tabs"}`;
@@ -5816,7 +5777,7 @@ function browserSurfaceSummary(
     summaryParts.push("This surface is currently visible in the app.");
   }
   if (space === "user") {
-    const userLock = activeUserBrowserLock(refreshedWorkspace);
+    const userLock = activeUserBrowserLock(workspace);
     if (userLock) {
       summaryParts.push(
         `Exclusive control is currently held by agent session ${userLock.sessionId}.`,
@@ -9831,18 +9792,6 @@ async function listMemoryUpdateProposals(
   );
 }
 
-function secondsSinceIso(value: string | null): number | null {
-  const trimmed = value?.trim() || "";
-  if (!trimmed) {
-    return null;
-  }
-  const parsed = Date.parse(trimmed);
-  if (!Number.isFinite(parsed)) {
-    return null;
-  }
-  return Math.max(0, Math.round((Date.now() - parsed) / 1000));
-}
-
 async function acceptTaskProposal(
   payload: TaskProposalAcceptPayload,
 ): Promise<TaskProposalAcceptResponsePayload> {
@@ -9895,201 +9844,6 @@ async function dismissMemoryUpdateProposal(
       },
     },
   );
-}
-
-async function getProactiveStatus(
-  workspaceId: string,
-): Promise<ProactiveAgentStatusPayload> {
-  const normalizedWorkspaceId = workspaceId.trim();
-  const fallbackHeartbeat: ProactiveStatusSnapshotPayload = {
-    state: "unknown",
-    detail: null,
-    recorded_at: null,
-  };
-  const fallbackBridge: ProactiveStatusSnapshotPayload = {
-    state: "unknown",
-    detail: null,
-    recorded_at: null,
-  };
-  if (!normalizedWorkspaceId) {
-    return {
-      workspace_id: "",
-      proposal_count: 0,
-      heartbeat: fallbackHeartbeat,
-      bridge: fallbackBridge,
-      lifecycle_state: "idle",
-      lifecycle_summary: "Select a workspace to inspect proactive status.",
-      lifecycle_detail: null,
-    };
-  }
-
-  let proposalCount = 0;
-  let heartbeat = fallbackHeartbeat;
-  const workspacePath = getLocalWorkspaceRecord(normalizedWorkspaceId)?.workspace_path?.trim() || "";
-  const workspaceRuntimeDbPath = workspacePath
-    ? path.join(workspacePath, ".holaboss", "state", "runtime.db")
-    : "";
-  if (workspaceRuntimeDbPath && existsSync(workspaceRuntimeDbPath)) {
-    const workspaceDatabase = new Database(workspaceRuntimeDbPath, { readonly: true });
-    try {
-      const proposalRow = workspaceDatabase
-        .prepare(
-          `
-          SELECT COUNT(*) AS proposal_count
-          FROM task_proposals
-          WHERE workspace_id = ?
-        `,
-        )
-        .get(normalizedWorkspaceId) as { proposal_count?: number } | undefined;
-      proposalCount = Number(proposalRow?.proposal_count ?? 0);
-    } finally {
-      workspaceDatabase.close();
-    }
-  }
-
-  const database = openRuntimeDatabase();
-  try {
-    const correlationId = `workspace-ready-${normalizedWorkspaceId}`;
-    const heartbeatRow = database
-      .prepare(
-        `
-          SELECT outcome, detail, created_at
-          FROM event_log
-          WHERE category = 'workspace'
-            AND event = 'workspace.heartbeat.emit'
-            AND (
-              detail LIKE ?
-              OR detail LIKE ?
-            )
-          ORDER BY created_at DESC
-          LIMIT 1
-        `,
-      )
-      .get(`%workspace_id=${normalizedWorkspaceId}%`, `%${correlationId}%`) as
-      | {
-          outcome?: string | null;
-          detail?: string | null;
-          created_at?: string | null;
-        }
-      | undefined;
-    if (heartbeatRow) {
-      const outcome = (heartbeatRow.outcome || "").trim().toLowerCase();
-      heartbeat = {
-        state:
-          outcome === "success"
-            ? "published"
-            : outcome === "error"
-              ? "failed"
-              : outcome === "skipped"
-                ? "skipped"
-                : outcome === "start" || outcome === "retry"
-                  ? "pending"
-                  : "unknown",
-        detail: heartbeatRow.detail?.trim() || null,
-        recorded_at: heartbeatRow.created_at?.trim() || null,
-      };
-    }
-  } catch {
-    heartbeat = fallbackHeartbeat;
-  } finally {
-    database.close();
-  }
-
-  const runtimeConfig = await readRuntimeConfigFile().catch(() => ({}));
-  const runtimeToken = runtimeModelProxyApiKeyFromConfig(runtimeConfig);
-  let bridge: ProactiveStatusSnapshotPayload;
-  if (!runtimeToken) {
-    bridge = {
-      state: "inactive",
-      detail: "Sign in to enable proactive delivery.",
-      recorded_at: null,
-    };
-  } else if (runtimeStatus.status === "running") {
-    bridge = {
-      state: "healthy",
-      detail: "Embedded runtime is ready to receive proactive work.",
-      recorded_at: null,
-    };
-  } else if (runtimeStatus.status === "starting") {
-    bridge = {
-      state: "pending",
-      detail: "Embedded runtime is still starting.",
-      recorded_at: null,
-    };
-  } else if (runtimeStatus.status === "error") {
-    bridge = {
-      state: "error",
-      detail:
-        runtimeStatus.lastError?.trim() ||
-        "Embedded runtime reported an error.",
-      recorded_at: null,
-    };
-  } else {
-    bridge = {
-      state: "inactive",
-      detail:
-        runtimeStatus.lastError?.trim() || "Embedded runtime is not running.",
-      recorded_at: null,
-    };
-  }
-
-  let lifecycleState = "idle";
-  let lifecycleSummary = "Idle.";
-  let lifecycleDetail: string | null = null;
-  const heartbeatAgeSeconds = secondsSinceIso(heartbeat.recorded_at);
-  const heartbeatJustClaimed =
-    heartbeatAgeSeconds !== null && heartbeatAgeSeconds < 10;
-  const heartbeatSettled =
-    heartbeatAgeSeconds !== null && heartbeatAgeSeconds >= 120;
-  if (heartbeat.state === "pending") {
-    lifecycleState = "sent";
-    lifecycleSummary = "Sent.";
-    lifecycleDetail = "Waiting for the proactive agent to claim this run.";
-  } else if (heartbeat.state === "published" && heartbeatJustClaimed) {
-    lifecycleState = "claimed";
-    lifecycleSummary = "Claimed.";
-    lifecycleDetail = "The proactive agent has started working on this run.";
-  } else if (heartbeat.state === "published" && !heartbeatSettled) {
-    lifecycleState = "analyzing";
-    lifecycleSummary = "Analyzing.";
-    lifecycleDetail = "Looking for useful suggestions.";
-  } else if (heartbeat.state === "failed") {
-    lifecycleState = "error";
-    lifecycleSummary = "Error.";
-    lifecycleDetail = heartbeat.detail;
-  } else if (heartbeat.state === "skipped") {
-    if (
-      bridge.state === "healthy" &&
-      (heartbeat.detail || "").includes("skipped=no_active_runtime_binding")
-    ) {
-      lifecycleState = proposalCount > 0 ? "analyzing" : "idle";
-      lifecycleSummary = proposalCount > 0 ? "Analyzing." : "Idle.";
-      lifecycleDetail =
-        proposalCount > 0 ? "Looking for useful suggestions." : bridge.detail;
-    } else {
-      lifecycleState = "unavailable";
-      lifecycleSummary = "Unavailable.";
-      lifecycleDetail = heartbeat.detail;
-    }
-  } else if (
-    bridge.state === "error" ||
-    bridge.state === "inactive" ||
-    bridge.state === "pending"
-  ) {
-    lifecycleState = "unavailable";
-    lifecycleSummary = "Unavailable.";
-    lifecycleDetail = bridge.detail;
-  }
-
-  return {
-    workspace_id: normalizedWorkspaceId,
-    proposal_count: proposalCount,
-    heartbeat,
-    bridge,
-    lifecycle_state: lifecycleState,
-    lifecycle_summary: lifecycleSummary,
-    lifecycle_detail: lifecycleDetail,
-  };
 }
 
 async function listCronjobs(
@@ -11183,344 +10937,6 @@ async function resolveTemplateIntegrations(
     missing_providers: missingProviders,
     provider_logos: providerLogos,
   };
-}
-
-async function requestRemoteTaskProposalGeneration(
-  payload: RemoteTaskProposalGenerationRequestPayload,
-): Promise<RemoteTaskProposalGenerationResponsePayload> {
-  await ensureRuntimeBindingReadyForWorkspaceFlow(
-    "remote_task_proposal_generation",
-    {
-      forceRefresh: true,
-    },
-  );
-  const workspaceId = payload.workspace_id.trim();
-  const correlationId = `manual-heartbeat-${workspaceId}-${Date.now()}`;
-  try {
-    return await ingestWorkspaceHeartbeat({
-      workspaceId,
-      actorId: "desktop_manual_heartbeat",
-      sourceRef: "desktop:manual-heartbeat",
-      correlationId,
-    });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    if (msg.includes("Service not found") || msg.includes("fetch failed")) {
-      throw new Error(
-        "Proactive service is not reachable. Check your network or backend configuration.",
-      );
-    }
-    throw error;
-  }
-}
-
-async function proactivePreferenceScopeFromRuntimeConfig(): Promise<{
-  holabossUserId: string;
-  sandboxId: string;
-}> {
-  const runtimeConfig = await readRuntimeConfigFile();
-  const holabossUserId = (runtimeConfig.user_id || "").trim();
-  const sandboxId = (runtimeConfig.sandbox_id || "").trim();
-  if (!holabossUserId || !sandboxId) {
-    throw new Error(
-      "Proactive auth is missing. Sign in to provision a runtime binding token.",
-    );
-  }
-  return { holabossUserId, sandboxId };
-}
-
-const DEFAULT_PROACTIVE_HEARTBEAT_CRON = "0 9 * * *";
-
-function assertProactivePreferenceScopedToInstance(
-  response: ProactiveTaskProposalPreferencePayload,
-  expected: { holabossUserId: string; sandboxId: string },
-) {
-  const responseUserId = (response.holaboss_user_id || "").trim();
-  const responseSandboxId = (response.sandbox_id || "").trim();
-  if (!responseUserId || !responseSandboxId) {
-    throw new Error(
-      "Proactive preference response is missing user/instance scope.",
-    );
-  }
-  if (
-    responseUserId !== expected.holabossUserId ||
-    responseSandboxId !== expected.sandboxId
-  ) {
-    throw new Error(
-      "Proactive preference scope mismatch for current desktop instance.",
-    );
-  }
-}
-
-async function setProactiveTaskProposalPreference(
-  payload: ProactiveTaskProposalPreferenceUpdatePayload,
-): Promise<ProactiveTaskProposalPreferencePayload> {
-  const scope = await proactivePreferenceScopeFromRuntimeConfig();
-  try {
-    const response =
-      await requestControlPlaneJson<ProactiveTaskProposalPreferencePayload>({
-        service: "proactive",
-        method: "POST",
-        path: "/api/v1/proactive/preferences/task-proposals",
-        payload: {
-          enabled: payload.enabled !== false,
-          holaboss_user_id:
-            payload.holaboss_user_id?.trim() || scope.holabossUserId,
-          sandbox_id: payload.sandbox_id?.trim() || scope.sandboxId,
-        },
-      });
-    assertProactivePreferenceScopedToInstance(response, scope);
-    return response;
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    if (msg.includes("Service not found") || msg.includes("fetch failed")) {
-      console.warn("[proactive] preference update unavailable:", msg);
-      return {
-        enabled: payload.enabled !== false,
-        holaboss_user_id: scope.holabossUserId,
-        sandbox_id: scope.sandboxId,
-      };
-    }
-    throw error;
-  }
-}
-
-async function getProactiveTaskProposalPreference(): Promise<ProactiveTaskProposalPreferencePayload> {
-  try {
-    const scope = await proactivePreferenceScopeFromRuntimeConfig();
-    const response =
-      await requestControlPlaneJson<ProactiveTaskProposalPreferencePayload>({
-        service: "proactive",
-        method: "GET",
-        path: "/api/v1/proactive/preferences/task-proposals",
-        params: {
-          holaboss_user_id: scope.holabossUserId,
-          sandbox_id: scope.sandboxId,
-        },
-      });
-    assertProactivePreferenceScopedToInstance(response, scope);
-    return response;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const isExpectedUnavailable =
-      message.includes("Proactive auth is missing") ||
-      message.includes("Service not found") ||
-      message.includes("fetch failed");
-    if (!isExpectedUnavailable) {
-      throw error;
-    }
-    if (
-      message.includes("Service not found") ||
-      message.includes("fetch failed")
-    ) {
-      console.warn("[proactive] preference fetch unavailable:", message);
-    }
-    const runtimeConfig = await readRuntimeConfigFile();
-    const holabossUserId =
-      typeof (runtimeConfig as { user_id?: unknown }).user_id === "string"
-        ? ((runtimeConfig as { user_id: string }).user_id || "").trim()
-        : "";
-    const sandboxId =
-      typeof (runtimeConfig as { sandbox_id?: unknown }).sandbox_id === "string"
-        ? ((runtimeConfig as { sandbox_id: string }).sandbox_id || "").trim()
-        : "";
-    return {
-      enabled: false,
-      holaboss_user_id: holabossUserId,
-      sandbox_id: sandboxId,
-    };
-  }
-}
-
-function assertProactiveHeartbeatScopedToInstance(
-  response: ProactiveHeartbeatConfigResponsePayload,
-  expected: { holabossUserId: string; sandboxId: string },
-) {
-  const responseUserId = (response.holaboss_user_id || "").trim();
-  const responseSandboxId = (response.sandbox_id || "").trim();
-  if (!responseUserId || !responseSandboxId) {
-    throw new Error(
-      "Proactive heartbeat response is missing user/instance scope.",
-    );
-  }
-  if (
-    responseUserId !== expected.holabossUserId ||
-    responseSandboxId !== expected.sandboxId
-  ) {
-    throw new Error(
-      "Proactive heartbeat scope mismatch for current desktop instance.",
-    );
-  }
-}
-
-function normalizeProactiveHeartbeatConfig(
-  response: ProactiveHeartbeatConfigResponsePayload,
-): ProactiveHeartbeatConfigPayload {
-  return {
-    holaboss_user_id: (response.holaboss_user_id || "").trim(),
-    sandbox_id: (response.sandbox_id || "").trim(),
-    has_schedule: Boolean(response.cronjob),
-    cron:
-      (response.cronjob?.cron || "").trim() || DEFAULT_PROACTIVE_HEARTBEAT_CRON,
-    enabled: response.cronjob?.enabled !== false,
-    last_run_at: response.cronjob?.last_run_at || null,
-    next_run_at: response.cronjob?.next_run_at || null,
-    workspaces: (response.workspaces || []).map((workspace) => ({
-      workspace_id: (workspace.workspace_id || "").trim(),
-      workspace_name: (workspace.workspace_name || "").trim() || null,
-      enabled: workspace.enabled !== false,
-      last_seen_at: workspace.last_seen_at || null,
-    })),
-  };
-}
-
-async function listLocalProactiveHeartbeatWorkspaces(): Promise<
-  Array<{ workspace_id: string; workspace_name: string | null }>
-> {
-  const response = await listWorkspacesViaRuntime();
-  return response.items
-    .map((workspace) => ({
-      workspace_id: workspace.id.trim(),
-      workspace_name: (workspace.name || "").trim() || null,
-    }))
-    .filter((workspace) => Boolean(workspace.workspace_id));
-}
-
-async function syncCurrentProactiveHeartbeatWorkspaces(scope: {
-  holabossUserId: string;
-  sandboxId: string;
-}): Promise<ProactiveHeartbeatConfigPayload> {
-  try {
-    const workspaces = await listLocalProactiveHeartbeatWorkspaces();
-    const response =
-      await requestControlPlaneJson<ProactiveHeartbeatConfigResponsePayload>({
-        service: "proactive",
-        method: "POST",
-        path: "/api/v1/proactive/heartbeat-cronjobs/current/workspaces/sync",
-        payload: {
-          holaboss_user_id: scope.holabossUserId,
-          sandbox_id: scope.sandboxId,
-          workspaces,
-        },
-      });
-    assertProactiveHeartbeatScopedToInstance(response, scope);
-    return normalizeProactiveHeartbeatConfig(response);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (
-      message.includes("Service not found") ||
-      message.includes("fetch failed")
-    ) {
-      throw new Error(
-        "Proactive service is not reachable. Check your network or backend configuration.",
-      );
-    }
-    throw error;
-  }
-}
-
-async function getProactiveHeartbeatConfig(): Promise<ProactiveHeartbeatConfigPayload> {
-  try {
-    const scope = await proactivePreferenceScopeFromRuntimeConfig();
-    return await syncCurrentProactiveHeartbeatWorkspaces(scope);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!message.includes("Proactive auth is missing")) {
-      throw error;
-    }
-    const runtimeConfig = await readRuntimeConfigFile();
-    const holabossUserId =
-      typeof (runtimeConfig as { user_id?: unknown }).user_id === "string"
-        ? ((runtimeConfig as { user_id: string }).user_id || "").trim()
-        : "";
-    const sandboxId =
-      typeof (runtimeConfig as { sandbox_id?: unknown }).sandbox_id === "string"
-        ? ((runtimeConfig as { sandbox_id: string }).sandbox_id || "").trim()
-        : "";
-    return {
-      holaboss_user_id: holabossUserId,
-      sandbox_id: sandboxId,
-      has_schedule: false,
-      cron: DEFAULT_PROACTIVE_HEARTBEAT_CRON,
-      enabled: false,
-      last_run_at: null,
-      next_run_at: null,
-      workspaces: [],
-    };
-  }
-}
-
-async function setProactiveHeartbeatConfig(
-  payload: ProactiveHeartbeatConfigUpdatePayload,
-): Promise<ProactiveHeartbeatConfigPayload> {
-  const scope = await proactivePreferenceScopeFromRuntimeConfig();
-  await syncCurrentProactiveHeartbeatWorkspaces(scope);
-  try {
-    const response =
-      await requestControlPlaneJson<ProactiveHeartbeatConfigResponsePayload>({
-        service: "proactive",
-        method: "POST",
-        path: "/api/v1/proactive/heartbeat-cronjobs/current",
-        payload: {
-          holaboss_user_id:
-            payload.holaboss_user_id?.trim() || scope.holabossUserId,
-          sandbox_id: payload.sandbox_id?.trim() || scope.sandboxId,
-          cron: payload.cron?.trim() || undefined,
-          enabled: payload.enabled,
-        },
-      });
-    assertProactiveHeartbeatScopedToInstance(response, scope);
-    return normalizeProactiveHeartbeatConfig(response);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (
-      message.includes("Service not found") ||
-      message.includes("fetch failed")
-    ) {
-      throw new Error(
-        "Proactive service is not reachable. Check your network or backend configuration.",
-      );
-    }
-    throw error;
-  }
-}
-
-async function setProactiveHeartbeatWorkspaceEnabled(
-  payload: ProactiveHeartbeatWorkspaceUpdatePayload,
-): Promise<ProactiveHeartbeatConfigPayload> {
-  const scope = await proactivePreferenceScopeFromRuntimeConfig();
-  const workspaceId = payload.workspace_id.trim();
-  if (!workspaceId) {
-    throw new Error("workspace_id is required");
-  }
-  try {
-    const response =
-      await requestControlPlaneJson<ProactiveHeartbeatConfigResponsePayload>({
-        service: "proactive",
-        method: "POST",
-        path: `/api/v1/proactive/heartbeat-cronjobs/current/workspaces/${encodeURIComponent(workspaceId)}`,
-        payload: {
-          holaboss_user_id:
-            payload.holaboss_user_id?.trim() || scope.holabossUserId,
-          sandbox_id: payload.sandbox_id?.trim() || scope.sandboxId,
-          workspace_name: payload.workspace_name?.trim() || undefined,
-          enabled: payload.enabled !== false,
-        },
-      });
-    assertProactiveHeartbeatScopedToInstance(response, scope);
-    return normalizeProactiveHeartbeatConfig(response);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (
-      message.includes("Service not found") ||
-      message.includes("fetch failed")
-    ) {
-      throw new Error(
-        "Proactive service is not reachable. Check your network or backend configuration.",
-      );
-    }
-    throw error;
-  }
 }
 
 async function updateTaskProposalState(
@@ -17149,6 +16565,28 @@ function updateAttachedAppSurfaceView(): void {
   view.setBounds(appSurfaceBounds);
 }
 
+function detachAttachedMainWindowViews(): void {
+  const win = mainWindow;
+  if (win && !win.isDestroyed()) {
+    if (attachedBrowserTabView) {
+      try {
+        win.setBrowserView(null);
+      } catch {
+        // best effort during renderer teardown
+      }
+    }
+    if (attachedAppSurfaceView) {
+      try {
+        win.removeBrowserView(attachedAppSurfaceView);
+      } catch {
+        // best effort during renderer teardown
+      }
+    }
+  }
+  attachedBrowserTabView = null;
+  attachedAppSurfaceView = null;
+}
+
 async function resolveAppSurfaceUrl(
   workspaceId: string,
   appId: string,
@@ -20047,6 +19485,182 @@ async function exportExplorerPathToFile(
   return { path: destination, canceled: false };
 }
 
+const CONTENT_SECURITY_POLICY_META_PATTERN =
+  /<meta\b[^>]*http-equiv=(["'])content-security-policy\1[^>]*>/gi;
+const HTML_PDF_RENDER_SETTLE_TIMEOUT_MS = 15_000;
+
+function htmlPdfSuggestedFileName(rawName: string | null | undefined): string {
+  const trimmed = (rawName ?? "").trim();
+  const segments = trimmed
+    .split(/[/\\]+/u)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  const leafName = segments.length > 0 ? segments[segments.length - 1] : "";
+  if (!leafName) {
+    return "export.pdf";
+  }
+  return leafName.replace(/\.[^./\\]+$/u, "") + ".pdf";
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+function htmlPdfBaseHrefFromPath(
+  absolutePath: string | null | undefined,
+): string | null {
+  const trimmed = (absolutePath ?? "").trim();
+  if (!trimmed || !path.isAbsolute(trimmed)) {
+    return null;
+  }
+  const href = pathToFileURL(path.dirname(trimmed)).toString();
+  return href.endsWith("/") ? href : `${href}/`;
+}
+
+function prepareHtmlForPdfExport(
+  rawHtml: string,
+  baseHref: string | null,
+): string {
+  const sanitizedHtml = rawHtml.replace(
+    CONTENT_SECURITY_POLICY_META_PATTERN,
+    "",
+  );
+  const baseTag =
+    baseHref && !/<base\b[^>]*>/i.test(sanitizedHtml)
+      ? `<base href="${escapeHtmlAttribute(baseHref)}">`
+      : "";
+
+  if (/<head\b[^>]*>/i.test(sanitizedHtml)) {
+    return sanitizedHtml.replace(
+      /<head\b([^>]*)>/i,
+      `<head$1>${baseTag}`,
+    );
+  }
+  if (/<html\b[^>]*>/i.test(sanitizedHtml)) {
+    return sanitizedHtml.replace(
+      /<html\b([^>]*)>/i,
+      `<html$1><head>${baseTag}</head>`,
+    );
+  }
+  return `<!doctype html><html><head>${baseTag}</head><body>${sanitizedHtml}</body></html>`;
+}
+
+async function waitForHtmlPdfRender(contents: WebContents): Promise<void> {
+  if (contents.isLoading()) {
+    await new Promise<void>((resolve) => {
+      contents.once("did-stop-loading", () => resolve());
+    });
+  }
+
+  await Promise.race([
+    contents
+      .executeJavaScript(`
+        new Promise((resolve) => {
+          const waitForImages = Promise.all(
+            Array.from(document.images ?? []).map((image) => {
+              if (image.complete) {
+                return Promise.resolve();
+              }
+              return new Promise((done) => {
+                const finish = () => done(null);
+                image.addEventListener("load", finish, { once: true });
+                image.addEventListener("error", finish, { once: true });
+              });
+            }),
+          );
+          const waitForFonts =
+            document.fonts?.ready?.catch(() => undefined) ?? Promise.resolve();
+          Promise.all([waitForImages, waitForFonts])
+            .catch(() => undefined)
+            .finally(() => {
+              requestAnimationFrame(() => {
+                requestAnimationFrame(() => resolve(null));
+              });
+            });
+        });
+      `)
+      .catch(() => undefined),
+    new Promise<void>((resolve) => {
+      setTimeout(() => resolve(), HTML_PDF_RENDER_SETTLE_TIMEOUT_MS);
+    }),
+  ]);
+}
+
+async function exportHtmlToPdf(
+  payload: HtmlToPdfExportRequestPayload,
+): Promise<{ path: string | null; canceled: boolean }> {
+  const html = payload.html ?? "";
+  if (!html.trim()) {
+    throw new Error("HTML content is empty.");
+  }
+
+  const suggestedName = htmlPdfSuggestedFileName(payload.suggestedName);
+  const downloadsDir = app.getPath("downloads");
+  const ownerWindow = BrowserWindow.getFocusedWindow() ?? mainWindow ?? null;
+  const options: SaveDialogOptions = {
+    title: "Export PDF",
+    defaultPath: path.join(downloadsDir, suggestedName),
+    buttonLabel: "Export PDF",
+    filters: [{ name: "PDF", extensions: ["pdf"] }],
+  };
+  const result = ownerWindow
+    ? await dialog.showSaveDialog(ownerWindow, options)
+    : await dialog.showSaveDialog(options);
+  if (result.canceled || !result.filePath) {
+    return { path: null, canceled: true };
+  }
+
+  const destination = path.resolve(result.filePath);
+  await fs.mkdir(path.dirname(destination), { recursive: true });
+
+  const renderWindow = new BrowserWindow({
+    show: false,
+    width: 1280,
+    height: 900,
+    backgroundColor: "#ffffff",
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  renderWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+
+  let tempDirPath = "";
+  try {
+    tempDirPath = await fs.mkdtemp(
+      path.join(app.getPath("temp"), "holaboss-html-pdf-"),
+    );
+    const tempHtmlPath = path.join(tempDirPath, "index.html");
+    await fs.writeFile(
+      tempHtmlPath,
+      prepareHtmlForPdfExport(
+        html,
+        htmlPdfBaseHrefFromPath(payload.basePath),
+      ),
+      "utf-8",
+    );
+    await renderWindow.loadFile(tempHtmlPath);
+    await waitForHtmlPdfRender(renderWindow.webContents);
+    const pdfBuffer = await renderWindow.webContents.printToPDF({
+      printBackground: true,
+      preferCSSPageSize: true,
+    });
+    await fs.writeFile(destination, pdfBuffer);
+  } finally {
+    if (!renderWindow.isDestroyed()) {
+      renderWindow.destroy();
+    }
+    if (tempDirPath) {
+      await fs.rm(tempDirPath, { recursive: true, force: true }).catch(
+        () => undefined,
+      );
+    }
+  }
+
+  return { path: destination, canceled: false };
+}
+
 async function listDirectory(
   targetPath?: string | null,
   workspaceId?: string | null,
@@ -21492,11 +21106,13 @@ function desktopStatusItemIconPath(): string {
 }
 
 function shouldShowNativeDesktopNotification(): boolean {
-  return Boolean(
-    mainWindow &&
-      !mainWindow.isDestroyed() &&
-      mainWindow.isMinimized(),
-  );
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return false;
+  }
+  if (mainWindow.isMinimized() || !mainWindow.isVisible()) {
+    return true;
+  }
+  return !mainWindow.isFocused();
 }
 
 function normalizedNativeNotificationText(value: string, maxLength: number): string {
@@ -21608,7 +21224,7 @@ function showNativeDesktopNotification(
       title,
       body,
       force: payload.force,
-      detail: "Main window is visible and not minimized.",
+      detail: "Main window is visible, focused, and not minimized.",
     });
     return Promise.resolve(false);
   }
@@ -21621,13 +21237,7 @@ function showNativeDesktopNotification(
     });
     return Promise.resolve(false);
   }
-  if (shouldUseMacDevelopmentNotificationFallback()) {
-    return showMacDevelopmentNotificationFallback({
-      title,
-      body,
-      force: payload.force,
-    });
-  }
+  const useDevFallback = shouldUseMacDevelopmentNotificationFallback();
 
   return new Promise<boolean>((resolve) => {
     logNativeDesktopNotificationEvent("show_requested", {
@@ -21649,6 +21259,28 @@ function showNativeDesktopNotification(
       settled = true;
       resolve(value);
     };
+    const fallbackThenSettle = (detail: string) => {
+      if (settled) {
+        return;
+      }
+      if (!useDevFallback) {
+        settle(false);
+        return;
+      }
+      logNativeDesktopNotificationEvent("dev_fallback_attempt", {
+        title,
+        body,
+        force: payload.force,
+        detail,
+      });
+      void showMacDevelopmentNotificationFallback({
+        title,
+        body,
+        force: payload.force,
+      }).then((shown) => {
+        settle(shown);
+      });
+    };
     const showTimeout = setTimeout(() => {
       logNativeDesktopNotificationEvent("show_timeout", {
         title,
@@ -21656,7 +21288,7 @@ function showNativeDesktopNotification(
         force: payload.force,
         detail: "Notification did not emit show within 1500ms.",
       });
-      settle(false);
+      fallbackThenSettle("native_show_timeout");
     }, 1500);
     notification.on("show", () => {
       clearTimeout(showTimeout);
@@ -21669,18 +21301,19 @@ function showNativeDesktopNotification(
     });
     notification.on("failed", (_event, error) => {
       clearTimeout(showTimeout);
+      const detail =
+        typeof error === "string"
+          ? error
+          : error && typeof error === "object" && "message" in error
+            ? String((error as { message?: unknown }).message ?? "unknown")
+            : String(error ?? "unknown");
       logNativeDesktopNotificationEvent("failed", {
         title,
         body,
         force: payload.force,
-        detail:
-          typeof error === "string"
-            ? error
-            : error && typeof error === "object" && "message" in error
-              ? String((error as { message?: unknown }).message ?? "unknown")
-              : String(error ?? "unknown"),
+        detail,
       });
-      settle(false);
+      fallbackThenSettle(`native_failed:${detail}`);
     });
     notification.on("click", () => {
       logNativeDesktopNotificationEvent("clicked", {
@@ -21966,6 +21599,9 @@ app.on("web-contents-created", (_event, contents) => {
           : null,
       },
     });
+    if (ownerWindow && ownerWindow === mainWindow && contentsType === "window") {
+      detachAttachedMainWindowViews();
+    }
   });
 });
 
@@ -22159,6 +21795,12 @@ app.whenReady().then(async () => {
       workspaceId?: string | null,
       payload?: { content?: string; suggestedName?: string },
     ) => exportExplorerPathToFile(targetPath, workspaceId, payload),
+  );
+  handleTrustedIpc(
+    "fs:exportHtmlToPdf",
+    ["main"],
+    async (_event, payload: HtmlToPdfExportRequestPayload) =>
+      exportHtmlToPdf(payload),
   );
   handleTrustedIpc("fs:getBookmarks", ["main"], () => fileBookmarks);
   handleTrustedIpc(
@@ -22881,49 +22523,10 @@ app.whenReady().then(async () => {
       dismissMemoryUpdateProposal(workspaceId, proposalId),
   );
   handleTrustedIpc(
-    "workspace:getProactiveStatus",
-    ["main"],
-    async (_event, workspaceId: string) => getProactiveStatus(workspaceId),
-  );
-  handleTrustedIpc(
     "workspace:updateTaskProposalState",
     ["main"],
     async (_event, workspaceId: string, proposalId: string, state: string) =>
       updateTaskProposalState(workspaceId, proposalId, state),
-  );
-  handleTrustedIpc(
-    "workspace:requestRemoteTaskProposalGeneration",
-    ["main"],
-    async (_event, payload: RemoteTaskProposalGenerationRequestPayload) =>
-      requestRemoteTaskProposalGeneration(payload),
-  );
-  handleTrustedIpc(
-    "workspace:setProactiveTaskProposalPreference",
-    ["main"],
-    async (_event, payload: ProactiveTaskProposalPreferenceUpdatePayload) =>
-      setProactiveTaskProposalPreference(payload),
-  );
-  handleTrustedIpc(
-    "workspace:getProactiveTaskProposalPreference",
-    ["main"],
-    async () => getProactiveTaskProposalPreference(),
-  );
-  handleTrustedIpc(
-    "workspace:getProactiveHeartbeatConfig",
-    ["main"],
-    async () => getProactiveHeartbeatConfig(),
-  );
-  handleTrustedIpc(
-    "workspace:setProactiveHeartbeatConfig",
-    ["main"],
-    async (_event, payload: ProactiveHeartbeatConfigUpdatePayload) =>
-      setProactiveHeartbeatConfig(payload),
-  );
-  handleTrustedIpc(
-    "workspace:setProactiveHeartbeatWorkspaceEnabled",
-    ["main"],
-    async (_event, payload: ProactiveHeartbeatWorkspaceUpdatePayload) =>
-      setProactiveHeartbeatWorkspaceEnabled(payload),
   );
   handleTrustedIpc(
     "workspace:listRuntimeStates",

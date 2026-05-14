@@ -339,12 +339,12 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         type: "object",
         properties: {
           title: { type: "string", description: "Optional report title shown in the artifact list." },
-          filename: { type: "string", description: "Optional markdown filename stem for the saved report." },
+          filename: { type: "string", description: "Optional HTML filename stem for the saved report." },
           summary: { type: "string", description: "Optional short summary for artifact metadata and follow-up context." },
           content: {
             type: "string",
             description:
-              "Full markdown report content to save as an artifact. Put the detailed research findings in this field instead of in chat.",
+              "Full self-contained HTML report content to save as an artifact. Put the detailed research findings in this field instead of in chat.",
           },
         },
         required: ["content"],
@@ -960,7 +960,8 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "If the user explicitly asked for research, latest news, analysis, comparison, or a timeline and you gathered findings from multiple sources, call `write_report` before your final answer.",
       "A step like 'summarize findings for the user' still means: save the full findings with `write_report`, then keep the chat reply brief.",
       "After calling `write_report`, keep the chat reply short: mention the report title or path and give only the key takeaways.",
-      "Write the full markdown report in `content` instead of pasting the full report inline in chat.",
+      "Write the full report as self-contained HTML in `content` instead of pasting the full report inline in chat.",
+      "Use semantic headings, tables, lists, and concise inline CSS when that improves scanability; avoid scripts and remote assets unless the user explicitly asked for them.",
     ];
   }
   if (toolId === "web_search") {
@@ -974,8 +975,8 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
   if (toolId === "holaboss_update_workspace_instructions") {
     return [
       "Use `holaboss_update_workspace_instructions` when durable workspace knowledge should be recorded in root `AGENTS.md`.",
-      "Record durable user requirements and preferences, verified commands and procedures, stable workspace facts, conventions, decisions, and recurring blockers that future runs should reuse, whether they came from the user, direct inspection, or grounded tool or subagent results.",
-      "Do not record narrow one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state. Only skip a durable item when the user explicitly says not to record it.",
+      "Record durable user requirements and preferences, verified commands and procedures, stable workspace facts, conventions, decisions, and recurring blockers that future runs should reuse when they are clearly stable, likely to recur, or explicitly confirmed by the user, whether they came from the user, direct inspection, or grounded tool or subagent results.",
+      "Do not record narrow one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state. When in doubt, leave it out until the pattern repeats or the user confirms it should persist.",
       "After recording durable guidance in `AGENTS.md`, if it is conditional, situational, or procedural rather than always-on policy, also create or update a workspace-local skill and keep a short skills index entry in `AGENTS.md`.",
       "Use `read_current` before replacing the managed section when you need to preserve or refine existing workspace instructions.",
       "Use `append_rule` for concise rules, `remove_rule` to retract one, and `replace_managed_section` for structured markdown templates, indexes, or larger rule sets.",
