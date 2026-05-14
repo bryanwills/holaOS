@@ -1808,6 +1808,11 @@ function sessionKindForLabPurpose(purpose: string): string {
   return purpose === "meeting_mode" ? "meeting_mode" : "workspace_onboarding";
 }
 
+function isLabControllerSessionKind(kind: string | null | undefined): boolean {
+  const normalized = (kind ?? "").trim().toLowerCase();
+  return normalized === "workspace_onboarding" || normalized === "meeting_mode";
+}
+
 const WORKSPACE_ONBOARDING_STARTER_ASSISTANT_MESSAGE =
   "What would you like to build?";
 
@@ -2928,6 +2933,21 @@ function blockingWorkspaceAppsMessage(entries: Array<{ appId: string; status: st
     return `workspace apps are still building: ${entries.map((entry) => `${entry.appId} (${entry.status})`).join(", ")}`;
   }
   return `workspace apps are still starting: ${entries.map((entry) => `${entry.appId} (${entry.status})`).join(", ")}`;
+}
+
+function shouldBypassWorkspaceAppBlocking(params: {
+  store: RuntimeStateStore;
+  workspace: WorkspaceRecord;
+  sessionId: string;
+}): boolean {
+  if (params.workspace.workspaceRole !== "draft_lab") {
+    return false;
+  }
+  const session = params.store.getSession({
+    workspaceId: params.workspace.id,
+    sessionId: params.sessionId,
+  });
+  return isLabControllerSessionKind(session?.kind);
 }
 
 async function runAppSetup(params: {
@@ -8416,9 +8436,17 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     ) {
       return;
     }
-    const blockingApps = blockingWorkspaceApps({ store, workspaceId: executionWorkspaceId });
-    if (blockingApps.length > 0) {
-      return sendError(reply, 409, blockingWorkspaceAppsMessage(blockingApps));
+    if (
+      !shouldBypassWorkspaceAppBlocking({
+        store,
+        workspace: executionWorkspace,
+        sessionId: resolvedSessionId,
+      })
+    ) {
+      const blockingApps = blockingWorkspaceApps({ store, workspaceId: executionWorkspaceId });
+      if (blockingApps.length > 0) {
+        return sendError(reply, 409, blockingWorkspaceAppsMessage(blockingApps));
+      }
     }
 
     const workspaceDir = store.workspaceDir(executionWorkspaceId);

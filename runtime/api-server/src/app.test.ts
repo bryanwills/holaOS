@@ -8860,6 +8860,81 @@ test("queue route rejects inputs while workspace apps are still building", async
   store.close();
 });
 
+test("queue route allows meeting-mode lab controller inputs even when copied lab apps are pending", async () => {
+  const root = makeTempDir("hb-runtime-api-queue-meeting-lab-pending-apps-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace"),
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const source = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+
+  const sourceDir = store.workspaceDir(source.id);
+  fs.writeFileSync(
+    path.join(sourceDir, "workspace.yaml"),
+    [
+      "applications:",
+      "  - app_id: twitter",
+      "    config_path: apps/twitter/app.runtime.yaml",
+      "    lifecycle:",
+      "      setup: npm run build",
+      "  - app_id: notion",
+      "    config_path: apps/notion/app.runtime.yaml",
+      "    lifecycle:",
+      "      setup: npm run build",
+    ].join("\n"),
+    "utf8",
+  );
+  store.upsertAppBuild({
+    workspaceId: source.id,
+    appId: "twitter",
+    status: "running",
+  });
+  store.upsertAppBuild({
+    workspaceId: source.id,
+    appId: "notion",
+    status: "running",
+  });
+
+  const labResponse = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspaces/${source.id}/labs`,
+    payload: { purpose: "meeting_mode" },
+  });
+  assert.equal(labResponse.statusCode, 200);
+  const labId = labResponse.json().lab.id as string;
+  const sessionId = labResponse.json().session.session_id as string;
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/agent-sessions/queue",
+    payload: {
+      workspace_id: source.id,
+      session_id: sessionId,
+      text: "Start meeting mode.",
+    },
+  });
+
+  assert.equal(response.statusCode, 200);
+  const queued = store.getInput({
+    workspaceId: labId,
+    inputId: response.json().input_id,
+  });
+  assert.ok(queued);
+  assert.equal(queued?.sessionId, sessionId);
+  assert.equal(store.listRuntimeStates(source.id).length, 0);
+  assert.equal(store.listRuntimeStates(labId).length, 1);
+
+  await app.close();
+  store.close();
+});
+
 test("queue route accepts staged file and folder attachments and history hydrates attachment metadata after claim", async () => {
   const root = makeTempDir("hb-runtime-api-queue-attachments-");
   const store = new RuntimeStateStore({

@@ -4393,6 +4393,7 @@ function AppShellContent() {
         workspaceId,
         "meeting_mode",
       );
+      const labWorkspaceId = response.lab?.id?.trim() || workspaceId;
       const sessionId = response.session?.session_id?.trim() || "";
       if (!sessionId) {
         throw new Error("Meeting mode session was not created.");
@@ -4400,7 +4401,7 @@ function AppShellContent() {
 
       if (response.created) {
         await window.electronAPI.workspace.queueSessionInput({
-          workspace_id: workspaceId,
+          workspace_id: labWorkspaceId,
           session_id: sessionId,
           text:
             "Start meeting mode. Use the lab copied from the current workspace. Invite the user to rapidly critique what has not worked well, build a concrete change backlog from their feedback, and only implement changes after the user confirms priorities.",
