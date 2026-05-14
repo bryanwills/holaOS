@@ -65,6 +65,11 @@ import {
   resolveWorkspaceAppRuntime,
   updateWorkspaceApplications,
 } from "./workspace-apps.js";
+import {
+  cronjobAuthorRecommendedEnabled,
+  disableCronjobAutonomyForLab,
+  isDraftLabWorkspace,
+} from "./cronjob-policy.js";
 
 const SESSION_REFRESH_NOTE =
   "New MCP servers became available in this turn. Their tools will be visible to you starting from the next user message — please end this turn (do not call the new tools yet) and let the user trigger the next one.";
@@ -2447,7 +2452,7 @@ export class RuntimeAgentToolsService {
   }
 
   createCronjob(params: RuntimeAgentToolsCreateCronjobParams): JsonObject {
-    this.requireWorkspace(params.workspaceId);
+    const workspace = this.requireWorkspace(params.workspaceId);
     const cron = normalizedString(params.cron);
     const description = normalizedString(params.description);
     const instruction = normalizedString(params.instruction ?? params.description);
@@ -2460,6 +2465,23 @@ export class RuntimeAgentToolsService {
     if (!instruction) {
       throw new RuntimeAgentToolsServiceError(400, "cronjob_instruction_required", "instruction is required");
     }
+    const requestedEnabled = params.enabled !== false;
+    const metadata = metadataWithCronjobDefaults({
+      metadata: params.metadata,
+      holabossUserId: params.holabossUserId,
+      selectedModel: params.selectedModel,
+      sourceSessionId: params.sessionId,
+    });
+    const normalizedCronjobState = isDraftLabWorkspace(workspace)
+      ? disableCronjobAutonomyForLab({
+          metadata,
+          recommendedEnabled: requestedEnabled,
+        })
+      : {
+          enabled: requestedEnabled,
+          metadata,
+          nextRunAt: cronjobNextRunAt(cron, new Date()),
+        };
     const created = this.store.createCronjob({
       workspaceId: params.workspaceId,
       initiatedBy: normalizedString(params.initiatedBy) || "workspace_agent",
@@ -2467,19 +2489,14 @@ export class RuntimeAgentToolsService {
       cron,
       description,
       instruction,
-      enabled: params.enabled !== false,
+      enabled: normalizedCronjobState.enabled,
       delivery: normalizeDelivery({
         channel: normalizedString(params.delivery?.channel ?? "session_run") || "session_run",
         mode: params.delivery?.mode ?? "announce",
         to: params.delivery?.to
       }),
-      metadata: metadataWithCronjobDefaults({
-        metadata: params.metadata,
-        holabossUserId: params.holabossUserId,
-        selectedModel: params.selectedModel,
-        sourceSessionId: params.sessionId,
-      }),
-      nextRunAt: cronjobNextRunAt(cron, new Date())
+      metadata: normalizedCronjobState.metadata,
+      nextRunAt: normalizedCronjobState.nextRunAt
     });
     return cronjobPayload(created);
   }
@@ -2503,6 +2520,26 @@ export class RuntimeAgentToolsService {
     if (params.instruction !== undefined && !instruction) {
       throw new RuntimeAgentToolsServiceError(400, "cronjob_instruction_required", "instruction is required");
     }
+    const workspace = this.requireWorkspace(workspaceId);
+    const requestedEnabled =
+      params.enabled == null ? cronjobAuthorRecommendedEnabled(existing) : params.enabled;
+    const resolvedMetadata =
+      params.metadata === undefined
+        ? existing.metadata
+        : metadataWithCronjobDefaults({
+            metadata: params.metadata,
+            holabossUserId: null,
+          });
+    const normalizedCronjobState = isDraftLabWorkspace(workspace)
+      ? disableCronjobAutonomyForLab({
+          metadata: resolvedMetadata,
+          recommendedEnabled: requestedEnabled,
+        })
+      : {
+          enabled: params.enabled === undefined ? undefined : params.enabled,
+          metadata: params.metadata === undefined ? undefined : resolvedMetadata,
+          nextRunAt: cron === null ? undefined : cronjobNextRunAt(cron, new Date()),
+        };
     const updated = this.store.updateCronjob({
       workspaceId,
       jobId: params.jobId,
@@ -2510,7 +2547,7 @@ export class RuntimeAgentToolsService {
       cron,
       description,
       instruction: resolvedInstructionForCronjobUpdate({ existing, description, instruction }),
-      enabled: params.enabled === undefined ? undefined : params.enabled,
+      enabled: normalizedCronjobState.enabled,
       delivery:
         params.delivery === undefined || params.delivery === null
           ? undefined
@@ -2519,14 +2556,8 @@ export class RuntimeAgentToolsService {
               mode: params.delivery.mode,
               to: params.delivery.to
             }),
-      metadata:
-        params.metadata === undefined
-          ? undefined
-          : metadataWithCronjobDefaults({
-              metadata: params.metadata,
-              holabossUserId: null,
-            }),
-      nextRunAt: cron === null ? undefined : cronjobNextRunAt(cron, new Date())
+      metadata: normalizedCronjobState.metadata,
+      nextRunAt: normalizedCronjobState.nextRunAt
     });
     if (!updated) {
       throw new RuntimeAgentToolsServiceError(404, "cronjob_not_found", "cronjob not found");

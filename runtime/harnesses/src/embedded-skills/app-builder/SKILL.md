@@ -23,6 +23,11 @@ This includes requests for dashboards, trackers, analytics surfaces, CSV visuali
 5. Never hardcode ports, workspace ids, or provider tokens.
 6. Do not stop at scaffold creation; verify the app is healthy.
 
+## Supplemental References
+Open only the files that match the current request:
+- `references/integration-backed-apps.md` for provider-backed apps, canonical provider ids, live connection status, and status/error mapping
+- `references/verification-and-testing.md` for managed runtime verification order and focused test coverage expectations
+
 ## Deterministic Workspace Tools
 When these runtime tools are surfaced for the current run, prefer them over hand-written platform glue:
 - `workspace_apps_find` to check the marketplace/local catalog before deciding to build a new app
@@ -43,12 +48,13 @@ When these runtime tools are surfaced for the current run, prefer them over hand
 
 These tools are for workspace-contract operations. Keep app-specific UI, workflows, and domain logic model-driven.
 If `workspace_apps_find` returns an exact or clearly suitable app for the user's request, prefer `workspace_apps_install` over scaffolding a new app. Only build a new app when no suitable catalog app exists, the install route is blocked, or the user explicitly asked for a custom app.
+When the managed app lifecycle tools are surfaced, use them for start, restart, readiness, and endpoint verification. Do not keep a foreground `npm start`, dev server, watch process, or ad hoc shell server open as proof that the app is installed or ready.
 
 ## Build/Update Lifecycle
 Follow this sequence for both new apps and updates to existing apps:
 1. Inspect workspace context, existing apps, data sources, and any required local files.
 2. If `workspace_apps_find` is surfaced and the request could match an existing workspace app, query the catalog before deciding to build.
-3. If the app needs external provider access and `workspace_integrations_list_catalog` is surfaced, call it before writing `integrations:` or `createIntegrationClient(...)`; use the exact returned canonical `provider_id` everywhere. For X, the canonical provider id is `twitter`, not `x`.
+3. If the app needs external provider access and `workspace_integrations_list_catalog` is surfaced, call it before writing `integrations:` or `createIntegrationClient(...)`; use the exact returned canonical `provider_id` everywhere. For X, the canonical provider id is `twitter`, not `x`. Follow `references/integration-backed-apps.md` for the full provider-backed app pattern.
 4. Decide whether to modify an existing app, install an existing catalog app, or create a new one.
 5. If an exact or clearly suitable catalog app exists, install it and stop the build path unless the user explicitly asked for a custom app.
 6. Otherwise scaffold the minimum valid app shape or edit the existing app files.
@@ -57,11 +63,13 @@ Follow this sequence for both new apps and updates to existing apps:
 9. Run `workspace_apps_build` when a deterministic build script exists instead of relying on ad hoc shell output.
 10. If the app was already running, prefer `workspace_apps_restart_and_wait_ready`; otherwise ensure the managed runtime is running it.
 11. Wait until runtime truth reports the app as `ready: true` if you did not already use the compound restart-and-wait tool.
-12. For integration-backed apps, implement the connection flow using a live status probe pattern instead of cached connection verdicts. Add a provider client wrapper around `createIntegrationClient(...)`, expose a current `getConnectionStatus` path for UI or tools when the app depends on user authorization, and treat any persisted connection state as last-observed telemetry only.
-13. Verify the managed UI, MCP, data access, integrations, and outputs that the request depends on. Prefer `workspace_apps_probe_endpoints` for UI/MCP contract checks.
-14. Only then report that the app is installed, updated, or working.
+12. If managed lifecycle tools are available, do not substitute a foreground `npm start`, `npm run dev`, `vite`, `next dev`, or other watch/server command for managed readiness verification.
+13. For integration-backed apps, implement the connection flow using a live status probe pattern instead of cached connection verdicts. Add a provider client wrapper around `createIntegrationClient(...)`, expose a current `getConnectionStatus` path for UI or tools when the app depends on user authorization, and treat any persisted connection state as last-observed telemetry only.
+14. Verify the managed UI, MCP, data access, integrations, and outputs that the request depends on. Prefer `workspace_apps_probe_endpoints` for UI/MCP contract checks.
+15. Only then report that the app is installed, updated, or working.
 
 Do not treat file creation, `npm install`, or a standalone browser preview as completion.
+Do not treat a foreground shell server as completion either. A managed app is ready only after the workspace runtime owns the process and the runtime-managed checks pass.
 
 ## Minimum App Contract
 The app is only a real holaOS app when all of these are true:
@@ -486,7 +494,7 @@ Use this pattern:
 - create a dedicated provider client wrapper module around `createIntegrationClient("<canonical_provider_id>")`
 - centralize proxy error mapping in that wrapper
 - add a cheap status probe that calls a lightweight provider endpoint through the bridge
-- expose the result through a server helper and, when the app benefits from it, a UI route or MCP tool such as `<app>_get_connection_status`
+- expose the result through a server helper and, when the app has auth-dependent MCP tools, a mandatory `<prefix>_get_connection_status` tool plus any needed UI route
 - treat any persisted connection fields as diagnostics or last-observed telemetry only
 
 Do not do this:
@@ -580,7 +588,7 @@ export async function getConnectionStatus() {
 Rules:
 - choose the cheapest provider endpoint that proves the required auth works
 - when a UI needs connection state, fetch it from the live status helper instead of replaying cached app settings
-- when an MCP tool or agent flow depends on connectivity, expose a dedicated status tool and call it before telling the user to reconnect
+- when an MCP tool or agent flow depends on connectivity, expose a mandatory dedicated status tool, put it first in the MCP tool list, and call it before telling the user to reconnect
 - if the app stores connection-related records, label them as last-checked telemetry and refresh them from live status instead of trusting them blindly
 - if the app receives `not_connected`, recover by re-checking live status or prompting the user to authorize; do not silently keep stale disconnected state forever
 
@@ -639,6 +647,7 @@ When a runtime control path is available, the preferred sequence is:
 ```
 
 If a direct runtime control path is not available in the current environment, be explicit about the limitation. Do not claim the app is fully installed and ready if you only verified a standalone preview server.
+If the runtime control path is available, do not keep a foreground app server open in the active tool call just to prove readiness.
 
 ## Workflow
 1. Determine the minimum useful first version of the app.
@@ -665,8 +674,9 @@ If a direct runtime control path is not available in the current environment, be
 8. Register or install the app.
 9. If you changed an app that was already installed or already running, restart the managed app through the workspace runtime so the active process actually picks up the new code.
 10. Ensure the workspace runtime has actually started the app after registration, install, or restart. Do not stop at file creation or a standalone browser preview.
-11. Verify health, MCP behavior, data access, integrations, and outputs as applicable.
-12. If setup, start, manifest, runtime activation, restart, or health checks fail, fix the app before stopping.
+11. When managed lifecycle tools are available, do not leave a foreground app server or watch command running in shell after build; hand execution back to the workspace runtime and verify through managed status and probes.
+12. Verify health, MCP behavior, data access, integrations, and outputs as applicable.
+13. If setup, start, manifest, runtime activation, restart, or health checks fail, fix the app before stopping.
 
 ## Capability Guidance
 
@@ -720,6 +730,7 @@ Minimum MCP contract:
 - Do not assume raw provider tokens in environment variables.
 - Use brokered or platform-managed integration behavior.
 - Use a live connection-status probe pattern when app behavior depends on current authorization.
+- For full structure, status semantics, and tool/API expectations, follow `references/integration-backed-apps.md`.
 
 Example:
 
@@ -754,11 +765,13 @@ integrations:
 - Add app-owned tables only when the app needs durable state such as saved filters, annotations, imported normalized data, or preferences.
 
 ## Verification Checklist
+- For fuller verification guidance and focused integration-backed test cases, open `references/verification-and-testing.md`.
 - `app.runtime.yaml` exists and parses cleanly
 - `workspace.yaml` registration exists and matches `app_id`
 - the workspace runtime has picked up the registration and started the app
 - the installed app list reports the app as `ready: true`
 - if an existing app was modified, the managed app process was restarted before verification
+- if managed lifecycle tools were available, readiness was verified through them rather than through a foreground shell server
 - the app serves `/` on `$PORT` when a UI surface is expected
 - `GET /mcp/health` works on `$MCP_PORT`
 - MCP transport routes are exposed correctly
@@ -779,6 +792,7 @@ integrations:
 - files created but app not registered
 - app files created and browser preview works, but the workspace runtime never starts the managed app
 - an existing managed app was modified, but the old process kept serving stale code because it was never restarted
+- foreground `npm start`, `npm run dev`, or another watch/server command was left running instead of handing the app to the managed runtime, so the run hung or timed out
 - invalid `app.runtime.yaml`
 - hardcoded `PORT` or `MCP_PORT`
 - missing MCP health route

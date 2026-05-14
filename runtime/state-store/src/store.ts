@@ -1329,7 +1329,9 @@ export class RuntimeStateStore {
       `)
       .all(params.sourceWorkspaceId);
     const labs = rows.map((row) => this.rowToWorkspace(row));
-    return params.activeOnly ? labs.filter((lab) => lab.labStatus === "active") : labs;
+    return params.activeOnly
+      ? labs.filter((lab) => lab.labStatus === "active" && lab.status === "active")
+      : labs;
   }
 
   getActiveWorkspaceLab(sourceWorkspaceId: string): WorkspaceRecord | null {

@@ -2843,12 +2843,16 @@ function plusMillisecondsIso(
 }
 
 type SubagentPendingIntegration = {
+  workspace_id: string | null;
   app_id: string;
   provider_id: string;
   credential_source: string | null;
 };
 
-function parseSubagentPendingIntegrationsFromText(text: string): SubagentPendingIntegration[] {
+function parseSubagentPendingIntegrationsFromText(
+  text: string,
+  fallbackWorkspaceId?: string | null,
+): SubagentPendingIntegration[] {
   if (!text.includes("pending_integrations")) {
     return [];
   }
@@ -2861,14 +2865,21 @@ function parseSubagentPendingIntegrationsFromText(text: string): SubagentPending
   if (!isRecord(parsed)) {
     return [];
   }
+  const normalizedFallbackWorkspaceId =
+    typeof fallbackWorkspaceId === "string" ? fallbackWorkspaceId.trim() : "";
   const list = Array.isArray(parsed.pending_integrations) ? parsed.pending_integrations : [];
   const out: SubagentPendingIntegration[] = [];
   for (const entry of list) {
     if (!isRecord(entry)) continue;
     const appId = typeof entry.app_id === "string" ? entry.app_id.trim() : "";
     const provider = typeof entry.provider_id === "string" ? entry.provider_id.trim() : "";
+    const workspaceId =
+      typeof entry.workspace_id === "string" && entry.workspace_id.trim()
+        ? entry.workspace_id.trim()
+        : normalizedFallbackWorkspaceId;
     if (!appId || !provider) continue;
     out.push({
+      workspace_id: workspaceId || null,
       app_id: appId,
       provider_id: provider,
       credential_source:
@@ -2907,8 +2918,12 @@ function subagentPendingIntegrations(params: {
     if (!result || !Array.isArray(result.content)) continue;
     for (const part of result.content) {
       if (!isRecord(part) || part.type !== "text" || typeof part.text !== "string") continue;
-      for (const integration of parseSubagentPendingIntegrationsFromText(part.text)) {
-        const key = integration.provider_id.toLowerCase();
+      for (const integration of parseSubagentPendingIntegrationsFromText(part.text, params.workspaceId)) {
+        const key = [
+          integration.workspace_id?.toLowerCase() ?? "",
+          integration.provider_id.toLowerCase(),
+          integration.app_id.toLowerCase(),
+        ].join("|");
         if (seen.has(key)) continue;
         seen.add(key);
         out.push(integration);
@@ -3042,6 +3057,7 @@ function subagentLifecyclePayload(params: {
   });
   const assistantText = optionalString(params.turnResult.assistantText);
   const payload: Record<string, unknown> = {
+    workspace_id: params.run.workspaceId,
     subagent_id: params.run.subagentId,
     child_session_id: params.run.childSessionId,
     child_input_id: params.record.inputId,

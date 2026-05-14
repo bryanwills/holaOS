@@ -57,6 +57,12 @@ import {
   cronjobNextRunAt
 } from "./cron-worker.js";
 import {
+  cronjobAuthorRecommendedEnabled,
+  disableCronjobAutonomyForLab,
+  isDraftLabWorkspace,
+  stripLabCronjobExecutionDisabledMetadata,
+} from "./cronjob-policy.js";
+import {
   type MainSessionEventWorkerLike,
   RuntimeMainSessionEventWorker,
 } from "./main-session-event-worker.js";
@@ -1706,6 +1712,43 @@ function syncDesignTree(sourceDir: string, targetDir: string): void {
   }
 }
 
+function copiedCronjobFields(params: {
+  store: RuntimeStateStore;
+  sourceWorkspaceId: string;
+  targetWorkspaceId: string;
+  job: CronjobRecord;
+}): {
+  enabled: boolean;
+  metadata: Record<string, unknown>;
+  nextRunAt: string | null;
+} {
+  const sourceWorkspace = params.store.getWorkspace(params.sourceWorkspaceId);
+  const targetWorkspace = params.store.getWorkspace(params.targetWorkspaceId);
+  const metadata = optionalDict(params.job.metadata) ?? {};
+
+  if (isDraftLabWorkspace(targetWorkspace)) {
+    return disableCronjobAutonomyForLab({
+      metadata,
+      recommendedEnabled: cronjobAuthorRecommendedEnabled(params.job),
+    });
+  }
+
+  if (isDraftLabWorkspace(sourceWorkspace)) {
+    const recommendedEnabled = cronjobAuthorRecommendedEnabled(params.job);
+    return {
+      enabled: recommendedEnabled,
+      metadata: stripLabCronjobExecutionDisabledMetadata(metadata),
+      nextRunAt: recommendedEnabled ? cronjobNextRunAt(params.job.cron, new Date()) : null,
+    };
+  }
+
+  return {
+    enabled: params.job.enabled,
+    metadata,
+    nextRunAt: params.job.nextRunAt,
+  };
+}
+
 function replaceDesignCronjobs(params: {
   store: RuntimeStateStore;
   sourceWorkspaceId: string;
@@ -1718,6 +1761,12 @@ function replaceDesignCronjobs(params: {
     });
   }
   for (const job of params.store.listCronjobs({ workspaceId: params.sourceWorkspaceId })) {
+    const copied = copiedCronjobFields({
+      store: params.store,
+      sourceWorkspaceId: params.sourceWorkspaceId,
+      targetWorkspaceId: params.targetWorkspaceId,
+      job,
+    });
     params.store.createCronjob({
       workspaceId: params.targetWorkspaceId,
       jobId: job.id,
@@ -1726,10 +1775,10 @@ function replaceDesignCronjobs(params: {
       cron: job.cron,
       description: job.description,
       instruction: job.instruction,
-      enabled: job.enabled,
+      enabled: copied.enabled,
       delivery: job.delivery as Record<string, unknown>,
-      metadata: job.metadata as Record<string, unknown>,
-      nextRunAt: job.nextRunAt,
+      metadata: copied.metadata,
+      nextRunAt: copied.nextRunAt,
     });
   }
 }
@@ -1797,6 +1846,149 @@ function labPayload(params: {
   };
 }
 
+function archiveWorkspaceLabSessions(params: {
+  store: RuntimeStateStore;
+  labId: string;
+  archivedAt?: string;
+}): void {
+  const archivedAt = params.archivedAt ?? utcNowIso();
+  for (const session of params.store.listSessions({
+    workspaceId: params.labId,
+    includeArchived: true,
+    limit: 1000,
+    offset: 0,
+  })) {
+    params.store.ensureSession(
+      {
+        workspaceId: params.labId,
+        sessionId: session.sessionId,
+        archivedAt: session.archivedAt ?? archivedAt,
+      },
+      { touchExisting: false },
+    );
+  }
+}
+
+function archiveHistoricalWorkspaceLabs(params: {
+  store: RuntimeStateStore;
+  sourceWorkspaceId: string;
+}): void {
+  for (const lab of params.store.listWorkspaceLabs({
+    sourceWorkspaceId: params.sourceWorkspaceId,
+    activeOnly: false,
+  })) {
+    if (lab.labStatus === "active" && lab.status === "active") {
+      continue;
+    }
+    if (lab.status !== "archived") {
+      params.store.updateWorkspace(lab.id, {
+        status: "archived",
+      });
+    }
+    archiveWorkspaceLabSessions({
+      store: params.store,
+      labId: lab.id,
+    });
+  }
+}
+
+async function stopWorkspaceApplicationsForArchive(params: {
+  store: RuntimeStateStore;
+  workspaceId: string;
+  workspaceDir: string;
+  appLifecycleExecutor: AppLifecycleExecutorLike;
+  logger?: { debug: (...args: unknown[]) => void };
+}): Promise<void> {
+  const allocatedPorts: number[] = params.store
+    .listAppPorts({ workspaceId: params.workspaceId })
+    .map((p) => p.port);
+
+  let entries: Array<Record<string, unknown>> = [];
+  try {
+    entries = listWorkspaceApplications(params.workspaceDir);
+  } catch (error) {
+    params.logger?.debug?.(
+      {
+        workspaceId: params.workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "best-effort app listing failed during workspace lab archive",
+    );
+  }
+
+  for (const entry of entries) {
+    const appId = typeof entry.app_id === "string" ? entry.app_id.trim() : "";
+    if (!appId) {
+      continue;
+    }
+    const configPath = typeof entry.config_path === "string" ? entry.config_path.trim() : "";
+    const fallbackAppDir = path.join(
+      params.workspaceDir,
+      configPath ? path.dirname(configPath) : path.join("apps", appId),
+    );
+
+    try {
+      const resolved = resolveWorkspaceAppRuntime(params.workspaceDir, appId, {
+        store: params.store,
+        workspaceId: params.workspaceId,
+      });
+      await params.appLifecycleExecutor.stopApp({
+        appId,
+        appDir: resolved.appDir,
+        workspaceId: params.workspaceId,
+        resolvedApp: resolved.resolvedApp,
+      });
+    } catch (error) {
+      try {
+        await params.appLifecycleExecutor.stopApp({
+          appId,
+          appDir: fallbackAppDir,
+          workspaceId: params.workspaceId,
+        });
+      } catch (fallbackError) {
+        params.logger?.debug?.(
+          {
+            workspaceId: params.workspaceId,
+            appId,
+            error:
+              fallbackError instanceof Error
+                ? fallbackError.message
+                : String(fallbackError),
+            original_error: error instanceof Error ? error.message : String(error),
+          },
+          "best-effort app stop failed during workspace lab archive",
+        );
+      }
+    } finally {
+      releaseWorkspaceAppPorts({
+        store: params.store,
+        workspaceId: params.workspaceId,
+        appId,
+      });
+      params.store.upsertAppBuild({
+        workspaceId: params.workspaceId,
+        appId,
+        status: "stopped",
+      });
+    }
+  }
+
+  if (allocatedPorts.length > 0) {
+    try {
+      await killPortListeners(allocatedPorts);
+    } catch {
+      params.logger?.debug?.(
+        { workspaceId: params.workspaceId, ports: allocatedPorts },
+        "best-effort port kill during workspace lab archive",
+      );
+    }
+  }
+
+  for (const appPort of params.store.listAppPorts({ workspaceId: params.workspaceId })) {
+    params.store.deleteAppPort({ workspaceId: params.workspaceId, appId: appPort.appId });
+  }
+}
+
 function ensureWorkspaceLab(params: {
   store: RuntimeStateStore;
   sourceWorkspaceId: string;
@@ -1809,6 +2001,10 @@ function ensureWorkspaceLab(params: {
   if (source.workspaceRole === "draft_lab") {
     throw new Error("cannot create a lab from another lab workspace");
   }
+  archiveHistoricalWorkspaceLabs({
+    store: params.store,
+    sourceWorkspaceId: source.id,
+  });
   const existingLab = params.store.getActiveWorkspaceLab(source.id);
   const kind = sessionKindForLabPurpose(params.purpose);
   if (existingLab) {
@@ -1920,11 +2116,13 @@ function resolveSessionWorkspaceScope(params: {
   return { workspaceId: params.workspaceId, workspace };
 }
 
-function completeWorkspaceLab(params: {
+async function completeWorkspaceLab(params: {
   store: RuntimeStateStore;
   labId: string;
   summary: string;
-}): { lab: WorkspaceRecord; source: WorkspaceRecord; session: AgentSessionRecord | null; created: boolean } {
+  appLifecycleExecutor: AppLifecycleExecutorLike;
+  logger?: { debug: (...args: unknown[]) => void };
+}): Promise<{ lab: WorkspaceRecord; source: WorkspaceRecord; session: AgentSessionRecord | null; created: boolean }> {
   const lab = params.store.getWorkspace(params.labId);
   if (!lab || lab.workspaceRole !== "draft_lab") {
     throw new Error("lab workspace not found");
@@ -1948,9 +2146,22 @@ function completeWorkspaceLab(params: {
     sourceWorkspaceId: lab.id,
     targetWorkspaceId: source.id,
   });
+  await stopWorkspaceApplicationsForArchive({
+    store: params.store,
+    workspaceId: lab.id,
+    workspaceDir: params.store.workspaceDir(lab.id),
+    appLifecycleExecutor: params.appLifecycleExecutor,
+    logger: params.logger,
+  });
   const completedAt = utcNowIso();
   const updatedLab = params.store.updateWorkspace(lab.id, {
+    status: "archived",
     labStatus: "merged",
+  });
+  archiveWorkspaceLabSessions({
+    store: params.store,
+    labId: lab.id,
+    archivedAt: completedAt,
   });
   const sourceUpdates: Parameters<RuntimeStateStore["updateWorkspace"]>[1] = {};
   if (lab.labPurpose === "workspace_onboarding") {
@@ -1975,11 +2186,13 @@ function completeWorkspaceLab(params: {
   return { lab: updatedLab, source: updatedSource, session, created: false };
 }
 
-function abandonWorkspaceLab(params: {
+async function abandonWorkspaceLab(params: {
   store: RuntimeStateStore;
   labId: string;
   summary?: string | null;
-}): { lab: WorkspaceRecord; source: WorkspaceRecord; session: AgentSessionRecord | null; created: boolean } {
+  appLifecycleExecutor: AppLifecycleExecutorLike;
+  logger?: { debug: (...args: unknown[]) => void };
+}): Promise<{ lab: WorkspaceRecord; source: WorkspaceRecord; session: AgentSessionRecord | null; created: boolean }> {
   const lab = params.store.getWorkspace(params.labId);
   if (!lab || lab.workspaceRole !== "draft_lab") {
     throw new Error("lab workspace not found");
@@ -1989,9 +2202,6 @@ function abandonWorkspaceLab(params: {
   if (!source) {
     throw new Error("source workspace not found");
   }
-  const updatedLab = params.store.updateWorkspace(lab.id, {
-    labStatus: "abandoned",
-  });
   let updatedSource = source;
   if (lab.labPurpose === "workspace_onboarding") {
     updatedSource = params.store.updateWorkspace(source.id, {
@@ -2002,6 +2212,13 @@ function abandonWorkspaceLab(params: {
       onboardingRequestedBy: "workspace_user",
     });
   }
+  await stopWorkspaceApplicationsForArchive({
+    store: params.store,
+    workspaceId: lab.id,
+    workspaceDir: params.store.workspaceDir(lab.id),
+    appLifecycleExecutor: params.appLifecycleExecutor,
+    logger: params.logger,
+  });
   const session =
     params.store
       .listSessions({
@@ -2011,6 +2228,16 @@ function abandonWorkspaceLab(params: {
         offset: 0,
       })
       .find((item) => item.kind === sessionKindForLabPurpose(lab.labPurpose ?? "")) ?? null;
+  const archivedAt = utcNowIso();
+  const updatedLab = params.store.updateWorkspace(lab.id, {
+    status: "archived",
+    labStatus: "abandoned",
+  });
+  archiveWorkspaceLabSessions({
+    store: params.store,
+    labId: lab.id,
+    archivedAt,
+  });
   return { lab: updatedLab, source: updatedSource, session, created: false };
 }
 
@@ -4778,10 +5005,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       });
       const workspace = store.getWorkspace(workspaceId);
       if (workspace?.workspaceRole === "draft_lab") {
-        const result = completeWorkspaceLab({
+        const result = await completeWorkspaceLab({
           store,
           labId: workspace.id,
           summary: requiredString(request.body.summary, "summary"),
+          appLifecycleExecutor,
+          logger: app.log,
         });
         return {
           ...workspaceRecordPayload(result.source),
@@ -6722,10 +6951,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const params = request.params as { labId: string };
     try {
       return labPayload(
-        completeWorkspaceLab({
+        await completeWorkspaceLab({
           store,
           labId: params.labId,
           summary: requiredString(request.body.summary, "summary"),
+          appLifecycleExecutor,
+          logger: app.log,
         }),
       );
     } catch (error) {
@@ -6738,10 +6969,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const params = request.params as { labId: string };
     try {
       return labPayload(
-        abandonWorkspaceLab({
+        await abandonWorkspaceLab({
           store,
           labId: params.labId,
           summary: optionalString(body.summary),
+          appLifecycleExecutor,
+          logger: app.log,
         }),
       );
     } catch (error) {
@@ -9120,9 +9353,24 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
     const workspaceId = requiredString(request.body.workspace_id, "workspace_id");
-    if (!store.getWorkspace(workspaceId)) {
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
       return sendError(reply, 404, "workspace not found");
     }
+    const requestedEnabled = optionalBoolean(request.body.enabled, true);
+    const metadata = cronjobMetadataWithRequestDefaults({
+      body: request.body,
+    });
+    const normalizedCronjobState = isDraftLabWorkspace(workspace)
+      ? disableCronjobAutonomyForLab({
+          metadata,
+          recommendedEnabled: requestedEnabled,
+        })
+      : {
+          enabled: requestedEnabled,
+          metadata,
+          nextRunAt: cronjobNextRunAt(requiredString(request.body.cron, "cron"), new Date()),
+        };
     const job = store.createCronjob({
       workspaceId,
       initiatedBy: requiredString(request.body.initiated_by, "initiated_by"),
@@ -9130,12 +9378,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       cron: requiredString(request.body.cron, "cron"),
       description: requiredString(request.body.description, "description"),
       instruction: optionalString(request.body.instruction) ?? requiredString(request.body.description, "description"),
-      enabled: optionalBoolean(request.body.enabled, true),
+      enabled: normalizedCronjobState.enabled,
       delivery: requiredDict(request.body.delivery, "delivery"),
-      metadata: cronjobMetadataWithRequestDefaults({
-        body: request.body,
-      }),
-      nextRunAt: cronjobNextRunAt(requiredString(request.body.cron, "cron"), new Date())
+      metadata: normalizedCronjobState.metadata,
+      nextRunAt: normalizedCronjobState.nextRunAt
     });
     return cronjobPayload(job);
   });
@@ -9246,6 +9492,30 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       hasOwn(request.body, "model") ||
       hasOwn(request.body, "selected_model") ||
       hasOwn(request.body, "session_id");
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+    const requestedEnabled =
+      hasOwn(request.body, "enabled")
+        ? optionalBoolean(request.body.enabled, false)
+        : cronjobAuthorRecommendedEnabled(existing);
+    const resolvedMetadata = metadataProvided
+      ? cronjobMetadataWithRequestDefaults({
+          body: request.body,
+          existingMetadata: existing.metadata,
+        })
+      : existing.metadata;
+    const normalizedCronjobState = isDraftLabWorkspace(workspace)
+      ? disableCronjobAutonomyForLab({
+          metadata: resolvedMetadata,
+          recommendedEnabled: requestedEnabled,
+        })
+      : {
+          enabled: hasOwn(request.body, "enabled") ? requestedEnabled : null,
+          metadata: metadataProvided ? resolvedMetadata : undefined,
+          nextRunAt: cron == null ? cron : cronjobNextRunAt(cron, new Date()),
+        };
     const job = store.updateCronjob({
       workspaceId,
       jobId: params.jobId,
@@ -9253,15 +9523,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       cron,
       description,
       instruction,
-      enabled: hasOwn(request.body, "enabled") ? optionalBoolean(request.body.enabled, false) : null,
+      enabled: normalizedCronjobState.enabled,
       delivery: hasOwn(request.body, "delivery") ? (optionalDict(request.body.delivery) ?? {}) : undefined,
-      metadata: metadataProvided
-        ? cronjobMetadataWithRequestDefaults({
-            body: request.body,
-            existingMetadata: existing.metadata,
-          })
-        : undefined,
-      nextRunAt: cron == null ? cron : cronjobNextRunAt(cron, new Date())
+      metadata: normalizedCronjobState.metadata,
+      nextRunAt: normalizedCronjobState.nextRunAt
     });
     if (!job) {
       return sendError(reply, 404, "Cronjob not found");

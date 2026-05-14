@@ -943,6 +943,71 @@ test("runtime tools capability routes expose local onboarding and cronjob action
   }
 });
 
+test("runtime tools cronjobs stay inert inside draft labs", async () => {
+  const root = makeTempDir("hb-runtime-api-runtime-tools-lab-cron-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "lab-1",
+    name: "Lab 1",
+    harness: "pi",
+    workspaceRole: "draft_lab",
+    labPurpose: "workspace_onboarding",
+    labStatus: "active",
+  });
+  const app = buildTestRuntimeApiServer({ store });
+  try {
+    const createdJob = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/cronjobs",
+      headers: {
+        "x-holaboss-workspace-id": "lab-1",
+        "x-holaboss-session-id": "session-main",
+      },
+      payload: {
+        cron: "0 9 * * *",
+        description: "Daily check",
+        delivery: { mode: "announce", channel: "session_run" },
+        enabled: true,
+      }
+    });
+    assert.equal(createdJob.statusCode, 200);
+    assert.equal(createdJob.json().enabled, false);
+    assert.equal(createdJob.json().next_run_at, null);
+    assert.deepEqual(createdJob.json().metadata, {
+      source_session_id: "session-main",
+      author_recommended_enabled: true,
+      lab_execution_disabled: true,
+    });
+
+    const updatedJob = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/capabilities/runtime-tools/cronjobs/${createdJob.json().id}`,
+      headers: {
+        "x-holaboss-workspace-id": "lab-1",
+      },
+      payload: {
+        description: "Updated check",
+        enabled: true,
+      }
+    });
+    assert.equal(updatedJob.statusCode, 200);
+    assert.equal(updatedJob.json().description, "Updated check");
+    assert.equal(updatedJob.json().enabled, false);
+    assert.equal(updatedJob.json().next_run_at, null);
+    assert.deepEqual(updatedJob.json().metadata, {
+      source_session_id: "session-main",
+      author_recommended_enabled: true,
+      lab_execution_disabled: true,
+    });
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
 test("runtime onboarding completion returns 409 workspace_folder_missing when the managed folder is gone", async () => {
   const root = makeTempDir("hb-runtime-api-onboarding-");
   const workspaceRoot = path.join(root, "workspace");
@@ -3493,6 +3558,25 @@ test("workspace lab routes create hidden drafts and merge accepted design state"
   assert.equal(createdPayload.source.onboarding_status, "pending");
   assert.equal(createdPayload.source.onboarding_session_id, createdPayload.session.session_id);
   assert.deepEqual(
+    store.listCronjobs({ workspaceId: createdPayload.lab.id }).map((job) => ({
+      id: job.id,
+      enabled: job.enabled,
+      nextRunAt: job.nextRunAt,
+      metadata: job.metadata,
+    })),
+    [
+      {
+        id: originalJob.id,
+        enabled: false,
+        nextRunAt: null,
+        metadata: {
+          author_recommended_enabled: true,
+          lab_execution_disabled: true,
+        },
+      },
+    ],
+  );
+  assert.deepEqual(
     store
       .listSessionMessages({
         workspaceId: createdPayload.lab.id,
@@ -3620,6 +3704,7 @@ test("workspace lab routes create hidden drafts and merge accepted design state"
     payload: { summary: "Accepted design" }
   });
   assert.equal(completed.statusCode, 200);
+  assert.equal(completed.json().lab.status, "archived");
   assert.equal(completed.json().lab.lab_status, "merged");
   assert.equal(completed.json().source.onboarding_status, "completed");
   assert.equal(completed.json().source.onboarding_completion_summary, "Accepted design");
@@ -3651,6 +3736,7 @@ test("workspace lab routes create hidden drafts and merge accepted design state"
     payload: { purpose: "meeting_mode" }
   });
   assert.equal(meeting.statusCode, 200);
+  assert.notEqual(meeting.json().lab.id, createdPayload.lab.id);
   assert.equal(meeting.json().session.kind, "meeting_mode");
   const abandoned = await app.inject({
     method: "POST",
@@ -3658,7 +3744,237 @@ test("workspace lab routes create hidden drafts and merge accepted design state"
     payload: { summary: "Discarded meeting lab" }
   });
   assert.equal(abandoned.statusCode, 200);
+  assert.equal(abandoned.json().lab.status, "archived");
   assert.equal(abandoned.json().lab.lab_status, "abandoned");
+  const archivedOnboardingSessions = store.listSessions({
+    workspaceId: createdPayload.lab.id,
+    includeArchived: true,
+    limit: 50,
+    offset: 0,
+  });
+  assert.ok(archivedOnboardingSessions.length >= 1);
+  assert.equal(
+    archivedOnboardingSessions.every((session) => Boolean(session.archivedAt)),
+    true,
+  );
+  const archivedMeetingSessions = store.listSessions({
+    workspaceId: meeting.json().lab.id,
+    includeArchived: true,
+    limit: 50,
+    offset: 0,
+  });
+  assert.ok(archivedMeetingSessions.length >= 1);
+  assert.equal(
+    archivedMeetingSessions.every((session) => Boolean(session.archivedAt)),
+    true,
+  );
+
+  await app.close();
+  store.close();
+});
+
+test("workspace lab keeps copied cronjobs inert and restores their recommended enabled state on merge", async () => {
+  const root = makeTempDir("hb-runtime-api-lab-cron-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const source = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Lab Source",
+    harness: "pi",
+    status: "active"
+  });
+  const sourceJob = store.createCronjob({
+    workspaceId: source.id,
+    jobId: "source-job",
+    initiatedBy: "workspace_agent",
+    name: "Source job",
+    cron: "0 8 * * *",
+    description: "Existing recurring work",
+    instruction: "Existing recurring work",
+    delivery: { mode: "announce", channel: "session_run", to: null },
+    enabled: true,
+    nextRunAt: "2026-05-15T00:00:00.000Z",
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const created = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspaces/${source.id}/labs`,
+    payload: { purpose: "workspace_onboarding" }
+  });
+  assert.equal(created.statusCode, 200);
+  const labId = created.json().lab.id as string;
+
+  assert.deepEqual(
+    store.listCronjobs({ workspaceId: labId }).map((job) => ({
+      id: job.id,
+      enabled: job.enabled,
+      nextRunAt: job.nextRunAt,
+      metadata: job.metadata,
+    })),
+    [
+      {
+        id: sourceJob.id,
+        enabled: false,
+        nextRunAt: null,
+        metadata: {
+          author_recommended_enabled: true,
+          lab_execution_disabled: true,
+        },
+      },
+    ],
+  );
+
+  const completed = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspace-labs/${labId}/complete`,
+    payload: { summary: "Accepted design" }
+  });
+  assert.equal(completed.statusCode, 200);
+
+  const mergedJob = store.getCronjob({ workspaceId: source.id, jobId: sourceJob.id });
+  assert.ok(mergedJob);
+  assert.equal(mergedJob.enabled, true);
+  assert.ok(mergedJob.nextRunAt);
+  assert.deepEqual(mergedJob.metadata, {
+    author_recommended_enabled: true,
+  });
+
+  await app.close();
+  store.close();
+});
+
+test("archiving a workspace lab stops registered apps and clears lab app runtime state", async () => {
+  const root = makeTempDir("hb-runtime-api-lab-archive-apps-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace"),
+  });
+  const stopCalls: Array<{ workspaceId?: string; appId: string; appDir?: string; hasResolvedApp: boolean }> = [];
+  const executor: AppLifecycleExecutorLike = {
+    async startApp() {
+      throw new Error("not used");
+    },
+    async stopApp(params) {
+      stopCalls.push({
+        workspaceId: params.workspaceId,
+        appId: params.appId,
+        appDir: params.appDir,
+        hasResolvedApp: Boolean(params.resolvedApp),
+      });
+      return {
+        app_id: params.appId,
+        status: "stopped",
+        detail: "stopped",
+        ports: {},
+      };
+    },
+    async shutdownAll() {
+      throw new Error("not used");
+    },
+  };
+  const app = buildTestRuntimeApiServer({ store, appLifecycleExecutor: executor });
+  const source = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Lab Source",
+    harness: "pi",
+    status: "active",
+  });
+  const sourceDir = store.workspaceDir(source.id);
+  const appId = "app-a";
+  const sourceAppDir = path.join(sourceDir, "apps", appId);
+  fs.mkdirSync(sourceAppDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(sourceDir, "workspace.yaml"),
+    `applications:\n  - app_id: ${appId}\n    config_path: apps/${appId}/app.runtime.yaml\n`,
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(sourceAppDir, "app.runtime.yaml"),
+    [
+      `app_id: ${appId}`,
+      "mcp:",
+      "  transport: http-sse",
+      "  port: 4100",
+      "  path: /mcp",
+      "healthchecks:",
+      "  mcp:",
+      "    path: /health",
+      "    timeout_s: 60",
+      "    interval_s: 5",
+      "lifecycle:",
+      "  setup: ''",
+      "  start: npm run start",
+      "  stop: npm run stop",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const onboarding = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspaces/${source.id}/labs`,
+    payload: { purpose: "workspace_onboarding" },
+  });
+  assert.equal(onboarding.statusCode, 200);
+  const onboardingLabId = onboarding.json().lab.id as string;
+  store.upsertAppBuild({ workspaceId: onboardingLabId, appId, status: "running" });
+  store.allocateAppPort({ workspaceId: onboardingLabId, appId: `${appId}__http` });
+  store.allocateAppPort({ workspaceId: onboardingLabId, appId: `${appId}__mcp` });
+  assert.equal(store.listAppPorts({ workspaceId: onboardingLabId }).length, 2);
+
+  const merged = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspace-labs/${onboardingLabId}/complete`,
+    payload: { summary: "Accepted design" },
+  });
+  assert.equal(merged.statusCode, 200);
+  assert.equal(store.getAppBuild({ workspaceId: onboardingLabId, appId })?.status, "stopped");
+  assert.equal(store.listAppPorts({ workspaceId: onboardingLabId }).length, 0);
+
+  const meeting = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspaces/${source.id}/labs`,
+    payload: { purpose: "meeting_mode" },
+  });
+  assert.equal(meeting.statusCode, 200);
+  const meetingLabId = meeting.json().lab.id as string;
+  store.upsertAppBuild({ workspaceId: meetingLabId, appId, status: "running" });
+  store.allocateAppPort({ workspaceId: meetingLabId, appId: `${appId}__http` });
+  store.allocateAppPort({ workspaceId: meetingLabId, appId: `${appId}__mcp` });
+  assert.equal(store.listAppPorts({ workspaceId: meetingLabId }).length, 2);
+
+  const abandoned = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspace-labs/${meetingLabId}/abandon`,
+    payload: { summary: "Discarded meeting lab" },
+  });
+  assert.equal(abandoned.statusCode, 200);
+  assert.equal(store.getAppBuild({ workspaceId: meetingLabId, appId })?.status, "stopped");
+  assert.equal(store.listAppPorts({ workspaceId: meetingLabId }).length, 0);
+  assert.deepEqual(
+    stopCalls.map((call) => ({
+      workspaceId: call.workspaceId,
+      appId: call.appId,
+      appDir: call.appDir ? path.relative(root, call.appDir) : undefined,
+      hasResolvedApp: call.hasResolvedApp,
+    })),
+    [
+      {
+        workspaceId: onboardingLabId,
+        appId,
+        appDir: path.relative(root, path.join(store.workspaceDir(onboardingLabId), "apps", appId)),
+        hasResolvedApp: true,
+      },
+      {
+        workspaceId: meetingLabId,
+        appId,
+        appDir: path.relative(root, path.join(store.workspaceDir(meetingLabId), "apps", appId)),
+        hasResolvedApp: true,
+      },
+    ],
+  );
 
   await app.close();
   store.close();
@@ -5288,6 +5604,67 @@ test("cronjobs, task proposals, and session state routes preserve local payload 
   assert.equal(acceptedMemoryProposal.json().proposal.persisted_memory_id, "user-preference:response-style");
   assert.equal(store.getMemoryEntry({ memoryId: "user-preference:response-style" })?.summary, "Prefer concise responses.");
   assert.equal(dismissedMemoryProposal.statusCode, 409);
+
+  await app.close();
+  store.close();
+});
+
+test("raw cronjob routes keep draft lab jobs disabled by default", async () => {
+  const root = makeTempDir("hb-runtime-api-lab-cron-routes-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+  const workspace = store.createWorkspace({
+    workspaceId: "lab-1",
+    name: "Lab Jobs",
+    harness: "pi",
+    status: "active",
+    workspaceRole: "draft_lab",
+    labPurpose: "workspace_onboarding",
+    labStatus: "active",
+  });
+
+  const createdJob = await app.inject({
+    method: "POST",
+    url: "/api/v1/cronjobs",
+    payload: {
+      workspace_id: workspace.id,
+      initiated_by: "workspace_agent",
+      cron: "0 9 * * *",
+      description: "Daily check",
+      instruction: "Say hello",
+      enabled: true,
+      delivery: { mode: "announce", channel: "session_run", to: null }
+    }
+  });
+  assert.equal(createdJob.statusCode, 200);
+  assert.equal(createdJob.json().enabled, false);
+  assert.equal(createdJob.json().next_run_at, null);
+  assert.deepEqual(createdJob.json().metadata, {
+    author_recommended_enabled: true,
+    lab_execution_disabled: true,
+  });
+  const jobId = createdJob.json().id as string;
+
+  const updatedJob = await app.inject({
+    method: "PATCH",
+    url: `/api/v1/cronjobs/${jobId}`,
+    payload: {
+      workspace_id: workspace.id,
+      description: "Updated check",
+      enabled: true,
+    }
+  });
+  assert.equal(updatedJob.statusCode, 200);
+  assert.equal(updatedJob.json().description, "Updated check");
+  assert.equal(updatedJob.json().enabled, false);
+  assert.equal(updatedJob.json().next_run_at, null);
+  assert.deepEqual(updatedJob.json().metadata, {
+    author_recommended_enabled: true,
+    lab_execution_disabled: true,
+  });
 
   await app.close();
   store.close();

@@ -99,7 +99,7 @@ test("workspace labs are hidden from normal workspace listing", () => {
   );
   assert.equal(store.getActiveWorkspaceLab(source.id)?.id, lab.id);
 
-  store.updateWorkspace(lab.id, { labStatus: "merged" });
+  store.updateWorkspace(lab.id, { status: "archived", labStatus: "merged" });
   assert.equal(store.getActiveWorkspaceLab(source.id), null);
   assert.deepEqual(
     store.listWorkspaceLabs({ sourceWorkspaceId: source.id, activeOnly: true }),

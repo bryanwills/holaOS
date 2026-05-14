@@ -1455,6 +1455,121 @@ test("claimed input writes completed subagent results and queues a background up
   store.close();
 });
 
+test("claimed input preserves subagent pending integration workspace ids for lifecycle payloads", async () => {
+  const store = makeStore("hb-claimed-input-subagent-pending-integrations-");
+  const workspace = store.createWorkspace({
+    workspaceId: "lab-workspace-1",
+    name: "Workspace 1 Lab",
+    harness: "pi",
+    status: "active",
+  });
+  const { queued, run } = createSubagentRunFixture({
+    store,
+    workspaceId: workspace.id,
+    title: "Start tracker app",
+    goal: "Bring up the tracker app and hand off auth",
+  });
+
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "tool_call",
+        payload: {
+          phase: "completed",
+          tool_name: "workspace_apps_ensure_running",
+          call_id: "call-ensure-1",
+          error: false,
+          result: {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    workspace_id: workspace.id,
+                    pending_integrations: [
+                      {
+                        workspace_id: workspace.id,
+                        app_id: "twitter-tracker",
+                        provider_id: "twitter",
+                        credential_source: "platform",
+                      },
+                    ],
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          },
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 3,
+        event_type: "output_delta",
+        payload: { delta: "Tracker is ready for the user to connect Twitter." },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 4,
+        event_type: "run_completed",
+        payload: { status: "ok" },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  const updatedRun = store.getSubagentRun({
+    workspaceId: run.workspaceId,
+    subagentId: run.subagentId,
+  });
+  const queuedEvents = store.listPendingMainSessionEvents({
+    workspaceId: workspace.id,
+    ownerMainSessionId: "session-main",
+  });
+
+  assert.equal(updatedRun?.resultPayload?.workspace_id, workspace.id);
+  assert.deepEqual(updatedRun?.resultPayload?.pending_integrations, [
+    {
+      workspace_id: workspace.id,
+      app_id: "twitter-tracker",
+      provider_id: "twitter",
+      credential_source: "platform",
+    },
+  ]);
+  assert.equal(queuedEvents[0]?.payload.workspace_id, workspace.id);
+  assert.deepEqual(queuedEvents[0]?.payload.pending_integrations, [
+    {
+      workspace_id: workspace.id,
+      app_id: "twitter-tracker",
+      provider_id: "twitter",
+      credential_source: "platform",
+    },
+  ]);
+
+  store.close();
+});
+
 test("claimed input writes waiting-on-user subagent blockers and queues a blocker event", async () => {
   const store = makeStore("hb-claimed-input-subagent-waiting-");
   const workspace = store.createWorkspace({
