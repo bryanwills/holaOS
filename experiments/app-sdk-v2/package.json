@@ -1,0 +1,19 @@
+{
+  "name": "@holaboss/app-sdk-v2-experiment",
+  "version": "0.0.1",
+  "description": "Experimental rebuild of Holaboss app SDK around 5 orthogonal primitives.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "example": "bun run examples/pinterest/run.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.4.0",
+    "zod": "^3.23.0"
+  },
+  "dependencies": {
+    "zod": "^3.23.0"
+  }
+}
