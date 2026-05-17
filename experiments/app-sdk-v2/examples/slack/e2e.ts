@@ -13,7 +13,7 @@
 
 import { buildSlackApp } from "./app.ts"
 import { createBridge, type BridgeClient } from "../../src/index.ts"
-import { SLACK } from "../../src/providers/slack.ts"
+import { SLACK } from "./provider.ts"
 import { createComposioDirectTransport } from "../../src/bridge-transports/composio-direct.ts"
 import type { AppHandleInternal } from "../../src/app.ts"
 

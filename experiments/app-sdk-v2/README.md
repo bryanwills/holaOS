@@ -8,6 +8,42 @@ compile-time guardrails, and no scheduling/retry concerns leaking into app code.
 **This is not production code.** It is a spike with passing end-to-end tests
 to validate the API surface before integrating into the real Holaboss runtime.
 
+## What's the SDK, what isn't
+
+```
+src/                      ← THE SDK — ~11 files, ~1100 lines. Touched only
+│                            by SDK maintainers; agents adding apps NEVER
+│                            modify this directory.
+├── index.ts                public exports
+├── types.ts                all type definitions
+├── app.ts                  createApp + 5 primitive registrars
+├── bridge.ts               BridgeClient + createBridge (transport contract)
+├── bridge-transports/      optional transport adapters (bearer / composio-direct)
+└── runtime/                internal execution: action-runner, sync-runner,
+                            state, db-view
+
+examples/<app>/           ← APP MODULES — fully self-contained. Each app
+│                            owns its provider, business logic, tests, e2e.
+│                            Adding a new platform = create one new directory
+│                            here. SDK doesn't change.
+├── provider.ts             ProviderRegistry constant (baseUrl, allowedHosts, ...)
+├── app.ts                  business logic (createApp + resource/action calls)
+├── SKILL.md                provider-specific quirks for future agents (optional
+│                            but high-value — see examples/slack/SKILL.md)
+├── e2e.ts                  real-API end-to-end runner (optional)
+└── (other files as the app needs)
+
+test/<app>.test.ts        ← UNIT TESTS — mock transport, no network.
+```
+
+**This layout means**:
+- Marketplace / third-party / agent-generated apps live entirely in
+  `examples/<app>/` (or wherever the host runtime mounts them).
+- SDK is independently versioned; an app pinning SDK 1.2.0 doesn't have to
+  upgrade to use a new app authored against SDK 1.3.0.
+- Per-provider quirks (the 60s window in Slack, etc.) are documented in
+  `SKILL.md` so the next agent writing a similar module finds them.
+
 ## The 5 primitives
 
 ```ts

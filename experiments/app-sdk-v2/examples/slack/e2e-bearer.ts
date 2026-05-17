@@ -10,7 +10,7 @@
 
 import { buildSlackApp } from "./app.ts"
 import { createBridge } from "../../src/bridge.ts"
-import { SLACK } from "../../src/providers/slack.ts"
+import { SLACK } from "./provider.ts"
 import { createBearerTokenTransport } from "../../src/bridge-transports/bearer.ts"
 import type { AppHandleInternal } from "../../src/app.ts"
 

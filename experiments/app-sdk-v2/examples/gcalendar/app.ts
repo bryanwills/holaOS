@@ -5,7 +5,7 @@
 // run later" concept — that lives in Holaboss automations.
 
 import { createApp, z } from "../../src/index.ts"
-import { GCALENDAR } from "../../src/providers/gcalendar.ts"
+import { GCALENDAR } from "./provider.ts"
 
 export function buildGcalendarApp() {
   const app = createApp({

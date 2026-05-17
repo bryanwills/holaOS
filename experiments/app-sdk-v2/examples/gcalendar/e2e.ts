@@ -17,7 +17,7 @@
 
 import { buildGcalendarApp } from "./app.ts"
 import { createBridge, type BridgeClient } from "../../src/index.ts"
-import { GCALENDAR } from "../../src/providers/gcalendar.ts"
+import { GCALENDAR } from "./provider.ts"
 import { createComposioDirectTransport } from "../../src/bridge-transports/composio-direct.ts"
 import type { AppHandleInternal } from "../../src/app.ts"
 

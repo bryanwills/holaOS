@@ -1,7 +1,7 @@
 // Pinterest — publishing-shape app with multi-step publish.
 
 import { createApp, z } from "../../src/index.ts"
-import { PINTEREST } from "../../src/providers/pinterest.ts"
+import { PINTEREST } from "./provider.ts"
 
 export function buildPinterestApp() {
   const app = createApp({

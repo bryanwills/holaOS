@@ -5,7 +5,7 @@
 
 import { buildSlackApp } from "./app.ts"
 import { createBridge, type TransportFn } from "../../src/bridge.ts"
-import { SLACK } from "../../src/providers/slack.ts"
+import { SLACK } from "./provider.ts"
 import type { AppHandleInternal } from "../../src/app.ts"
 
 // Fake Slack — scripts replies. Real impl would call /broker/proxy.

@@ -1,4 +1,4 @@
-import type { ProviderRegistry } from "../types.ts"
+import type { ProviderRegistry } from "../../src/types.ts"
 
 export const SLACK: ProviderRegistry = {
   id: "slack",

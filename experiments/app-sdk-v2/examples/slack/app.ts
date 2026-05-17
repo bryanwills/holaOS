@@ -11,7 +11,7 @@
 // use the channel id Slack actually addresses, not the user_id.
 
 import { createApp, z, type ProxyResult, type BridgeError } from "../../src/index.ts"
-import { SLACK } from "../../src/providers/slack.ts"
+import { SLACK } from "./provider.ts"
 
 // Slack returns its own errors in body.ok / body.error.
 type SlackBody = { ok?: boolean; error?: string; [k: string]: unknown }

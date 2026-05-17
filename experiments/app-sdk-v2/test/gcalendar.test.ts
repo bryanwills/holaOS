@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test"
 import { createBridge, type TransportFn } from "../src/bridge.ts"
-import { GCALENDAR } from "../src/providers/gcalendar.ts"
+import { GCALENDAR } from "../examples/gcalendar/provider.ts"
 import { buildGcalendarApp } from "../examples/gcalendar/app.ts"
 import type { AppHandleInternal } from "../src/app.ts"
 

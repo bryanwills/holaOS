@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test"
 import { createBridge, type TransportFn } from "../src/bridge.ts"
-import { GITHUB } from "../src/providers/github.ts"
+import { GITHUB } from "../examples/github-issues/provider.ts"
 import { buildGithubIssuesApp } from "../examples/github-issues/app.ts"
 import type { AppHandleInternal } from "../src/app.ts"
 

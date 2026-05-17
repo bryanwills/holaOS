@@ -1,7 +1,7 @@
 // GitHub Issues — workflow lifecycle + side-effect actions.
 
 import { createApp, z } from "../../src/index.ts"
-import { GITHUB } from "../../src/providers/github.ts"
+import { GITHUB } from "./provider.ts"
 
 export function buildGithubIssuesApp() {
   const app = createApp({

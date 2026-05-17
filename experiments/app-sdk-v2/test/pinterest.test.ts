@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test"
 import { createBridge, type TransportFn } from "../src/bridge.ts"
-import { PINTEREST } from "../src/providers/pinterest.ts"
+import { PINTEREST } from "../examples/pinterest/provider.ts"
 import { buildPinterestApp } from "../examples/pinterest/app.ts"
 import type { AppHandleInternal } from "../src/app.ts"
 

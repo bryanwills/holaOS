@@ -61,6 +61,21 @@ export interface ProviderRegistry {
 
 export type Infer<TSchema extends ZodTypeAny> = z.infer<TSchema>
 
+/**
+ * Row shape exposed to step.run / emit / db callbacks.
+ *
+ * external_id is intentionally typed as `string` (not string | number).
+ * Many provider APIs return integer IDs (Telegram message_id, GitHub issue
+ * number, Reddit post id). Stringify them on persist; cast back at the
+ * upstream call site:
+ *
+ *     // Telegram example:
+ *     return { ok: true, externalId: String(r.data.message_id) }
+ *     // ...later:
+ *     await bridge.call("POST", "/editMessageText", {
+ *       message_id: Number(row.external_id), ...
+ *     })
+ */
 export type RowOf<TSchema extends ZodTypeAny> = Infer<TSchema> & {
   id: string
   status: string
