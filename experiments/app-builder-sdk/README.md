@@ -1,4 +1,11 @@
-# app-sdk-v2 — Experimental Holaboss app SDK
+# @holaboss/app-builder-sdk — Holaboss app module SDK (experimental)
+
+> Distinct from `@holaboss/app-sdk` (the generated product API client) and
+> `@holaboss/bridge` (the legacy app SDK that pre-dates this redesign).
+> This package is what new Holaboss app modules are built against. The
+> existing `app-builder` skill in `runtime/harnesses/src/embedded-skills/`
+> will be updated to know about this SDK once it reaches production runtime
+> integration.
 
 A TypeScript prototype rebuilding the Holaboss app SDK around **5 orthogonal
 primitives**. The goal: let agents author apps of any shape (publishing,
@@ -70,16 +77,19 @@ ActionDef / SyncDef doc comments for the SDK ↔ Automations boundary.
 | File | Shape | Tests |
 |---|---|---|
 | [`examples/pinterest/app.ts`](./examples/pinterest/app.ts) | publishing (multi-step + reversible) | 5 |
-| [`examples/slack/app.ts`](./examples/slack/app.ts) | messaging (custom states, side-effect react) | 7 |
+| [`examples/slack/app.ts`](./examples/slack/app.ts) | messaging (custom states, side-effect react, 3 prod quirks fixed) | 11 |
 | [`examples/github-issues/app.ts`](./examples/github-issues/app.ts) | workflow (6-state lifecycle) | 7 |
 | [`examples/gcalendar/app.ts`](./examples/gcalendar/app.ts) | event-with-time (RSVP, recurring) | 9 |
-| `test/sync.test.ts` | sync E2E across 3 apps | 6 |
+| [`examples/telegram/app.ts`](./examples/telegram/app.ts) | messaging (cold-subagent-built; integer IDs; no schedule) | 9 |
+| `test/sync.test.ts` | sync E2E across 3 apps | 8 |
 | `test/agent-mistakes.test.ts` | compile + runtime double-guard | 8 |
-| **Total** | **4 distinct app shapes** | **42 / 167 expect / 0 fail** |
+| `test/sqlite-backend.test.ts` | SqliteStateBackend parity + persistence + isolation + integration | 4 |
+| `test/emit-context.test.ts` | emit row.id/status/external_id regression lock | 1 |
+| **Total** | **5 example apps + Iter 1 persistence** | **63 / 247 expect / 0 fail / tsc clean** |
 
 ```bash
 bun install
-bun test           # 45 pass / 0 fail
+bun test           # 63 pass / 0 fail
 bunx tsc --noEmit  # clean
 ```
 
@@ -105,7 +115,7 @@ separate from this SDK.
 ## Real E2E (single command, no Holaboss backend required)
 
 ```bash
-cd experiments/app-sdk-v2
+cd experiments/app-builder-sdk
 export COMPOSIO_API_KEY=ck_...
 export COMPOSIO_SLACK_ACCOUNT_ID=ca_...   # from workspace.db, see e2e.ts header
 export TEST_SLACK_CHANNEL=C0123ABCD

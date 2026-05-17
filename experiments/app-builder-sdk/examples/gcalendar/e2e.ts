@@ -152,7 +152,7 @@ await scenario("draft → confirmed; event appears in calendar with externalId +
   const row = app._state.insertRow("event", {
     calendar_id: CALENDAR_ID,
     summary: `[E2E ${stamp()}] create scenario`,
-    description: "Auto-created by app-sdk-v2 e2e — safe to ignore.",
+    description: "Auto-created by app-builder-sdk e2e — safe to ignore.",
     ...times,
   }, "draft")
   expect(app._state.getRow(row.id)?.status).toBe("draft", "row.status initial")
