@@ -105,7 +105,7 @@ Bundled options under `src/bridge-transports/`:
 |---|---|---|
 | `createBearerTokenTransport` | **Self-host OAuth** — you manage tokens (Auth0 / Clerk / your own auth server / manual). | `accessToken: string \| (() => Promise<string>)` |
 | `createComposioDirectTransport` | Composio managed auth, no broker hop. Good for single-tenant deploys, local dev, E2E. | `COMPOSIO_API_KEY` + `connectedAccountId` |
-| *(future)* `createBrokerProxyTransport` | Production sandbox via Holaboss runtime + grant. Same model as `@holaboss/bridge`. | `brokerUrl` + `grant` |
+| `createRuntimeBrokerTransport` | **Production** — running inside Holaboss runtime sandbox. Same `/broker/proxy` + grant model as `@holaboss/bridge`. | `provider` + env `HOLABOSS_INTEGRATION_BROKER_URL` + `HOLABOSS_APP_GRANT` (auto-resolved) |
 | Roll your own | Custom auth (Vault, mTLS, internal gateway). | Implement ~20 lines of `fetch` returning `{ status, body, headers }`. |
 
 Bundled transports never call Holaboss backend / Hono. Production runtime

@@ -1,12 +1,23 @@
-// Public API surface for @holaboss/app-sdk v2 experiment.
+// Public API surface for @holaboss/app-builder-sdk.
 
+// Core
 export { createApp } from "./app.ts"
 export type { CreateAppOptions } from "./app.ts"
 export { createBridge } from "./bridge.ts"
 export type { TransportFn } from "./bridge.ts"
+export { z } from "zod"
+
+// State backends
 export { SqliteStateBackend } from "./runtime/state-backend-sqlite.ts"
 export type { SqliteStateBackendOpts } from "./runtime/state-backend-sqlite.ts"
-export { z } from "zod"
+
+// Bridge transports (pick the one that matches your deployment)
+export { createBearerTokenTransport } from "./bridge-transports/bearer.ts"
+export type { BearerTokenOpts } from "./bridge-transports/bearer.ts"
+export { createComposioDirectTransport } from "./bridge-transports/composio-direct.ts"
+export type { ComposioDirectOpts } from "./bridge-transports/composio-direct.ts"
+export { createRuntimeBrokerTransport } from "./bridge-transports/runtime-broker.ts"
+export type { RuntimeBrokerOpts } from "./bridge-transports/runtime-broker.ts"
 
 export type {
   AppHandle,
