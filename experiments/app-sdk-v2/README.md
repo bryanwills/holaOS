@@ -28,8 +28,9 @@ examples/<app>/           ← APP MODULES — fully self-contained. Each app
 │                            here. SDK doesn't change.
 ├── provider.ts             ProviderRegistry constant (baseUrl, allowedHosts, ...)
 ├── app.ts                  business logic (createApp + resource/action calls)
-├── SKILL.md                provider-specific quirks for future agents (optional
-│                            but high-value — see examples/slack/SKILL.md)
+│                            Per-provider quirks (Slack body.ok pattern, 60s
+│                            window, etc.) are inline comments at the call
+│                            site they apply to — single source of truth.
 ├── e2e.ts                  real-API end-to-end runner (optional)
 └── (other files as the app needs)
 
@@ -41,8 +42,15 @@ test/<app>.test.ts        ← UNIT TESTS — mock transport, no network.
   `examples/<app>/` (or wherever the host runtime mounts them).
 - SDK is independently versioned; an app pinning SDK 1.2.0 doesn't have to
   upgrade to use a new app authored against SDK 1.3.0.
-- Per-provider quirks (the 60s window in Slack, etc.) are documented in
-  `SKILL.md` so the next agent writing a similar module finds them.
+
+> Note on Holaboss "skills": this SDK does NOT define a per-app SKILL.md
+> convention — the real Holaboss skill system lives at
+> `runtime/harnesses/src/embedded-skills/<skill-id>/SKILL.md` (system-wide,
+> with frontmatter) and `<workspace>/skills/<skill-id>/SKILL.md`
+> (workspace-local, created via the `skill-creator` skill). Provider quirks
+> stay as code comments in `app.ts`; the existing `app-builder` skill needs
+> an update — to know about the 5-primitive v2 SDK shape — when v2 SDK
+> reaches production runtime integration.
 
 ## The 5 primitives
 
