@@ -29,6 +29,20 @@ export interface BridgeClient {
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
 
+// ─── Transport contract ────────────────────────────────────────────────────
+//
+// The SDK is transport-agnostic. BridgeClient delegates the actual network
+// I/O to a TransportFn — the SDK never assumes Hono, Composio, OAuth, or any
+// specific authentication mechanism.
+//
+// Bundled transport adapters live under src/bridge-transports/:
+//   - bearer.ts            — self-host OAuth (bring your own access token)
+//   - composio-direct.ts   — Composio managed auth, no Holaboss backend in path
+//
+// You can write your own: a TransportFn is just (req) => Promise<response>.
+// Put your auth headers / proxy / vault token resolution there. The SDK only
+// cares that the response shape comes back populated.
+
 // ─── Provider Registry ─────────────────────────────────────────────────────
 
 export interface ProviderRegistry {

@@ -35,9 +35,41 @@ ActionDef / SyncDef doc comments for the SDK ↔ Automations boundary.
 
 ```bash
 bun install
-bun test           # 42 pass / 0 fail
+bun test           # 45 pass / 0 fail
 bunx tsc --noEmit  # clean
 ```
+
+## Transports — the SDK is auth-mechanism agnostic
+
+The SDK never assumes Hono, Composio, OAuth, or any specific provider. The
+`BridgeClient` delegates network I/O to a `TransportFn` (`(req) => response`).
+You pick the transport that matches your deployment.
+
+Bundled options under `src/bridge-transports/`:
+
+| Transport | When to use | What you supply |
+|---|---|---|
+| `createBearerTokenTransport` | **Self-host OAuth** — you manage tokens (Auth0 / Clerk / your own auth server / manual). | `accessToken: string \| (() => Promise<string>)` |
+| `createComposioDirectTransport` | Composio managed auth, no broker hop. Good for single-tenant deploys, local dev, E2E. | `COMPOSIO_API_KEY` + `connectedAccountId` |
+| *(future)* `createBrokerProxyTransport` | Production sandbox via Holaboss runtime + grant. Same model as `@holaboss/bridge`. | `brokerUrl` + `grant` |
+| Roll your own | Custom auth (Vault, mTLS, internal gateway). | Implement ~20 lines of `fetch` returning `{ status, body, headers }`. |
+
+Bundled transports never call Holaboss backend / Hono. Production runtime
+integrations are wired by the runtime team via the broker-proxy pattern; that's
+separate from this SDK.
+
+## Real E2E (single command, no Holaboss backend required)
+
+```bash
+cd experiments/app-sdk-v2
+export COMPOSIO_API_KEY=ck_...
+export COMPOSIO_SLACK_ACCOUNT_ID=ca_...   # from workspace.db, see e2e.ts header
+export TEST_SLACK_CHANNEL=C0123ABCD
+bun run examples/slack/e2e.ts
+```
+
+Sends real messages to your Slack workspace via `createComposioDirectTransport`.
+Watch Slack — message + edit + 🚀 reaction should appear within seconds.
 
 ## What's in scope
 

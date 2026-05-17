@@ -84,7 +84,12 @@ export function createApp(config: AppConfig): AppHandleInternal {
       states: def.states,
       schema: def.schema,
       def,
-      ref: () => z.string().brand<typeof name>(),
+      // ref() returns plain z.string() (NOT branded). Branding broke round-trip
+      // updates — provider responses come back as plain strings and couldn't
+      // satisfy the brand, forcing `as` casts at every persist call.
+      // The semantic "this is an <X> id" is documented by the field name +
+      // schema location; type-system enforcement adds more friction than value.
+      ref: () => z.string(),
     }
     resources.set(name, handle)
     return handle
@@ -279,10 +284,15 @@ export function createApp(config: AppConfig): AppHandleInternal {
         toState: reg.def.reversible.toState,
         run: reg.def.reversible.run,
       }
+      // Pass a resourceDef WITHOUT failedState: if reverse fails, the row
+      // stays in its current state (the forward action's toState) because
+      // upstream reality hasn't changed — the thing we tried to undo is still
+      // in effect. The error is recorded via errorMessage + notification.
+      const reverseResourceDef = { ...reg.resource.def, failedState: undefined }
       return runAction({
         appId: config.id,
         resourceName: reg.resource.name,
-        resourceDef: reg.resource.def,
+        resourceDef: reverseResourceDef,
         actionName: `cancel_${reg.name}`,
         actionDef: reverseDef,
         rowId,

@@ -1,7 +1,33 @@
 // Slack — messaging app. Declares its own state alphabet.
+//
+// Important Slack-specific contract: Slack returns errors as HTTP 200 with
+// { ok: false, error: "..." } in the body, NOT as 4xx/5xx. SDK's BridgeClient
+// only maps HTTP status to typed errors, so each action must additionally
+// check r.data.ok via `slackUnwrap` below.
+//
+// Important Slack-specific behavior: when channel_id is a user_id (DM-self),
+// Slack auto-resolves it to a DM channel id ("D0..."). The response carries
+// that resolved channel; we persist it back so subsequent edit/delete/react
+// use the channel id Slack actually addresses, not the user_id.
 
-import { createApp, z } from "../../src/index.ts"
+import { createApp, z, type ProxyResult, type BridgeError } from "../../src/index.ts"
 import { SLACK } from "../../src/providers/slack.ts"
+
+// Slack returns its own errors in body.ok / body.error.
+type SlackBody = { ok?: boolean; error?: string; [k: string]: unknown }
+
+function slackUnwrap<T extends SlackBody>(
+  r: ProxyResult<T>,
+):
+  | { ok: true; data: T }
+  | { ok: false; fail: BridgeError | { kind: "error"; code: string; message: string } } {
+  if (r.kind === "error") return { ok: false, fail: r }
+  if (r.data.ok === false) {
+    const code = r.data.error ?? "slack_error"
+    return { ok: false, fail: { kind: "error", code, message: code } }
+  }
+  return { ok: true, data: r.data }
+}
 
 export function buildSlackApp() {
   const app = createApp({
@@ -23,11 +49,12 @@ export function buildSlackApp() {
     emit: { surface: "none" },
     refreshEvery: "1h",
     fetch: async ({ bridge }) => {
-      const r = await bridge.call<{ channels: { id: string; name: string; is_private?: boolean }[] }>(
-        "GET", "/conversations.list",
-      )
-      if (r.kind === "error") throw r
-      return r.data.channels
+      const r = await bridge.call<SlackBody & {
+        channels?: { id: string; name: string; is_private?: boolean }[]
+      }>("GET", "/conversations.list")
+      const u = slackUnwrap(r)
+      if (!u.ok) throw u.fail
+      return u.data.channels ?? []
     },
   })
 
@@ -36,7 +63,7 @@ export function buildSlackApp() {
       channel_id: channel.ref(),
       text: z.string().max(40_000),
       thread_ts: z.string().optional(),
-      post_at: z.number().optional(),       // checkpoint for schedule_send
+      post_at: z.number().optional(),
     }),
     states: ["draft", "scheduled", "sent", "edited", "deleted", "failed"] as const,
     initialState: "draft",
@@ -53,13 +80,19 @@ export function buildSlackApp() {
   app.action(message, "send_message", {
     fromStates: ["draft"],
     toState: "sent",
-    run: async ({ row, bridge }) => {
-      const r = await bridge.call<{ ok: boolean; ts: string; channel: string }>(
+    run: async ({ row, bridge, persist }) => {
+      const r = await bridge.call<SlackBody & { ts?: string; channel?: string }>(
         "POST", "/chat.postMessage",
         { channel: row.channel_id, text: row.text, thread_ts: row.thread_ts },
       )
-      if (r.kind === "error") return { fail: r }
-      return { ok: true, externalId: r.data.ts }
+      const u = slackUnwrap(r)
+      if (!u.ok) return { fail: u.fail }
+      // Slack DM auto-resolution: when input channel is a user_id, the response
+      // carries the actual DM channel id ("D0..."). Persist it for subsequent ops.
+      if (u.data.channel && u.data.channel !== row.channel_id) {
+        await persist({ channel_id: u.data.channel })
+      }
+      return { ok: true, externalId: u.data.ts }
     },
   })
 
@@ -70,22 +103,36 @@ export function buildSlackApp() {
     reversible: {
       toState: "draft",
       run: async ({ row, bridge }) => {
-        const r = await bridge.call("POST", "/chat.deleteScheduledMessage", {
+        // Slack-specific: this WILL fail with invalid_scheduled_message_id if
+        // less than 60 seconds remain before post_at. Schedule with sufficient
+        // lead time to give the cancel a chance. Agent should propagate the
+        // error and let the user know they hit the window.
+        const r = await bridge.call<SlackBody>("POST", "/chat.deleteScheduledMessage", {
           channel: row.channel_id,
           scheduled_message_id: row.external_id,
         })
-        if (r.kind === "error" && r.code !== "not_found") return { fail: r }
+        const u = slackUnwrap(r)
+        if (!u.ok) return { fail: u.fail }
         return { ok: true }
       },
     },
     run: async ({ row, input, bridge, persist }) => {
-      const r = await bridge.call<{ ok: boolean; scheduled_message_id: string; post_at: number }>(
-        "POST", "/chat.scheduleMessage",
-        { channel: row.channel_id, text: row.text, post_at: input.post_at, thread_ts: row.thread_ts },
-      )
-      if (r.kind === "error") return { fail: r }
-      await persist({ post_at: r.data.post_at })
-      return { ok: true, externalId: r.data.scheduled_message_id }
+      const r = await bridge.call<SlackBody & {
+        scheduled_message_id?: string; post_at?: number; channel?: string
+      }>("POST", "/chat.scheduleMessage", {
+        channel: row.channel_id, text: row.text, post_at: input.post_at, thread_ts: row.thread_ts,
+      })
+      const u = slackUnwrap(r)
+      if (!u.ok) return { fail: u.fail }
+      // Persist the DM-resolved channel id. chat.scheduledMessages.list
+      // verifies the scheduled message is keyed under this channel, so the
+      // delete must use it too. (Note: cancel will only succeed if invoked
+      // more than 60 seconds before post_at — Slack's hard rule.)
+      const patch: { post_at?: number; channel_id?: string } = {}
+      if (u.data.post_at) patch.post_at = u.data.post_at
+      if (u.data.channel && u.data.channel !== row.channel_id) patch.channel_id = u.data.channel
+      if (Object.keys(patch).length) await persist(patch)
+      return { ok: true, externalId: u.data.scheduled_message_id }
     },
   })
 
@@ -94,10 +141,11 @@ export function buildSlackApp() {
     toState: "edited",
     schema: z.object({ text: z.string().min(1).max(40_000) }),
     run: async ({ row, input, bridge, persist }) => {
-      const r = await bridge.call("POST", "/chat.update", {
+      const r = await bridge.call<SlackBody>("POST", "/chat.update", {
         channel: row.channel_id, ts: row.external_id, text: input.text,
       })
-      if (r.kind === "error") return { fail: r }
+      const u = slackUnwrap(r)
+      if (!u.ok) return { fail: u.fail }
       await persist({ text: input.text })
       return { ok: true }
     },
@@ -108,10 +156,12 @@ export function buildSlackApp() {
     toState: "deleted",
     run: async ({ row, bridge }) => {
       if (row.external_id) {
-        const r = await bridge.call("POST", "/chat.delete", {
+        const r = await bridge.call<SlackBody>("POST", "/chat.delete", {
           channel: row.channel_id, ts: row.external_id,
         })
-        if (r.kind === "error" && r.code !== "not_found") return { fail: r }
+        const u = slackUnwrap(r)
+        // Propagate all errors (including not_found) — let the agent decide.
+        if (!u.ok) return { fail: u.fail }
       }
       return { ok: true }
     },
@@ -123,10 +173,11 @@ export function buildSlackApp() {
     toolName: "slack_react",
     schema: z.object({ emoji: z.string().min(1) }),
     run: async ({ row, input, bridge }) => {
-      const r = await bridge.call("POST", "/reactions.add", {
+      const r = await bridge.call<SlackBody>("POST", "/reactions.add", {
         channel: row.channel_id, timestamp: row.external_id, name: input.emoji,
       })
-      if (r.kind === "error") return { fail: r }
+      const u = slackUnwrap(r)
+      if (!u.ok) return { fail: u.fail }
       return { ok: true }
     },
   })
@@ -135,11 +186,12 @@ export function buildSlackApp() {
     schedule: "0 * * * *",
     attachTo: channel,
     fetch: async ({ bridge }) => {
-      const r = await bridge.call<{ channels: { id: string; name: string }[] }>(
+      const r = await bridge.call<SlackBody & { channels?: { id: string; name: string }[] }>(
         "GET", "/conversations.list",
       )
-      if (r.kind === "error") return { ok: false, error: r }
-      return { ok: true, items: r.data.channels }
+      const u = slackUnwrap(r)
+      if (!u.ok) return { ok: false, error: u.fail }
+      return { ok: true, items: u.data.channels ?? [] }
     },
     upsert: { key: "id" },
     normalize: raw => ({ id: raw.id, name: raw.name }),
