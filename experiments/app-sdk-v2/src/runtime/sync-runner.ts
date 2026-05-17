@@ -6,8 +6,7 @@
 // "upstream failed" (ok: false) — the latter triggers app.notify and reports
 // failure to the caller so automations can retry intelligently.
 
-import type { BridgeClient, ResourceHandle, SyncDef } from "../types.ts"
-import type { RuntimeState } from "./state.ts"
+import type { BridgeClient, ResourceHandle, StateBackend, SyncDef } from "../types.ts"
 import { createDbView } from "./db-view.ts"
 
 interface RunSyncOpts {
@@ -15,7 +14,7 @@ interface RunSyncOpts {
   syncName: string
   syncDef: SyncDef<any, any, any>
   bridge: BridgeClient
-  state: RuntimeState
+  state: StateBackend
 }
 
 export interface SyncRunResult {

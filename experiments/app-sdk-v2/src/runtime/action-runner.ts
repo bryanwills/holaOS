@@ -7,11 +7,11 @@ import type {
   BridgeClient,
   EmitConfig,
   ResourceDef,
+  StateBackend,
   Step,
   StepResult,
 } from "../types.ts"
 import type { ZodTypeAny } from "zod"
-import type { RuntimeState } from "./state.ts"
 
 interface RunOpts {
   resourceName: string
@@ -21,7 +21,7 @@ interface RunOpts {
   rowId: string
   input: Record<string, unknown>
   bridge: BridgeClient
-  state: RuntimeState
+  state: StateBackend
   appId: string
 }
 
@@ -167,7 +167,7 @@ export async function runAction(
 }
 
 function syncOutput(
-  state: RuntimeState,
+  state: StateBackend,
   resourceName: string,
   rowId: string,
   emit: EmitConfig<any> | undefined,

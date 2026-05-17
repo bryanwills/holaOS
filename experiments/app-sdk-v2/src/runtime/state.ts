@@ -1,4 +1,8 @@
-// In-memory state stores for the experimental runtime.
+// In-memory implementation of StateBackend.
+//
+// Used by default in tests and dev. Production runtime should inject
+// SqliteStateBackend (see state-backend-sqlite.ts) which persists to
+// workspace.db + Holaboss runtime state-store.
 
 import type {
   AppState,
@@ -6,11 +10,20 @@ import type {
   NotificationEntry,
   OutputCard,
   RowRecord,
+  StateBackend,
   SyncRecord,
   TurnContext,
 } from "../types.ts"
 
-export class RuntimeState {
+/**
+ * In-memory StateBackend. Public fields (rows / audit / outputs / etc.)
+ * are exposed for test inspection convenience — production callers should
+ * go through the StateBackend interface methods.
+ *
+ * Name kept as `RuntimeState` for backward compatibility with existing
+ * test code accessing `app._state` properties directly.
+ */
+export class RuntimeState implements StateBackend {
   rows: RowRecord[] = []
   audit: AuditEntry[] = []
   outputs: OutputCard[] = []

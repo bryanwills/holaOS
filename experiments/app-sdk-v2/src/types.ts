@@ -309,6 +309,42 @@ export interface AppState {
   derivedTools: DerivedTool[]
 }
 
+// ─── State backend contract ────────────────────────────────────────────────
+//
+// All persistence (rows, audit, outputs, notifications, sync records) goes
+// through this interface. The SDK ships two implementations:
+//   - InMemoryStateBackend (the default) — testing + dev
+//   - SqliteStateBackend (in `runtime/state-backend-sqlite.ts`) — production
+//     deploy, persists to workspace.db + Holaboss runtime state-store
+//
+// createApp() accepts an optional `backend?: StateBackend` so production
+// runtime can inject SQLite without breaking unit tests' in-memory shape.
+
+export interface StateBackend {
+  setTurnContext(ctx: TurnContext | null): void
+
+  // Row CRUD (per-resource rows)
+  insertRow(resource: string, data: Record<string, unknown>, status: string): RowRecord
+  updateRow(id: string, patch: Partial<RowRecord>): RowRecord
+  getRow(id: string): RowRecord | undefined
+  rowsByResource(resource: string): RowRecord[]
+
+  // Audit log
+  pushAudit(event: AuditEntry["event"], fields: Record<string, unknown>): void
+
+  // Dashboard outputs
+  upsertOutput(card: Omit<OutputCard, "updatedAt">): void
+
+  // Notifications (push to user / agent next turn)
+  pushNotification(n: Omit<NotificationEntry, "at">): void
+
+  // Sync records (periodic data pulls)
+  upsertSyncRecord(rec: Omit<SyncRecord, "syncedAt">): void
+
+  // Snapshot for tests / inspection
+  snapshot(): AppState
+}
+
 export interface TurnContext {
   turnId: string
   sessionId: string

@@ -1,14 +1,14 @@
 // GitHub Issues — workflow lifecycle + side-effect actions.
 
-import { createApp, z } from "../../src/index.ts"
+import { createApp, z, type CreateAppOptions } from "../../src/index.ts"
 import { GITHUB } from "./provider.ts"
 
-export function buildGithubIssuesApp() {
+export function buildGithubIssuesApp(options: CreateAppOptions = {}) {
   const app = createApp({
     id: "github",
     provider: GITHUB,
     description: "GitHub issue triage & lifecycle",
-  })
+  }, options)
 
   app.connection()
 

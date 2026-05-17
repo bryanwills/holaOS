@@ -16,7 +16,7 @@
 //   - chat_id can be a numeric id OR an @channelusername. Persisted as a
 //     string for both.
 
-import { createApp, z, type ProxyResult, type BridgeError } from "../../src/index.ts"
+import { createApp, z, type CreateAppOptions, type ProxyResult, type BridgeError } from "../../src/index.ts"
 import { TELEGRAM } from "./provider.ts"
 
 type TgBody = {
@@ -41,12 +41,12 @@ function tgUnwrap<T extends TgBody>(
   return { ok: true, data: r.data }
 }
 
-export function buildTelegramApp() {
+export function buildTelegramApp(options: CreateAppOptions = {}) {
   const app = createApp({
     id: "telegram",
     provider: TELEGRAM,
     description: "Telegram bot messaging, edits, reactions",
-  })
+  }, options)
 
   app.connection()
 

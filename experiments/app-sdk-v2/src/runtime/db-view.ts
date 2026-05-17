@@ -1,10 +1,9 @@
-// DbView implementation — in-memory query over RuntimeState rows.
+// DbView implementation — backend-agnostic query over rows.
 
-import type { DbView, ResourceHandle, RowOf, StateTuple } from "../types.ts"
+import type { DbView, ResourceHandle, RowOf, StateBackend, StateTuple } from "../types.ts"
 import type { ZodTypeAny } from "zod"
-import type { RuntimeState } from "./state.ts"
 
-export function createDbView(state: RuntimeState): DbView {
+export function createDbView(state: StateBackend): DbView {
   return {
     query<TSchema extends ZodTypeAny, States extends StateTuple>(
       resource: ResourceHandle<TSchema, States>,

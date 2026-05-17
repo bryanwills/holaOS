@@ -4,15 +4,15 @@
 // a meeting for March 5 at 2pm). This is NOT the "schedule this action to
 // run later" concept — that lives in Holaboss automations.
 
-import { createApp, z } from "../../src/index.ts"
+import { createApp, z, type CreateAppOptions } from "../../src/index.ts"
 import { GCALENDAR } from "./provider.ts"
 
-export function buildGcalendarApp() {
+export function buildGcalendarApp(options: CreateAppOptions = {}) {
   const app = createApp({
     id: "gcalendar",
     provider: GCALENDAR,
     description: "Google Calendar event management",
-  })
+  }, options)
 
   app.connection()
 

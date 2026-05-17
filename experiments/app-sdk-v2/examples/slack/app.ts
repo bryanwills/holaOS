@@ -10,7 +10,7 @@
 // that resolved channel; we persist it back so subsequent edit/delete/react
 // use the channel id Slack actually addresses, not the user_id.
 
-import { createApp, z, type ProxyResult, type BridgeError } from "../../src/index.ts"
+import { createApp, z, type CreateAppOptions, type ProxyResult, type BridgeError } from "../../src/index.ts"
 import { SLACK } from "./provider.ts"
 
 // Slack returns its own errors in body.ok / body.error.
@@ -29,12 +29,12 @@ function slackUnwrap<T extends SlackBody>(
   return { ok: true, data: r.data }
 }
 
-export function buildSlackApp() {
+export function buildSlackApp(options: CreateAppOptions = {}) {
   const app = createApp({
     id: "slack",
     provider: SLACK,
     description: "Slack channel messaging, edits, reactions",
-  })
+  }, options)
 
   app.connection()
 

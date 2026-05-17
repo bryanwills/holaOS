@@ -10,6 +10,7 @@ import type {
   ResourceDef,
   ResourceHandle,
   RowOf,
+  StateBackend,
   StateTuple,
   SyncDef,
   TurnContext,
@@ -46,15 +47,23 @@ export interface AppHandleInternal extends AppHandle {
     bridge: BridgeClient
   }): Promise<any>
   _runSync(name: string, bridge: BridgeClient): Promise<SyncRunResult>
-  _state: RuntimeState
+  _state: StateBackend
   _setTurn(ctx: TurnContext | null): void
   _resources: Map<string, ResourceHandle<any, any>>
   _actions: RegisteredAction[]
   _syncs: RegisteredSync[]
 }
 
-export function createApp(config: AppConfig): AppHandleInternal {
-  const state = new RuntimeState()
+/**
+ * createApp options. `backend` defaults to in-memory; production runtime
+ * should pass a SqliteStateBackend (see runtime/state-backend-sqlite.ts).
+ */
+export interface CreateAppOptions {
+  backend?: StateBackend
+}
+
+export function createApp(config: AppConfig, options: CreateAppOptions = {}): AppHandleInternal {
+  const state: StateBackend = options.backend ?? new RuntimeState()
   const resources = new Map<string, ResourceHandle<any, any>>()
   const actions: RegisteredAction[] = []
   const syncs: RegisteredSync[] = []
