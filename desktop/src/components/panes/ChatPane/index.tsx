@@ -629,6 +629,7 @@ export function chatMessagesFromSessionState(params: {
   memoryProposals: MemoryUpdateProposalRecordPayload[];
   knownAssistantInputIds?: Set<string>;
   showExecutionInternals: boolean;
+  showBootstrapPhaseTrace?: boolean;
 }): ChatMessage[] {
   const outputEventsByInputId = new Map<
     string,
@@ -704,6 +705,9 @@ export function chatMessagesFromSessionState(params: {
         if (inputId) {
           const restoredAssistantState = assistantHistoryStateFromOutputEvents(
             outputEventsByInputId.get(inputId) ?? [],
+            {
+              showBootstrapPhaseTrace: params.showBootstrapPhaseTrace,
+            },
           );
           const turnOutputs = sortOutputs(outputsByInputId.get(inputId) ?? []);
           const turnMemoryProposals = sortMemoryUpdateProposals(
@@ -747,6 +751,9 @@ export function chatMessagesFromSessionState(params: {
       ) {
         const restoredAssistantState = assistantHistoryStateFromOutputEvents(
           outputEventsByInputId.get(userInputId) ?? [],
+          {
+            showBootstrapPhaseTrace: params.showBootstrapPhaseTrace,
+          },
         );
         const turnOutputs = sortOutputs(outputsByInputId.get(userInputId) ?? []);
         const turnMemoryProposals = sortMemoryUpdateProposals(
@@ -2069,6 +2076,12 @@ function phaseTraceStepFromEvent(
   return null;
 }
 
+function isBootstrapPhaseTraceStepId(stepId: string) {
+  return (
+    stepId === "phase:run-claimed" || stepId === "phase:run-started"
+  );
+}
+
 function upsertTraceStep(previous: ChatTraceStep[], step: ChatTraceStep) {
   const existingIndex = previous.findIndex((entry) => entry.id === step.id);
   if (existingIndex < 0) {
@@ -2386,6 +2399,9 @@ function pendingIntegrationsFromTextBlob(text: string): ChatPendingIntegration[]
 
 function assistantHistoryStateFromOutputEvents(
   outputEvents: SessionOutputEventPayload[],
+  options?: {
+    showBootstrapPhaseTrace?: boolean;
+  },
 ) {
   const orderedEvents = [...outputEvents].sort(
     (left, right) => left.sequence - right.sequence || left.id - right.id,
@@ -2445,6 +2461,12 @@ function assistantHistoryStateFromOutputEvents(
       event.sequence,
     );
     if (phaseStep) {
+      if (
+        isBootstrapPhaseTraceStepId(phaseStep.id) &&
+        options?.showBootstrapPhaseTrace !== true
+      ) {
+        continue;
+      }
       flushOutputSegment();
       const nextSegments = upsertAssistantExecutionTraceStep(
         segments,
@@ -3455,6 +3477,8 @@ export function ChatPane({
       knownAssistantInputIds,
       showExecutionInternals:
         shouldShowExecutionInternalsForSession(sessionId),
+      showBootstrapPhaseTrace:
+        shouldShowBootstrapPhaseTraceForSession(sessionId),
     });
   }
 
@@ -3866,12 +3890,15 @@ export function ChatPane({
   function shouldShowExecutionInternalsForSession(
     sessionId: string | null | undefined,
   ) {
-    if (isOnboardingVariant) {
-      return true;
-    }
-    const normalizedSessionId = (sessionId || "").trim();
-    const mainSessionId = desktopMainSessionIdRef.current.trim();
-    return Boolean(normalizedSessionId && normalizedSessionId !== mainSessionId);
+    void sessionId;
+    return true;
+  }
+
+  function shouldShowBootstrapPhaseTraceForSession(
+    sessionId: string | null | undefined,
+  ) {
+    void sessionId;
+    return false;
   }
 
   function maybePlayMainSessionCompletionChime(params: {
@@ -5151,7 +5178,12 @@ export function ChatPane({
           eventSequence,
         );
         if (phaseStep) {
-          upsertLiveTraceStep(phaseStep);
+          if (
+            !isBootstrapPhaseTraceStepId(phaseStep.id) ||
+            shouldShowBootstrapPhaseTraceForSession(eventSessionId)
+          ) {
+            upsertLiveTraceStep(phaseStep);
+          }
         }
 
         const toolStep = toolTraceStepFromEvent(
@@ -5895,7 +5927,7 @@ export function ChatPane({
 
         resetLiveTurn();
         setIsResponding(true);
-        setLiveAgentStatus("Thinking");
+        setLiveAgentStatus("Working");
         activeAssistantMessageIdRef.current = null;
         pendingInputIdRef.current = STREAM_ATTACH_PENDING;
       }
@@ -6589,24 +6621,17 @@ export function ChatPane({
       <ArrowUpRight className="size-3 opacity-80" />
     </button>
   ) : null;
+  const showSessionExecutionInternals = shouldShowExecutionInternalsForSession(
+    activeSessionId,
+  );
   const renderedLiveAssistantSegments = liveAssistantSegmentsForRender(
     liveAssistantSegments,
     liveExecutionItems,
     liveAssistantText,
   );
   const hasVisibleLiveAssistantContent =
-    ((!activeSessionId ||
-      activeSessionId === (desktopMainSession?.session_id || "").trim())
-      ? false
-      : !isOnboardingVariant)
-      || isOnboardingVariant
-    ? renderedLiveAssistantSegments.length > 0
-    : renderedLiveAssistantSegments.some(
-        (segment) => segment.kind === "output" && Boolean(segment.text.trim()),
-      );
-  const showLiveAssistantTurn =
-    isResponding ||
-    hasVisibleLiveAssistantContent;
+    renderedLiveAssistantSegments.length > 0;
+  const showLiveAssistantTurn = isResponding || hasVisibleLiveAssistantContent;
   const queuedSessionInputPreview = useQueuedSessionInputPreview({
     workspaceId: selectedWorkspaceId,
     sessionId: activeSessionId,
@@ -6860,8 +6885,6 @@ export function ChatPane({
     : isReadOnlyInspectionSession
       ? `${inspectableSessionLabel(activeSessionRecord)} · Read-only inspection`
       : "Session view";
-  const showSessionExecutionInternals =
-    isReadOnlyInspectionSession || isOnboardingVariant;
   const displayMessages = useMemo(
     () =>
       messages.filter((message) =>

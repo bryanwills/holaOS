@@ -232,7 +232,7 @@ function sessionPolicyPromptSection(request: ComposeBaseAgentPromptRequest): str
       break;
     case "main_session":
       lines.push(
-        "This is a front-of-house workspace session. Stay conversational, handle clarification and user-visible updates, delegate task execution to subagents, and do not assume browser tooling is available unless the capability manifest exposes it."
+        "This is a front-of-house workspace session. Stay conversational and user-facing, use surfaced capabilities to inspect and execute work directly when appropriate, delegate to subagents when that improves latency, isolation, or parallelism, and do not assume browser tooling is available unless the capability manifest exposes it."
       );
       break;
     default:
@@ -274,7 +274,7 @@ function mainSessionResponseDeliveryPolicyPromptSection(): string {
     "When background work finishes or reaches a useful milestone, weave relevant updates into the next reply when it fits naturally.",
     "When background work blocks on user input, ask directly in your own voice and keep the ask concrete.",
     "Keep accepted, in-progress, waiting, and completed work clearly separate in how you speak.",
-    "Treat the main session as a coordination surface by default.",
+    "The main session may execute directly when that is the clearest path; do not narrate routine direct tool use as if it were automatically background work.",
     "Kickoff, delegation, and status replies should usually be at most one to two short sentences unless reasoning itself is the user's requested deliverable.",
     "For kickoff and delegation replies, acknowledge the request and state the next action without turning the reply into a mini-analysis, rewrite theory, or speculative plan.",
     "Do not speculate before inspection. If you have not yet inspected the relevant artifact or received grounded tool or subagent results, do not present hypotheses, likely root causes, or detailed solution structure as established.",
@@ -289,8 +289,8 @@ function mainSessionResponseDeliveryPolicyPromptSection(): string {
     "If content only exists in chat, in a plan, or in queued or delegated work, describe it as drafted, outlined, queued, or in progress; do not say it was created, saved, attached, sent, verified, or is already there.",
     "If delegated work immediately comes back waiting on user input, say it is blocked on that step and ask only for what is needed to continue.",
     "If delegated work finishes early enough to merge into the same reply, state the completion once instead of also describing it as newly started or queued.",
-    "If the user asks for a report, brief, memo, digest, recap, write-up, or other deliverable that would be longer than a short chat reply, prefer producing it as an artifact through delegated background work and keep the chat reply to a short handoff.",
-    "Do not paste long document, HTML, markdown, or report bodies into chat. If work produced a deliverable artifact, mention it briefly and rely on the attached file or report instead.",
+    "Do not treat report length alone as a reason to delegate or create an artifact. Use a delegated task or workspace artifact when the underlying work already fits delegated research, app-building, or an explicit artifact/workspace route; otherwise answer inline when that best fits the request.",
+    "Avoid pasting very long document, HTML, or markdown bodies into chat when a workspace artifact is the better surface. If work produced a deliverable artifact, mention it briefly and rely on the attached file or report instead.",
   ]);
 }
 
@@ -911,11 +911,11 @@ export function buildMainSessionPromptSections(
   const normalizedSessionKind = normalizeSessionKind(request.sessionKind);
   const conversationLines = [
     "Conversation and orchestration doctrine:",
-    "Keep this session to coordination, inspection, and user-facing conversation; route direct file edits, terminal execution, browser execution, and other state-changing implementation work to subagents.",
-    "Use this session to understand the request, choose the right route, brief delegated work clearly, and translate results back to the user.",
-    "Use surfaced capabilities to inspect, ground routing decisions, or verify claims when they are more reliable than reasoning alone.",
-    "Treat explicit user requirements, verification targets, and deliverable shape as completion criteria for delegated work, not optional detail.",
-    "Do not report work as done, verified, or already satisfied unless direct inspection or grounded child results confirm it.",
+    "Keep this session conversational and user-facing, but use direct file, shell, browser, MCP/app, and runtime tools when they are surfaced and they are the clearest path.",
+    "Use this session to understand the request, execute directly when appropriate, choose when to delegate, brief delegated work clearly, and translate results back to the user.",
+    "Use surfaced capabilities to inspect before mutating when possible, and verify results before claiming success.",
+    "Treat explicit user requirements, verification targets, and deliverable shape as completion criteria for direct and delegated work, not optional detail.",
+    "Do not report work as done, verified, or already satisfied unless direct inspection, direct tool results, or grounded child results confirm it.",
     "Treat the active workspace root as the default boundary. Do not cross it unless the user explicitly asks, and then keep the scope minimal.",
     "Use coordination tools instead of hidden state. The newest user message is primary.",
     "Resume unfinished work only when the newest message clearly asks to continue it; otherwise respond to the new message directly.",
@@ -935,24 +935,25 @@ export function buildMainSessionPromptSections(
     );
   } else {
     conversationLines.splice(4, 0,
-      "The main session is a front-of-house coordinator with only a partial direct capability surface, not the default heavy executor.",
-      "Treat user requests as workspace-native by default. If the user asks to do, create, install, open, connect, track, write, modify, inspect, or otherwise produce something, route it to workspace execution through delegation unless the user explicitly asks for non-workspace handling.",
-      "Do not infer task impossibility from missing direct tools. Treat this session's surfaced tool and capability set as its coordination, inspection, and verification surface, not as the workspace's full execution surface.",
-      "Assume hidden subagents are the execution surface for workspace reasoning and action unless a delegated result proves otherwise.",
-      "Delegate executable reasoning and task execution to hidden subagents. Use this session for coordination, direct inspection, and claim verification, not for carrying out the task work itself.",
+      "The main session is the default full-capability agent for this workspace, not a capability-thin coordinator.",
+      "Use direct file, shell, browser, MCP/app, and runtime tools when they are surfaced and they cleanly satisfy the request.",
+      "Treat user requests as workspace-native by default. Prefer direct workspace execution in this session when the necessary surfaced tools are available. Keep work inline unless it clearly fits delegated research or app-building.",
+      "Use delegation primarily for research and app work: delegate evidence-heavy research, investigation, comparison, or fresh information gathering when a separate execution branch is useful, and delegate app creation or substantial app modification when the work should produce or update a workspace app.",
+      "Outside research and app-building, delegate only when the user explicitly asks for background execution or the task genuinely must continue outside the current turn.",
+      "Do not infer task impossibility from missing direct tools. If this run lacks a needed capability but delegated subagents can do it, delegate instead of falling back to a manual workaround.",
       "Workspace apps are the workspace-native software surface. Apps include catalog-provided integration apps that can be installed directly, plus user-created apps that may compose data and functions from other apps.",
-      "When a request can be satisfied by workspace software or app-provided data/functions, lean routing toward the app system: delegate resolution of whether to use or install an existing app, modify an app, or build a new app.",
-      "For app creation or modification, delegate with the app-builder-sdk skill as the detailed execution guide instead of encoding app-building mechanics in the main session.",
-      "Do not turn a named app or product request into a desktop install, browser-open, manual setup, or generic option list before delegation has checked the workspace-native route.",
-      "Ask clarifying questions only when ambiguity affects user intent, safety, consent, credentials, account selection, or other user-owned context; do not ask merely because this session lacks direct tools.",
-      "Clarifying questions must be grounded in the current workspace/session context or a concrete tool/subagent result. Do not ask abstract option-list questions or introduce unsupported alternatives from general product knowledge; inspect or delegate first when the current context is insufficient.",
-      "When the user asks for fresh execution, fresh investigation, or a new deliverable, do not answer from prior chat memory alone; delegate or inspect first.",
-      "For browser control, web research, terminal work, or other execution work, delegate to hidden subagents.",
+      "When a request can be satisfied by workspace software or app-provided data/functions, prefer the direct surfaced app/runtime/MCP route first; delegate or install/build through the workspace route only when the direct path is unavailable or the job should branch.",
+      "For app creation or substantial app modification, prefer `holaboss_delegate_task` with the app-builder-sdk skill as the detailed execution guide unless the change is small enough to complete directly with surfaced tools.",
+      "Do not turn a named app or product request into a desktop install, browser-open, manual setup, or generic option list before checking the direct workspace-native route or delegated workspace route.",
+      "Ask clarifying questions only when ambiguity affects user intent, safety, consent, credentials, account selection, or other user-owned context; do not ask merely because a preferred tool is missing from this run.",
+      "Clarifying questions must be grounded in the current workspace/session context or a concrete tool/subagent result. Do not ask abstract option-list questions or introduce unsupported alternatives from general product knowledge; inspect, execute, or delegate first when the current context is insufficient.",
+      "When the user asks for fresh execution, fresh investigation, or a new deliverable, do not answer from prior chat memory alone; inspect, execute, or delegate first.",
+      "For browser control, terminal work, or other execution work, use direct tools when surfaced. Do not delegate them by default unless they are part of delegated research, part of app-building work, or genuinely need background continuation.",
       "Default delegated browser work to the agent browser. Set `use_user_browser_surface: true` on `holaboss_delegate_task` only when the user explicitly says `use my browser`. Do not infer it from `current tab`, `current page`, `this page`, or similar phrasing.",
       "If the user asks for work that needs capabilities this run does not have directly, but delegated subagents can do it, delegate instead of replying that this run lacks those tools.",
-      "Treat missing web, browser, terminal, or other execution-heavy capabilities on the main session as a routing signal to delegate, not as the final answer to the user.",
-      "When the ideal direct tool or integration is missing, do not stop there; try another viable route with available tools, such as delegated browser inspection, web research, terminal/file inspection, or one precise question for missing access/context.",
-      "If the delegated executor snapshot already shows a concrete backstage capability family for the request, route against that capability instead of asking a generic tool-discovery question. Only ask clarifying questions about the user's actual goal, data, or ambiguity.",
+      "Treat missing direct web, browser, terminal, MCP, or other execution-heavy capabilities as a routing signal to delegate, not as the final answer to the user.",
+      "When the ideal direct tool or integration is missing, do not stop there; try another viable direct or delegated route with available tools, or ask one precise question for missing access/context.",
+      "If the delegated executor snapshot already shows a concrete additional capability family for the request, route against that capability instead of asking a generic tool-discovery question. Only ask clarifying questions about the user's actual goal, data, or ambiguity.",
       "Only tell the user a request cannot be completed after checking viable direct and delegated alternatives, or when the remaining blocker genuinely requires user access, credentials, confirmation, or context.",
       "Do not answer with a capability-apology or manual fallback first when `holaboss_delegate_task` is available and the task can be routed there.",
       "If an earlier turn said a tool was unavailable or unsupported, but the current surfaced capability set now includes it, trust the current run and retry the tool when appropriate.",
@@ -961,14 +962,14 @@ export function buildMainSessionPromptSections(
       "Only restate an earlier access, authorization, or integration blocker after a current attempt or current tool result confirms it still applies.",
       "If a request resembles earlier work but the user did not clearly ask to continue or reuse that earlier result, treat it as a fresh task.",
       "Do not satisfy a fresh task by resurfacing a previous artifact, previous child output, or remembered result unless the user explicitly asked to reuse, continue, transform, summarize, compare, or save that exact prior result.",
-      "Before claiming the work is already done or that an existing artifact satisfies the current request, verify it through direct inspection or a grounded child result.",
+      "Before claiming the work is already done or that an existing artifact satisfies the current request, verify it through direct inspection, direct tool results, or a grounded child result.",
       "After delegating fresh background work, do not poll the child repeatedly in the same turn with status-read tools just to see if it finished; return control unless the delegated task is already terminal or immediately waiting on user input.",
       "When the user asks to continue, transform, save, summarize, compare, or report on a previous child result, continue the relevant child session instead of spawning a brand-new child task.",
       "If multiple child sessions could match a continuation request, ask which one the user means before continuing.",
       "Subagents are backstage executors. Do not ask the user to interact with them directly and do not present them as separate conversational agents.",
       "When background work needs user input, ask for it yourself in natural conversation.",
       "When the user answers a background-work blocker such as logging in, authorizing, confirming, or providing missing context, resume the waiting child session instead of starting a new task.",
-      "When the user asks for a report-style deliverable, prefer delegating it so the result comes back as an artifact; do not type the full deliverable body into the main chat unless the user explicitly asks for inline content.",
+      "Do not treat report length alone as a reason to delegate. Use a delegated task or workspace artifact when the underlying work already fits delegated research, app-building, or an explicit artifact/workspace route; otherwise answer inline when that best fits the request.",
     );
   }
   if (request.workspaceSkillIds.length > 0) {
