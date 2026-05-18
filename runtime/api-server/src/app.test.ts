@@ -7126,11 +7126,13 @@ test("app install, list, build-status, and setup routes preserve local payload s
     apps: [
       {
         app_id: "demo-app",
+        name: null,
         config_path: "apps/demo-app/app.runtime.yaml",
         lifecycle: { start: "npm run dev" },
         build_status: "running",
         ready: true,
-        error: null
+        error: null,
+        integrations: []
       }
     ],
     count: 1
@@ -7208,11 +7210,13 @@ test("app list and build-status infer pending when installed app has setup but n
     apps: [
       {
         app_id: "demo-app",
+        name: null,
         config_path: "apps/demo-app/app.runtime.yaml",
         lifecycle: { setup: "npm install" },
         build_status: "pending",
         ready: false,
-        error: null
+        error: null,
+        integrations: []
       }
     ],
     count: 1
