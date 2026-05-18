@@ -1547,7 +1547,7 @@ test("runTsRunnerCli exposes workspace-instructions updates only to main workspa
   );
   assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
-    ["holaboss_update_workspace_instructions"],
+    ["web_search", "holaboss_update_workspace_instructions"],
   );
   assert.deepEqual(
     (capturedProjectRequest as { delegated_runtime_tool_ids?: string[] })
