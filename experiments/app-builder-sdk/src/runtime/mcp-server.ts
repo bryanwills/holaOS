@@ -35,12 +35,20 @@ export interface StartMcpServerOpts {
   serverName?: string
   /** Optional MCP server version. */
   serverVersion?: string
+  /** Optional web-surface port. Holaboss desktop renders an iframe at this URL
+   *  for hola-boss-apps-style modules. SDK apps are headless, but the desktop
+   *  still tries to load the URL — this option binds a tiny HTTP server that
+   *  serves a placeholder page so the iframe gets a 200 instead of
+   *  ERR_CONNECTION_REFUSED. Wire from `process.env.PORT` in production. */
+  httpPort?: number
 }
 
 export interface StartedMcpServer {
-  /** Actual port the server is listening on (resolved after 0 → OS-assigned). */
+  /** Actual port the MCP server is listening on (resolved after 0 → OS-assigned). */
   port: number
-  /** Stop the server gracefully. */
+  /** Actual port the web-surface stub is listening on (if httpPort was set). */
+  httpPort?: number
+  /** Stop both servers gracefully. */
   close: () => Promise<void>
 }
 
@@ -95,12 +103,69 @@ export async function startMcpServer(opts: StartMcpServerOpts): Promise<StartedM
   const addr = httpServer.address()
   const actualPort = typeof addr === "object" && addr ? addr.port : opts.port
 
+  let webStub: HttpServer | undefined
+  let actualHttpPort: number | undefined
+  if (opts.httpPort !== undefined) {
+    webStub = createWebStub(app.config.id, actualPort)
+    await new Promise<void>((resolve) => webStub!.listen(opts.httpPort, () => resolve()))
+    const sAddr = webStub.address()
+    actualHttpPort = typeof sAddr === "object" && sAddr ? sAddr.port : opts.httpPort
+  }
+
   return {
     port: actualPort,
-    close: () => new Promise<void>((resolve, reject) => {
-      httpServer.close((err) => (err ? reject(err) : resolve()))
-    }),
+    httpPort: actualHttpPort,
+    close: () => Promise.all([
+      new Promise<void>((resolve, reject) =>
+        httpServer.close((err) => (err ? reject(err) : resolve())),
+      ),
+      webStub
+        ? new Promise<void>((resolve, reject) =>
+            webStub!.close((err) => (err ? reject(err) : resolve())),
+          )
+        : Promise.resolve(),
+    ]).then(() => undefined),
   }
+}
+
+// Headless-module placeholder for the desktop's iframe surface.
+function createWebStub(appId: string, mcpPort: number): HttpServer {
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(appId)} — headless module</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root { color-scheme: light dark }
+    body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+           margin: 0; padding: 32px; max-width: 640px }
+    h1 { font-size: 18px; margin: 0 0 8px; font-weight: 600 }
+    p  { margin: 6px 0; opacity: .8 }
+    code { font: 12px ui-monospace, SF Mono, Menlo, monospace;
+           background: color-mix(in srgb, currentColor 8%, transparent);
+           padding: 1px 6px; border-radius: 4px }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(appId)}</h1>
+  <p>This module was built with <code>@holaboss/app-builder-sdk</code> and is headless — it exposes only an MCP server, no web UI.</p>
+  <p>Drive it from agent chat. The MCP server is on <code>:${mcpPort}/mcp/sse</code>.</p>
+</body>
+</html>`
+  return createServer((req, res) => {
+    if (req.url === "/health" || req.url === "/healthz") {
+      res.writeHead(200, { "Content-Type": "application/json" })
+      res.end(JSON.stringify({ status: "ok", surface: "headless_stub", app_id: appId }))
+      return
+    }
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
+    res.end(html)
+  })
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!))
 }
 
 // ─── Tool registration ─────────────────────────────────────────────────────

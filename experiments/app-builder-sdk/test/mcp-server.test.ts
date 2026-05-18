@@ -279,6 +279,37 @@ describe("MCP server — boot + tool registration + routing", () => {
     await session.close()
   })
 
+  test("httpPort option serves a headless web stub (200 HTML + /health JSON)", async () => {
+    const { app: fresh } = buildSlackApp() as unknown as { app: AppHandleInternal }
+    const freshBridge = createBridge({ provider: SLACK, transport })
+    const stub = await startMcpServer({ app: fresh, port: 0, bridge: freshBridge, httpPort: 0 })
+    expect(stub.httpPort).toBeTruthy()
+    const stubUrl = `http://localhost:${stub.httpPort}`
+
+    const root = await fetch(stubUrl)
+    expect(root.status).toBe(200)
+    const html = await root.text()
+    expect(html).toContain("headless module")
+    expect(root.headers.get("content-type") ?? "").toContain("text/html")
+
+    const health = await fetch(`${stubUrl}/health`)
+    expect(health.status).toBe(200)
+    const hb = await health.json() as Record<string, unknown>
+    expect(hb.status).toBe("ok")
+    expect(hb.surface).toBe("headless_stub")
+    expect(hb.app_id).toBe("slack")
+
+    await stub.close()
+  })
+
+  test("startMcpServer without httpPort does NOT bind a second port (httpPort:undefined returned)", async () => {
+    const { app: fresh } = buildSlackApp() as unknown as { app: AppHandleInternal }
+    const freshBridge = createBridge({ provider: SLACK, transport })
+    const s = await startMcpServer({ app: fresh, port: 0, bridge: freshBridge })
+    expect(s.httpPort).toBeUndefined()
+    await s.close()
+  })
+
   test("tools/list includes refresh + sync_status (no longer descriptor-only)", async () => {
     const session = await openSseSession(baseUrl)
     const tools = await mcpListTools(baseUrl, session.sessionId)

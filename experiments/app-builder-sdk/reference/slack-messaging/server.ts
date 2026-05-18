@@ -29,6 +29,11 @@ if (!workspaceDbPath) {
   process.exit(1)
 }
 const mcpPort = Number(process.env.MCP_PORT ?? 3099)
+// Holaboss runtime allocates an HTTP port per app for the desktop iframe
+// surface. Headless SDK modules don't have a web UI, but the desktop still
+// tries to load the URL — startMcpServer serves a placeholder page on PORT
+// to avoid ERR_CONNECTION_REFUSED.
+const httpPort = process.env.PORT ? Number(process.env.PORT) : undefined
 
 // 1) SQLite-backed state (persists across app restarts)
 const backend = new SqliteStateBackend({ dbPath: workspaceDbPath, appId: "slack" })
@@ -40,9 +45,10 @@ const { app } = buildSlackApp({ backend })
 const transport = createRuntimeBrokerTransport({ provider: "slack" })
 const bridge = createBridge({ provider: SLACK, transport })
 
-// 4) Boot MCP server
-const server = await startMcpServer({ app: app as never, port: mcpPort, bridge })
+// 4) Boot MCP server (+ headless web stub if PORT was injected)
+const server = await startMcpServer({ app: app as never, port: mcpPort, bridge, httpPort })
 console.log(`[slack-v2] MCP server listening on :${server.port}`)
+if (server.httpPort) console.log(`[slack-v2] Web stub on :${server.httpPort}`)
 console.log(`[slack-v2] Workspace DB: ${workspaceDbPath}`)
 console.log(`[slack-v2] Tools registered: ${app.derivedTools().length}`)
 
