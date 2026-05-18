@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
-import { Check, ChevronDown, ExternalLink, LoaderCircle, Plug } from "lucide-react";
+import { Check, ChevronDown, ExternalLink, LoaderCircle, Plug, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -8,39 +7,18 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useIntegrationBinding } from "@/lib/useIntegrationBinding";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
-import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 export type AssistantTurnPendingIntegration = {
   app_id: string;
   provider_id: string;
   credential_source?: string | null;
+  // See PendingIntegrationWhoami in electron.d.ts. Forwarded verbatim to
+  // Hono via composioConnect so the per-toolkit profile fetch doesn't need
+  // a Hono-side constant.
+  whoami?: PendingIntegrationWhoami | null;
 };
-
-type CardState =
-  | { kind: "loading" }
-  | { kind: "no_workspace" }
-  | { kind: "no_connection" }
-  | {
-      kind: "needs_binding";
-      connections: IntegrationConnectionPayload[];
-    }
-  | {
-      kind: "bound";
-      activeConnection: IntegrationConnectionPayload;
-      otherActiveConnections: IntegrationConnectionPayload[];
-    };
-
-function normalizeErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    const message = error.message?.trim();
-    if (message) return message;
-  }
-  if (typeof error === "string" && error.trim()) {
-    return error.trim();
-  }
-  return "Unknown error";
-}
 
 export function AssistantTurnIntegrationConnects({
   pendingIntegrations,
@@ -79,9 +57,7 @@ function IntegrationConnectCard({
   integration: AssistantTurnPendingIntegration;
   onAfterBind?: () => void;
 }) {
-  const { composioToolkitsByProvider, connectIntegrationProvider } =
-    useWorkspaceDesktop();
-  const { selectedWorkspaceId } = useWorkspaceSelection();
+  const { composioToolkitsByProvider } = useWorkspaceDesktop();
 
   const provider = integration.provider_id.trim();
   const providerKey = provider.toLowerCase();
@@ -89,112 +65,19 @@ function IntegrationConnectCard({
   const toolkit = composioToolkitsByProvider[providerKey];
   const displayName = toolkit?.name ?? provider;
 
-  const [state, setState] = useState<CardState>({ kind: "loading" });
-  const [busy, setBusy] = useState<"connecting" | "binding" | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string>("");
-
-  const refresh = useCallback(async () => {
-    if (!selectedWorkspaceId) {
-      setState({ kind: "no_workspace" });
-      return;
-    }
-    try {
-      const [connectionsResp, bindingsResp] = await Promise.all([
-        window.electronAPI.workspace.listIntegrationConnections(),
-        window.electronAPI.workspace.listIntegrationBindings(selectedWorkspaceId),
-      ]);
-      const activeConnections = connectionsResp.connections.filter(
-        (c) =>
-          c.provider_id.toLowerCase() === providerKey && c.status === "active",
-      );
-      if (activeConnections.length === 0) {
-        setState({ kind: "no_connection" });
-        return;
-      }
-      const binding = bindingsResp.bindings.find(
-        (b) =>
-          b.target_type === "app" &&
-          b.target_id === appId &&
-          b.integration_key.toLowerCase() === providerKey,
-      );
-      if (binding) {
-        const active = activeConnections.find(
-          (c) => c.connection_id === binding.connection_id,
-        );
-        if (active) {
-          setState({
-            kind: "bound",
-            activeConnection: active,
-            otherActiveConnections: activeConnections.filter(
-              (c) => c.connection_id !== active.connection_id,
-            ),
-          });
-          return;
-        }
-      }
-      setState({ kind: "needs_binding", connections: activeConnections });
-    } catch (error) {
-      setErrorMessage(normalizeErrorMessage(error));
-      setState({ kind: "no_connection" });
-    }
-  }, [selectedWorkspaceId, providerKey, appId]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  async function handleConnect() {
-    if (!selectedWorkspaceId) return;
-    setBusy("connecting");
-    setErrorMessage("");
-    try {
-      await connectIntegrationProvider({ provider, appId });
-      const { connections } =
-        await window.electronAPI.workspace.listIntegrationConnections();
-      const candidate = connections
-        .filter(
-          (c) =>
-            c.provider_id.toLowerCase() === providerKey && c.status === "active",
-        )
-        .sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0];
-      if (candidate) {
-        await window.electronAPI.workspace.upsertIntegrationBinding(
-          selectedWorkspaceId,
-          "app",
-          appId,
-          provider,
-          { connection_id: candidate.connection_id },
-        );
-      }
-      await refresh();
-      onAfterBind?.();
-    } catch (error) {
-      setErrorMessage(normalizeErrorMessage(error));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function handleBind(connectionId: string) {
-    if (!selectedWorkspaceId) return;
-    setBusy("binding");
-    setErrorMessage("");
-    try {
-      await window.electronAPI.workspace.upsertIntegrationBinding(
-        selectedWorkspaceId,
-        "app",
-        appId,
-        provider,
-        { connection_id: connectionId },
-      );
-      await refresh();
-      onAfterBind?.();
-    } catch (error) {
-      setErrorMessage(normalizeErrorMessage(error));
-    } finally {
-      setBusy(null);
-    }
-  }
+  const {
+    state,
+    busy,
+    errorMessage,
+    connect: handleConnect,
+    bind: handleBind,
+    cancel: handleCancelConnect,
+  } = useIntegrationBinding({
+    appId,
+    provider,
+    whoami: integration.whoami ?? null,
+    onAfterBind,
+  });
 
   if (state.kind === "loading") {
     return null;
@@ -212,7 +95,7 @@ function IntegrationConnectCard({
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium">
-            {displayName} · {accountLabelFor(state.activeConnection)}
+            {displayName} · {accountLabelFor(state.activeConnection, displayName)}
           </div>
           <div className="truncate text-xs text-muted-foreground">
             Bound to {appId}. Send your next message to use it.
@@ -233,7 +116,7 @@ function IntegrationConnectCard({
                   key={conn.connection_id}
                   onClick={() => void handleBind(conn.connection_id)}
                 >
-                  Switch to {accountLabelFor(conn)}
+                  Switch to {accountLabelFor(conn, displayName)}
                 </DropdownMenuItem>
               ))}
               <DropdownMenuSeparator />
@@ -251,7 +134,7 @@ function IntegrationConnectCard({
   }
 
   if (state.kind === "needs_binding") {
-    const connections = state.connections;
+    const connections = state.candidates;
     return (
       <div className="flex max-w-[380px] flex-col gap-2 rounded-xl border border-border bg-card px-3 py-3">
         <div className="flex items-center gap-3">
@@ -281,7 +164,7 @@ function IntegrationConnectCard({
               ) : (
                 <Check size={13} />
               )}
-              Use {accountLabelFor(connections[0]!)}
+              Use {accountLabelFor(connections[0]!, displayName)}
             </Button>
           ) : (
             <DropdownMenu>
@@ -302,7 +185,7 @@ function IntegrationConnectCard({
                     key={conn.connection_id}
                     onClick={() => void handleBind(conn.connection_id)}
                   >
-                    {accountLabelFor(conn)}
+                    {accountLabelFor(conn, displayName)}
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
@@ -340,24 +223,34 @@ function IntegrationConnectCard({
           </div>
         </div>
       </div>
-      <div className="flex items-center justify-end">
-        <Button
-          size="sm"
-          disabled={busy !== null}
-          onClick={() => void handleConnect()}
-        >
-          {busy === "connecting" ? (
-            <>
+      <div className="flex items-center justify-end gap-2">
+        {busy === "connecting" ? (
+          <>
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
               <LoaderCircle size={13} className="animate-spin" />
               Waiting for authorization…
-            </>
-          ) : (
-            <>
-              <ExternalLink size={13} />
-              Connect {displayName}
-            </>
-          )}
-        </Button>
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => handleCancelConnect()}
+              title="Cancel connection"
+              aria-label="Cancel connection"
+            >
+              <X size={13} />
+              Cancel
+            </Button>
+          </>
+        ) : (
+          <Button
+            size="sm"
+            disabled={busy !== null}
+            onClick={() => void handleConnect()}
+          >
+            <ExternalLink size={13} />
+            Connect {displayName}
+          </Button>
+        )}
       </div>
       {errorMessage ? (
         <p className="text-xs text-destructive">{errorMessage}</p>
@@ -366,17 +259,27 @@ function IntegrationConnectCard({
   );
 }
 
-function accountLabelFor(connection: IntegrationConnectionPayload): string {
+// Toolkits without a whoami-resolved handle/email/label used to render as a
+// raw connection-id slice ("a1b2c3d4"). Now we fall back to the toolkit's
+// display name + the last 6 chars of the id, so e.g. "Discord · a1b2c3" —
+// indistinct against multiple accounts of the same toolkit, but at least
+// names the platform.
+function accountLabelFor(
+  connection: IntegrationConnectionPayload,
+  toolkitDisplayName: string,
+): string {
   const candidates = [
     connection.account_handle,
     connection.account_email,
     connection.account_label,
-    connection.account_external_id,
   ];
   for (const value of candidates) {
     if (typeof value === "string" && value.trim()) {
       return value.trim();
     }
   }
-  return connection.connection_id.slice(0, 8);
+  const id = connection.connection_id;
+  const suffix = id.length > 6 ? id.slice(-6) : id;
+  const name = toolkitDisplayName.trim();
+  return name ? `${name} · ${suffix}` : suffix;
 }

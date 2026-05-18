@@ -7057,13 +7057,66 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       const appId = typeof entry.app_id === "string" ? entry.app_id : "";
       const build = appId ? store.getAppBuild({ workspaceId, appId }) : null;
       const status = appId ? resolvedAppBuildStatus({ store, workspaceId, appId, entry }) : "unknown";
+      // Pull the display name straight from yaml so the desktop's app
+      // catalog doesn't have to maintain a per-app hardcoded table.
+      let displayName: string | null = null;
+      const configPath = typeof entry.config_path === "string" ? entry.config_path : "";
+      if (appId && configPath) {
+        try {
+          const manifestPath = path.join(workspaceDir, configPath);
+          if (fs.existsSync(manifestPath)) {
+            const yamlDoc = yaml.load(fs.readFileSync(manifestPath, "utf8"));
+            if (isRecord(yamlDoc) && typeof yamlDoc.name === "string") {
+              const trimmed = yamlDoc.name.trim();
+              if (trimmed) displayName = trimmed;
+            }
+          }
+        } catch {
+          displayName = null;
+        }
+      }
+      // Parse the app's yaml so the desktop can render a per-app Connect /
+      // Bind control without having to hardcode an appId→provider map.
+      // Failures (yaml unreadable, port allocation issue) leave
+      // `integrations` empty rather than poisoning the list response.
+      let integrations: Array<{
+        key: string;
+        provider: string;
+        capability: string | null;
+        required: boolean;
+        whoami?: unknown;
+      }> = [];
+      if (appId) {
+        try {
+          const resolved = resolveWorkspaceAppRuntime(workspaceDir, appId, {
+            store,
+            workspaceId,
+            allocatePorts: false,
+          });
+          integrations =
+            resolved.resolvedApp.integrations?.map((integration) => ({
+              key: integration.key,
+              provider: integration.provider,
+              capability: integration.capability,
+              required: integration.required,
+              // Forward whoami so the App Surface's Connect button can pass
+              // it to Hono `/composio/connect` the same way the chat
+              // Connect card does (Stage 4 whoami passthrough).
+              ...(integration.whoami ? { whoami: integration.whoami } : {}),
+            })) ?? [];
+        } catch {
+          integrations = [];
+        }
+      }
       return {
         app_id: appId,
+        name: displayName,
         config_path: typeof entry.config_path === "string" ? entry.config_path : "",
         lifecycle: isRecord(entry.lifecycle) ? entry.lifecycle : null,
         build_status: status,
         ready: status === "running",
-        error: build?.status === "failed" ? (build.error ?? "unknown error") : null
+        error: build?.status === "failed" ? (build.error ?? "unknown error") : null,
+        integrations
       };
     });
     return {

@@ -452,6 +452,38 @@ integrations:
     holaboss_user_id_required: true
 ```
 
+`provider` MUST be the **Composio toolkit slug** (e.g. `gmail`, `github`, `discordbot`, `notion`, `stripe`), not a free-form display name. Hono uses this value verbatim against Composio — there is no central mapping table to translate aliases. When in doubt, the canonical list lives at https://platform.composio.dev and matches the slugs in `hola-boss-apps/marketplace.json`.
+
+### Whoami (Optional)
+
+Add a `whoami` block when you want the Connect card and Integrations pane to display the user's real identity (handle, email, avatar, display name) instead of falling back to "Toolkit · short_id". Hono uses this to call the provider's own `/me` endpoint through the Composio proxy.
+
+```yaml
+integrations:
+  - key: primary_discord
+    provider: discordbot
+    required: true
+    credential_source: platform
+    whoami:
+      endpoint: https://discord.com/api/v10/users/@me
+      fields:
+        handle: username
+        display_name: global_name
+        email: email
+        # Templated URL — `{path}` placeholders pull values from the same /me
+        # response. If any placeholder field is missing the whole URL is null,
+        # so the UI degrades gracefully.
+        avatar_url: https://cdn.discordapp.com/avatars/{id}/{avatar}.png
+```
+
+Field rules:
+
+- Each field is a dot-path against the provider's /me response body, e.g. `data.user.profile_image_url`.
+- An array of paths (`[data.username, username]`) tries each in order, first non-empty wins. Useful when a provider's API version returns slightly different shapes.
+- A string containing `{...}` is a URL template; placeholders are substituted with values picked at that dot-path from the same response.
+- Skip the whole `whoami` block when identity display is not worth the maintenance — the UI falls back to the toolkit's display name + a short connection id.
+- The endpoint is hit through Composio's proxy, so Composio injects the user's OAuth token; do NOT embed credentials in the URL.
+
 Use the bridge client instead of expecting raw provider tokens:
 
 ```ts

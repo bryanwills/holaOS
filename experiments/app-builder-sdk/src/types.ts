@@ -46,10 +46,26 @@ export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
 // ─── Provider Registry ─────────────────────────────────────────────────────
 
 export interface ProviderRegistry {
+  /**
+   * Canonical Composio toolkit slug. Same value flows through yaml
+   * `integration.destination`, `pending_integrations[].provider_id`,
+   * Hono `/composio/connect` body.provider (= Composio `toolkit_slug`),
+   * `integration_connections.provider_id`,
+   * `integration_bindings.integration_key`, and broker
+   * `createRuntimeBrokerTransport({ provider })`. Must match Composio's
+   * catalog exactly (e.g. `"discordbot"` for Discord bot, NOT `"discord"`).
+   */
   id: string
   baseUrl: string
   allowedHosts: string[]
   whoamiPath?: string
+  /**
+   * @deprecated Use `id` instead. The runtime does NOT consult this field;
+   * only `manifest.ts` falls back to it when generating `integration.destination`,
+   * which causes confusion when authors set `id` and `composioToolkit` to
+   * different values. Set `id` to the Composio toolkit slug and leave this
+   * unset.
+   */
   composioToolkit?: string
 }
 

@@ -35,23 +35,34 @@ Mental model:
 
 Full type contract: `experiments/app-builder-sdk/src/types.ts`. Public exports: `experiments/app-builder-sdk/src/index.ts`.
 
-### `provider.id` vs `composioToolkit` — DO NOT CONFUSE
+### `provider.id` MUST be the Composio toolkit slug
 
-`ProviderRegistry` has two id-like fields and getting them wrong is the most common cause of `integration_not_bound` 404s at the broker.
+There is ONE provider identifier; the same value flows through every layer of the connect + proxy chain:
 
-- `id`: must match `integration_connections.provider_id` (what desktop OAuth writes when the user connects the provider). Also the lookup key that `createRuntimeBrokerTransport({ provider })` and `upsertBinding(integration_key)` use. Sample values: `"slack"`, `"discord"`, `"github"`, `"gmail"`, `"linkedin"`. Singular noun, the way the provider markets itself.
-- `composioToolkit`: Composio's internal toolkit slug, used by Composio to pick the right API client. Sometimes equal to `id` (Slack), sometimes not (Discord's bot toolkit is `"discordbot"`; Google Calendar is `"googlecalendar"`; LinkedIn is `"linkedin"` for OAuth and there may be variants).
+- `app.runtime.yaml`'s `integration.destination`
+- `pending_integrations[].provider_id` (runtime emits this to drive the chat Connect card)
+- Hono `/api/composio/connect`'s `body.provider` (Hono uses it verbatim as Composio's `toolkit_slug`)
+- `integration_connections.provider_id` (DB row created at OAuth finalize)
+- `integration_bindings.integration_key` (DB row created when the user clicks Bind)
+- `createRuntimeBrokerTransport({ provider })` at runtime (broker keys the binding lookup on it)
 
-Mistake pattern: agent picks the Composio toolkit slug as `provider.id` because that's what they found in Composio's docs. Result: `broker_proxy → integration_not_bound: no <slug> binding for workspace` because the OAuth flow registered the connection under a different `provider_id` and the binding integration_key is set from that.
+`provider.id` in `ProviderRegistry` IS this value. It MUST be the canonical Composio toolkit slug — the exact string in Composio's catalog at https://platform.composio.dev — not a "user-friendly" alias. Common ones that bite:
 
-Discovery rule: check the existing OAuth provider id BEFORE writing the provider file:
+- Discord bot: **`discordbot`** (NOT `discord` — that slug, if it exists, grants only `identify` scope and cannot post messages → `POST /channels/.../messages` returns 401, which the SDK maps to `not_connected`)
+- Google Calendar: **`googlecalendar`** (NOT `gcal` or `google`)
+- Google Sheets: **`googlesheets`**
+- Google Drive: **`googledrive`**
+- Slack / GitHub / Gmail / Notion / Stripe / Linear / Figma / Calendly / Mailchimp / Reddit / Twitter / Instagram / YouTube / LinkedIn: **lowercase brand name** (verify in catalog).
 
+If unsure, verify against Composio's catalog BEFORE writing `provider.ts`:
+
+```bash
+curl -sS https://backend.composio.dev/api/v3/toolkits \
+  -H "x-api-key: $COMPOSIO_API_KEY" \
+  | jq -r '.items[] | select(.slug | test("(?i)<keyword>")) | .slug + " — " + .name'
 ```
-sqlite3 ~/.holaboss-desktop/sandbox-host/state/control-plane.db \
-  "SELECT DISTINCT provider_id FROM integration_connections;"
-```
 
-Use the value from the existing schema. If the user has never connected this provider before, default `provider.id` to the way Composio's connect URL spells it (matches what the desktop OAuth handler will store).
+The legacy `composioToolkit` field on `ProviderRegistry` is **deprecated**. Do not set it. If a reference still does, replace `id` with the same value and drop `composioToolkit`. Splitting them was a misreading of the runtime — the broker proxy uses ONLY `provider` (= `cfg.id`); `composioToolkit` is dead code, currently used only by `manifest.ts` as a fallback that should never trigger when `id` is correct.
 
 ## Pick a reference shape
 
@@ -170,9 +181,9 @@ applications:
 
 The MCP port and HTTP port are allocated by the runtime per app (`workspace-apps.ts:122`). For dogfood you can hard-code free ports in the high 38000s.
 
-### 6. Bind the integration connection (current known gap)
+### 6. Bind the integration connection
 
-**The runtime does not auto-bind an existing provider connection to a freshly-installed app.** Until that gap is closed, after installing the app you must:
+After installing the app, bind it to the existing provider connection:
 
 ```
 curl -X PUT 'http://127.0.0.1:40531/api/v1/integrations/bindings/<workspace_id>/app/<app_id>/<provider_id>' \
@@ -201,17 +212,6 @@ Run all of these. Stop at the first failure and report the symptom verbatim, don
 4. (After registering in workspace.yaml + restarting desktop or hitting the binding refresh API) the app appears in the desktop integrations pane
 5. After the manual PUT binding step, agent calls `<app_id>_connection_status` → returns `{connected: true, identity: {...}}` if `provider.whoamiPath` is set, else `{connected: null, reason: "no_probe_defined"}`. Anything else (`{connected: false, reason: ...}`) means the binding or the upstream is broken — read the `message` field, fix root cause, don't retry blindly.
 6. Agent calls one real action tool end-to-end (e.g. `discord_send_message_message`). Must return `{ok: true, externalId: "..."}` and the provider must show the action in its UI (the user can verify).
-
-## Known gaps and quirks
-
-These are real, current, will bite the agent. Don't try to "fix" them inside the app code — they live in the runtime / desktop and are tracked separately.
-
-- **Binding not auto-created on install.** See step 6 above. Manual PUT for now.
-- **Cookie format quirk fix lives in runtime/api-server/src/composio-service.ts.** If you see `Composio proxy via Hono failed: 500 Internal Server Error`, the runtime build is stale — rebuild via `npm run desktop:prepare-runtime:local` and restart desktop.
-- **Hono `/api/composio/proxy` had a body-double-read bug** (now fixed in `frontend/apps/server/src/api/composio.ts`). If the staging Hono hasn't been redeployed since this fix, the same 500 shows up. Don't recurse into "is my SDK call wrong" — verify staging is up to date first.
-- **Provider HTTP method matters.** Slack / Telegram bot API need POST for read endpoints too. Pinterest / GitHub / Google use GET. Read the reference closest to your provider; don't default to GET.
-- **Composio's proxy doesn't cover every endpoint.** If a specific upstream URL returns 500 for the proxy but works from raw provider docs, it may not be in Composio's allowlist for that toolkit. Check `https://app.composio.dev/...` toolkit docs.
-- **The `whoamiPath` in ProviderRegistry is GET-by-default.** If your provider needs POST for whoami (Slack auth.test), the SDK's `connection_status` will return `{connected: false}`. Workaround: either change provider.whoamiPath to a GET endpoint, or implement a custom probe inside an action. The "POST whoami" gap is on the SDK to fix.
 
 ## Anti-patterns
 

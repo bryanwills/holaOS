@@ -32,6 +32,10 @@ export interface ChatPendingIntegration {
   app_id: string;
   provider_id: string;
   credential_source?: string | null;
+  // Per-yaml whoami descriptor forwarded by the runtime; pass-through to
+  // Hono via composioConnect. Validated at parse time in
+  // parsePendingIntegrationsList.
+  whoami?: PendingIntegrationWhoami | null;
 }
 
 export type QueuedSessionInputStatus = "queued" | "sending";

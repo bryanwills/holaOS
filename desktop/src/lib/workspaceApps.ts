@@ -1,8 +1,6 @@
 export interface WorkspaceAppDefinition {
   id: string;
   label: string;
-  summary: string;
-  accentClassName: string;
 }
 
 export interface WorkspaceInstalledAppDefinition extends WorkspaceAppDefinition {
@@ -10,52 +8,8 @@ export interface WorkspaceInstalledAppDefinition extends WorkspaceAppDefinition 
   lifecycle: InstalledWorkspaceAppPayload["lifecycle"];
   ready: boolean;
   error: string | null;
+  integrations: InstalledWorkspaceAppIntegrationRequirement[];
 }
-
-const APP_CATALOG: Record<string, WorkspaceAppDefinition> = {
-  gmail: {
-    id: "gmail",
-    label: "Gmail",
-    summary: "Email drafts and sending. Use the agent to search threads, draft replies, and keep context in one place.",
-    accentClassName: "bg-rose-300/80",
-  },
-  twitter: {
-    id: "twitter",
-    label: "Twitter",
-    summary: "Short-form post drafting and thread editing inside the workspace app surface.",
-    accentClassName: "bg-sky-400/80",
-  },
-  linkedin: {
-    id: "linkedin",
-    label: "LinkedIn",
-    summary: "Long-form post drafting and professional social publishing flows.",
-    accentClassName: "bg-primary/80",
-  },
-  reddit: {
-    id: "reddit",
-    label: "Reddit",
-    summary: "Thread, post, and community response drafting in the workspace app surface.",
-    accentClassName: "bg-orange-300/80",
-  },
-  sheets: {
-    id: "sheets",
-    label: "Google Sheets",
-    summary: "Spreadsheet data management. Use the agent to query rows, update cells, and manage CRM contacts.",
-    accentClassName: "bg-emerald-400/80",
-  },
-  github: {
-    id: "github",
-    label: "GitHub",
-    summary: "Repository activity tracking and PR triage inside the workspace.",
-    accentClassName: "bg-neutral-400/80",
-  },
-  calcom: {
-    id: "calcom",
-    label: "Cal",
-    summary: "Cal.com event types and bookings — schedule, reschedule, and cancel through the agent.",
-    accentClassName: "bg-neutral-300/80",
-  }
-};
 
 function labelFromAppId(appId: string): string {
   return appId
@@ -65,57 +19,44 @@ function labelFromAppId(appId: string): string {
     .join(" ");
 }
 
-export function workspaceAppCatalogEntry(appId: string | null | undefined): WorkspaceAppDefinition | null {
-  if (!appId) {
-    return null;
-  }
-  const normalized = appId.trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-  return (
-    APP_CATALOG[normalized] || {
-      id: normalized,
-      label: labelFromAppId(normalized),
-      summary: "Workspace app surface routed from the selected workspace.",
-      accentClassName: "bg-emerald-300/80"
-    }
-  );
+function resolveLabel(appId: string, yamlName: string | null | undefined): string {
+  const trimmed = yamlName?.trim();
+  if (trimmed) return trimmed;
+  const id = appId.trim();
+  return id ? labelFromAppId(id) : "";
 }
 
 export function hydrateInstalledWorkspaceApps(
   apps: InstalledWorkspaceAppPayload[]
 ): WorkspaceInstalledAppDefinition[] {
-  return apps.map((app) => {
-    const catalogEntry = workspaceAppCatalogEntry(app.app_id) || {
-      id: app.app_id,
-      label: app.app_id,
-      summary: "Workspace app surface routed from the selected workspace.",
-      accentClassName: "bg-emerald-300/80"
-    };
-    return {
-      ...catalogEntry,
-      configPath: app.config_path,
-      lifecycle: app.lifecycle,
-      ready: app.ready,
-      error: app.error ?? null
-    };
-  });
+  return apps.map((app) => ({
+    id: app.app_id,
+    label: resolveLabel(app.app_id, app.name),
+    configPath: app.config_path,
+    lifecycle: app.lifecycle,
+    ready: app.ready,
+    error: app.error ?? null,
+    integrations: app.integrations ?? [],
+  }));
 }
 
+// Resolve a display record for an app id. Prefers the live installed-app
+// list (which carries the yaml-derived name + integrations) and falls back
+// to a title-cased identifier when the id is unknown. Returns null only for
+// empty input.
 export function getWorkspaceAppDefinition(
   appId: string | null | undefined,
   installedApps?: WorkspaceInstalledAppDefinition[]
 ): WorkspaceInstalledAppDefinition | WorkspaceAppDefinition | null {
-  if (!appId) {
-    return null;
-  }
-  const normalized = appId.trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
+  if (!appId) return null;
+  const normalized = appId.trim();
+  if (!normalized) return null;
   const installed = installedApps?.find((app) => app.id === normalized);
-  return installed || workspaceAppCatalogEntry(normalized);
+  if (installed) return installed;
+  return {
+    id: normalized,
+    label: labelFromAppId(normalized),
+  };
 }
 
 export function inferWorkspaceAppIdFromText(text: string): string | null {

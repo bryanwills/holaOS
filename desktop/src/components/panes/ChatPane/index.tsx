@@ -2225,6 +2225,53 @@ function isTerminalSessionOutputEventType(eventType: string) {
   return eventType === "run_completed" || eventType === "run_failed";
 }
 
+function parsePendingIntegrationWhoamiField(
+  value: unknown,
+): PendingIntegrationWhoamiField | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : undefined;
+  }
+  if (Array.isArray(value)) {
+    const candidates = value
+      .filter((entry): entry is string => typeof entry === "string")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    return candidates.length > 0 ? candidates : undefined;
+  }
+  return undefined;
+}
+
+function parsePendingIntegrationWhoami(
+  value: unknown,
+): PendingIntegrationWhoami | null {
+  if (!isRecord(value)) return null;
+  const endpoint =
+    typeof value.endpoint === "string" ? value.endpoint.trim() : "";
+  if (!endpoint) return null;
+  const fallbacks = Array.isArray(value.fallback_endpoints)
+    ? value.fallback_endpoints
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+    : [];
+  const rawFields = isRecord(value.fields) ? value.fields : {};
+  const fields: PendingIntegrationWhoami["fields"] = {};
+  const handle = parsePendingIntegrationWhoamiField(rawFields.handle);
+  if (handle !== undefined) fields.handle = handle;
+  const displayName = parsePendingIntegrationWhoamiField(rawFields.display_name);
+  if (displayName !== undefined) fields.display_name = displayName;
+  const avatarUrl = parsePendingIntegrationWhoamiField(rawFields.avatar_url);
+  if (avatarUrl !== undefined) fields.avatar_url = avatarUrl;
+  const email = parsePendingIntegrationWhoamiField(rawFields.email);
+  if (email !== undefined) fields.email = email;
+  return {
+    endpoint,
+    ...(fallbacks.length > 0 ? { fallback_endpoints: fallbacks } : {}),
+    fields,
+  };
+}
+
 function parsePendingIntegrationsList(value: unknown): ChatPendingIntegration[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -2240,6 +2287,7 @@ function parsePendingIntegrationsList(value: unknown): ChatPendingIntegration[] 
           typeof entry.credential_source === "string"
             ? entry.credential_source
             : null,
+        whoami: parsePendingIntegrationWhoami(entry.whoami),
       };
     })
     .filter((entry): entry is ChatPendingIntegration => Boolean(entry));

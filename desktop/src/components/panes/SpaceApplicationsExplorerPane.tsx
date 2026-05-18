@@ -91,7 +91,7 @@ export function SpaceApplicationsExplorerPane({
                   onClick={() => onSelectApp(app.id)}
                   aria-current={isActive ? "page" : undefined}
                   aria-label={`${label} — ${statusPipLabel(tone)}`}
-                  title={app.summary || label}
+                  title={label}
                   className={`h-auto w-full justify-start gap-2.5 rounded-lg px-2.5 py-1.5 text-left transition-colors ${
                     isActive
                       ? "bg-accent text-foreground"

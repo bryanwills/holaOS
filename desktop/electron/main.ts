@@ -10135,6 +10135,26 @@ async function deleteIntegrationBinding(
   });
 }
 
+// Restarts a single workspace app via the runtime's capabilities tool. Used
+// after an integration binding is added/changed so the app re-reads
+// HOLABOSS_APP_GRANT (which is captured at boot in the bridge-transport
+// module and otherwise stays stale until the next process restart).
+async function restartWorkspaceApp(
+  workspaceId: string,
+  appId: string,
+): Promise<{ workspace_id: string; app_id: string; restarted: boolean }> {
+  const safeAppId = assertSafeAppId(appId);
+  return requestWorkspaceRuntimeJson<{
+    workspace_id: string;
+    app_id: string;
+    restarted: boolean;
+  }>(workspaceId, {
+    method: "POST",
+    path: `/api/v1/capabilities/runtime-tools/workspace-apps/${encodeURIComponent(safeAppId)}/restart`,
+    payload: { workspace_id: workspaceId },
+  });
+}
+
 async function createIntegrationConnection(
   payload: IntegrationCreateConnectionPayload,
 ): Promise<IntegrationConnectionPayload> {
@@ -10241,6 +10261,7 @@ async function composioConnect(payload: {
   provider: string;
   owner_user_id: string;
   callback_url?: string;
+  whoami?: PendingIntegrationWhoami | null;
 }): Promise<ComposioConnectResult> {
   return composioFetch<ComposioConnectResult>(
     "/api/composio/connect",
@@ -22791,6 +22812,12 @@ app.whenReady().then(async () => {
       deleteIntegrationBinding(bindingId, workspaceId),
   );
   handleTrustedIpc(
+    "workspace:restartApp",
+    ["main"],
+    async (_event, workspaceId: string, appId: string) =>
+      restartWorkspaceApp(workspaceId, appId),
+  );
+  handleTrustedIpc(
     "workspace:createIntegrationConnection",
     ["main"],
     async (_event, payload: IntegrationCreateConnectionPayload) =>
@@ -22855,6 +22882,7 @@ app.whenReady().then(async () => {
         provider: string;
         owner_user_id: string;
         callback_url?: string;
+        whoami?: PendingIntegrationWhoami | null;
       },
     ) => composioConnect(payload),
   );

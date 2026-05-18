@@ -1,15 +1,33 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { workspaceAppCatalogEntry } from "../../lib/workspaceApps.ts";
-import { buildAppSurfacePresentation } from "./appSurfacePresentation.ts";
+import { hydrateInstalledWorkspaceApps } from "../../lib/workspaceApps";
+import { buildAppSurfacePresentation } from "./appSurfacePresentation";
 
-test("workspace app catalog exposes Gmail-specific product copy", () => {
-  const entry = workspaceAppCatalogEntry("gmail");
+test("hydrateInstalledWorkspaceApps prefers yaml `name`, falls back to title-cased app id", () => {
+  const hydrated = hydrateInstalledWorkspaceApps([
+    {
+      app_id: "discord-sdk",
+      name: "Discord (SDK)",
+      config_path: "apps/discord-sdk/app.runtime.yaml",
+      lifecycle: null,
+      ready: true,
+      error: null,
+    },
+    {
+      app_id: "stripe-billing",
+      // no `name` — should fall back
+      config_path: "apps/stripe-billing/app.runtime.yaml",
+      lifecycle: null,
+      ready: false,
+      error: null,
+    },
+  ]);
 
-  assert.ok(entry);
-  assert.equal(entry?.label, "Gmail");
-  assert.match(entry?.summary ?? "", /email drafts and sending/i);
-  assert.equal(entry?.accentClassName, "bg-rose-300/80");
+  assert.equal(hydrated[0].label, "Discord (SDK)");
+  assert.equal(hydrated[1].label, "Stripe Billing");
+  // No more accent / summary fields on the definition.
+  assert.equal(("accentClassName" in hydrated[0]), false);
+  assert.equal(("summary" in hydrated[0]), false);
 });
 
 test("app surface presentation prefers a contained split-stage layout", () => {

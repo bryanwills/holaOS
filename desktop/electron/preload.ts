@@ -1453,6 +1453,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ) as Promise<IntegrationMergeConnectionsResult>,
     deleteIntegrationBinding: (bindingId: string, workspaceId: string) =>
       ipcRenderer.invoke("workspace:deleteIntegrationBinding", bindingId, workspaceId) as Promise<{ deleted: boolean }>,
+    restartApp: (workspaceId: string, appId: string) =>
+      ipcRenderer.invoke("workspace:restartApp", workspaceId, appId) as Promise<{
+        workspace_id: string;
+        app_id: string;
+        restarted: boolean;
+      }>,
     listOAuthConfigs: () =>
       ipcRenderer.invoke("workspace:listOAuthConfigs") as Promise<OAuthAppConfigListResponsePayload>,
     upsertOAuthConfig: (providerId: string, payload: OAuthAppConfigUpsertPayload) =>
@@ -1465,7 +1471,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:composioListToolkits") as Promise<{ toolkits: Array<{ slug: string; name: string; description: string; logo: string | null; auth_schemes: string[]; categories: string[] }> }>,
     composioListConnections: () =>
       ipcRenderer.invoke("workspace:composioListConnections") as Promise<{ connections: Array<{ id: string; toolkitSlug: string; toolkitName: string; toolkitLogo: string | null; userId: string; createdAt: string }> }>,
-    composioConnect: (payload: { provider: string; owner_user_id: string; callback_url?: string }) =>
+    composioConnect: (payload: {
+      provider: string;
+      owner_user_id: string;
+      callback_url?: string;
+      whoami?: PendingIntegrationWhoami | null;
+    }) =>
       ipcRenderer.invoke("workspace:composioConnect", payload) as Promise<ComposioConnectResult>,
     composioAccountStatus: (
       connectedAccountId: string,

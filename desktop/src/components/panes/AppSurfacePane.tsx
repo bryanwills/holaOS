@@ -36,6 +36,7 @@ import {
   accountDisplayLabel,
   useEnrichedConnections,
 } from "@/lib/integrationDisplay";
+import { useIntegrationBinding } from "@/lib/useIntegrationBinding";
 import { resolveAppDisplay, useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import {
@@ -53,43 +54,6 @@ interface AppSurfacePaneProps {
   view?: string | null;
 }
 
-/**
- * Pick the most user-recognisable label for a connection. Backend whoami
- * lookups populate `account_handle` (e.g. "@joshua") and `account_email`;
- * `account_label` is admin-supplied; `account_external_id` and the UUID
- * `connection_id` are last-resort fallbacks that should rarely surface
- * to the user but are kept so the UI never renders empty.
- */
-function connectionPrimary(
-  conn: IntegrationConnectionPayload | undefined,
-  providerName: string,
-): string {
-  if (!conn) return `Pick an ${providerName} account`;
-  const label = conn.account_label?.trim();
-  const handle = conn.account_handle?.trim();
-  const email = conn.account_email?.trim();
-  const external = conn.account_external_id?.trim();
-  // Prefer human-readable identity over admin-set labels — handles let the
-  // user immediately recognise which account this is.
-  return handle || email || label || external || `${providerName} account`;
-}
-
-/**
- * Secondary line for the dropdown items — disambiguates when several
- * connections share the same handle (e.g. work + personal email under
- * the same account_label). Returns null when secondary would just
- * duplicate the primary line.
- */
-function connectionSecondary(conn: IntegrationConnectionPayload): string | null {
-  const primary = conn.account_handle?.trim() || conn.account_email?.trim() || conn.account_label?.trim();
-  const candidates = [
-    conn.account_email?.trim(),
-    conn.account_label?.trim(),
-    conn.account_external_id?.trim(),
-  ].filter((s): s is string => !!s && s !== primary);
-  return candidates[0] ?? null;
-}
-
 export function AppSurfacePane({
   appId,
   app: providedApp,
@@ -102,6 +66,7 @@ export function AppSurfacePane({
     removeInstalledApp,
     appCatalog,
     composioToolkitsByProvider,
+    installedApps,
   } = useWorkspaceDesktop();
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const app = providedApp || getWorkspaceAppDefinition(appId);
@@ -168,105 +133,54 @@ export function AppSurfacePane({
       });
   }, [app, appId, refreshInstalledApps, selectedWorkspaceId]);
 
-  // Per-app integration binding: which user-global account this workspace's
-  // copy of the app should use. Connections are user-global; the binding
-  // (target_type="app") is workspace+app scoped.
-  const [integrationContext, setIntegrationContext] = useState<{
-    providerId: string;
-    providerName: string;
-    candidates: IntegrationConnectionPayload[];
-    currentBindingId: string | null;
-    currentConnectionId: string | null;
-  } | null>(null);
-  const [bindingBusy, setBindingBusy] = useState(false);
+  // Resolve which provider this app declares in its yaml. The runtime
+  // ships the parsed `integrations[]` on `/api/v1/apps`, so the App
+  // Surface stays in sync with the yaml's `integration.destination` and
+  // needs no per-app hardcoded mapping. Required entries win over
+  // optional ones; if none declared, the integration UI hides.
+  const installedAppForBinding = installedApps.find(
+    (entry) => entry.id === appId,
+  );
+  const declaredIntegration =
+    installedAppForBinding?.integrations?.find((entry) => entry.required) ??
+    installedAppForBinding?.integrations?.[0];
+  const bindingProviderId = declaredIntegration?.provider ?? "";
+  const bindingProviderWhoami = declaredIntegration?.whoami ?? null;
+  const bindingProviderKey = bindingProviderId.toLowerCase();
+  const bindingProviderToolkit = composioToolkitsByProvider[bindingProviderKey];
+  const bindingProviderName = bindingProviderToolkit?.name ?? bindingProviderId;
+
+  const {
+    state: bindingState,
+    busy: bindingBusyState,
+    refresh: refreshBinding,
+    connect: connectBinding,
+    bind: selectBinding,
+    cancel: cancelBinding,
+  } = useIntegrationBinding({
+    appId,
+    provider: bindingProviderId,
+    whoami: bindingProviderWhoami,
+    considerWorkspaceDefault: true,
+  });
+
+  const bindingBusy = bindingBusyState !== null;
+
+  const candidates = useMemo(() => {
+    if (bindingState.kind === "bound") {
+      return [bindingState.activeConnection, ...bindingState.otherActiveConnections];
+    }
+    if (bindingState.kind === "needs_binding") {
+      return bindingState.candidates;
+    }
+    return [] as IntegrationConnectionPayload[];
+  }, [bindingState]);
+  const currentConnectionId =
+    bindingState.kind === "bound" ? bindingState.activeConnection.connection_id : null;
+  const accountMetadata = useEnrichedConnections(candidates);
   const [avatarFailures, setAvatarFailures] = useState<Set<string>>(
     () => new Set(),
   );
-
-  const candidates = useMemo(
-    () => integrationContext?.candidates ?? [],
-    [integrationContext],
-  );
-  const accountMetadata = useEnrichedConnections(candidates);
-
-  const checkIntegration = useCallback(async () => {
-    if (!selectedWorkspaceId) return;
-    try {
-      const [{ connections }, { providers }, bindingsResult] =
-        await Promise.all([
-          window.electronAPI.workspace.listIntegrationConnections(),
-          window.electronAPI.workspace.listIntegrationCatalog(),
-          window.electronAPI.workspace.listIntegrationBindings(
-            selectedWorkspaceId,
-          ),
-        ]);
-
-      // Resolve the expected provider for this app: prefer any existing
-      // app-level binding (which encodes the integration_key authoritatively),
-      // otherwise fall back to a static appId → provider mapping.
-      // Fallback when there's no app-level binding yet — used to render
-      // the "Connect <provider>" button on the app surface so users can
-      // bootstrap the binding from the app view itself. Keys are the
-      // app id; values are the Composio toolkit slug (NOT always the
-      // app id — Cal.com's app id is "calcom" but its Composio slug is
-      // "cal", and the same shape applies to Google sub-toolkits).
-      const knownProviders: Record<string, string> = {
-        gmail: "gmail",
-        sheets: "googlesheets",
-        github: "github",
-        reddit: "reddit",
-        twitter: "twitter",
-        linkedin: "linkedin",
-        calcom: "cal",
-        attio: "attio",
-        hubspot: "hubspot",
-        apollo: "apollo",
-        instantly: "instantly",
-        zoominfo: "zoominfo",
-      };
-      const appBinding = bindingsResult.bindings.find(
-        (b) => b.target_type === "app" && b.target_id === appId,
-      );
-      const providerId =
-        appBinding?.integration_key ?? knownProviders[appId.toLowerCase()];
-      if (!providerId) {
-        setIntegrationContext(null);
-        return;
-      }
-
-      const provider = providers.find((p) => p.provider_id === providerId);
-      const candidates = connections.filter(
-        (c) =>
-          c.provider_id === providerId &&
-          (c.status ?? "").toLowerCase() === "active",
-      );
-
-      // Current selection: app-level binding wins; fall back to the
-      // workspace-default binding for this provider.
-      const workspaceDefault = bindingsResult.bindings.find(
-        (b) =>
-          b.target_type === "workspace" &&
-          b.target_id === "default" &&
-          b.integration_key === providerId,
-      );
-      const currentConnectionId =
-        appBinding?.connection_id ?? workspaceDefault?.connection_id ?? null;
-
-      setIntegrationContext({
-        providerId,
-        providerName: provider?.display_name ?? providerId,
-        candidates,
-        currentBindingId: appBinding?.binding_id ?? null,
-        currentConnectionId,
-      });
-    } catch {
-      // Non-fatal — leave the previous context in place.
-    }
-  }, [appId, selectedWorkspaceId]);
-
-  useEffect(() => {
-    void checkIntegration();
-  }, [checkIntegration]);
 
   // Re-check integration connections when the user returns to the window or
   // this tab becomes visible again. OAuth flows leave Holaboss to the browser
@@ -279,7 +193,7 @@ export function AppSurfacePane({
       // Throttle: at most once every 3s to avoid storms when users alt-tab.
       if (now - lastFocusRefetchRef.current < 3000) return;
       lastFocusRefetchRef.current = now;
-      void checkIntegration();
+      void refreshBinding();
     };
     const onVisibility = () => {
       if (document.visibilityState === "visible") refetch();
@@ -290,33 +204,17 @@ export function AppSurfacePane({
       window.removeEventListener("focus", refetch);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [checkIntegration]);
+  }, [refreshBinding]);
 
   const handleSelectBinding = useCallback(
-    async (connectionId: string) => {
-      if (!selectedWorkspaceId || !integrationContext) return;
-      setBindingBusy(true);
-      try {
-        await window.electronAPI.workspace.upsertIntegrationBinding(
-          selectedWorkspaceId,
-          "app",
-          appId,
-          integrationContext.providerId,
-          { connection_id: connectionId, is_default: false },
-        );
-        await checkIntegration();
-      } catch {
-        // Non-fatal — the dropdown will reflect server state on next refresh.
-      } finally {
-        setBindingBusy(false);
-      }
-    },
-    [appId, checkIntegration, integrationContext, selectedWorkspaceId],
+    async (connectionId: string) => selectBinding(connectionId),
+    [selectBinding],
   );
 
-  const handleConnectAccount = useCallback(() => {
-    void window.electronAPI.ui.openSettingsPane("integrations");
-  }, []);
+  const handleConnectAccount = useCallback(
+    async () => connectBinding(),
+    [connectBinding],
+  );
 
   // Resolve iframe URL when app is ready
   useEffect(() => {
@@ -373,7 +271,7 @@ export function AppSurfacePane({
     setActionError("");
     setFrameError("");
     try {
-      await Promise.all([refreshInstalledApps(), checkIntegration()]);
+      await Promise.all([refreshInstalledApps(), refreshBinding()]);
       setReloadKey((k) => k + 1);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Retry failed.");
@@ -392,14 +290,18 @@ export function AppSurfacePane({
   // toolbar modeled after BrowserPane's chrome row.
   const surfaceState: "initializing" | "error" | "ready" =
     !ready && error ? "error" : !ready ? "initializing" : "ready";
-  const showIntegration = surfaceState === "ready" && integrationContext;
+  const showIntegration =
+    surfaceState === "ready" &&
+    bindingProviderId.length > 0 &&
+    bindingState.kind !== "loading" &&
+    bindingState.kind !== "no_workspace";
   const showRetry = surfaceState !== "initializing";
   const onRetry =
     surfaceState === "error"
       ? () => void handleRetry()
       : () => {
           setReloadKey((k) => k + 1);
-          void checkIntegration();
+          void refreshBinding();
         };
 
   return (
@@ -452,39 +354,55 @@ export function AppSurfacePane({
 
           <div className="flex shrink-0 items-center gap-1">
             {showIntegration ? (
-              integrationContext.candidates.length === 0 ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size={isNarrowPane ? "icon-sm" : "sm"}
-                  onClick={handleConnectAccount}
-                  className={isNarrowPane ? "" : "gap-1.5"}
-                  title={`Connect ${integrationContext.providerName}`}
-                  aria-label={`Connect ${integrationContext.providerName}`}
-                >
-                  <Plus size={12} />
-                  {!isNarrowPane ? (
-                    <>Connect {integrationContext.providerName}</>
-                  ) : null}
-                </Button>
+              candidates.length === 0 ? (
+                bindingBusyState === "connecting" ? (
+                  // Swap to a clickable Cancel so a rejected / closed OAuth
+                  // window doesn't strand the spinner for the full 300s poll
+                  // timeout. The hook's AbortController unwinds the poll
+                  // loop immediately on click.
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size={isNarrowPane ? "icon-sm" : "sm"}
+                    onClick={() => cancelBinding()}
+                    className={isNarrowPane ? "" : "gap-1.5"}
+                    title="Cancel connection"
+                    aria-label="Cancel connection"
+                  >
+                    <LoaderCircle size={12} className="animate-spin" />
+                    {!isNarrowPane ? <>Cancel</> : null}
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size={isNarrowPane ? "icon-sm" : "sm"}
+                    onClick={handleConnectAccount}
+                    disabled={bindingBusy}
+                    className={isNarrowPane ? "" : "gap-1.5"}
+                    title={`Connect ${bindingProviderName}`}
+                    aria-label={`Connect ${bindingProviderName}`}
+                  >
+                    <Plus size={12} />
+                    {!isNarrowPane ? <>Connect {bindingProviderName}</> : null}
+                  </Button>
+                )
               ) : (
                 <Select
                   disabled={bindingBusy}
                   onValueChange={(value) => {
                     if (!value) return;
                     if (value === "__connect_new__") {
-                      handleConnectAccount();
+                      void handleConnectAccount();
                     } else {
                       void handleSelectBinding(value);
                     }
                   }}
-                  value={integrationContext.currentConnectionId ?? ""}
+                  value={currentConnectionId ?? ""}
                 >
                   {(() => {
                     const currentIndex = candidates.findIndex(
-                      (c) =>
-                        c.connection_id ===
-                        integrationContext.currentConnectionId,
+                      (c) => c.connection_id === currentConnectionId,
                     );
                     const currentConn =
                       currentIndex >= 0 ? candidates[currentIndex] : null;
@@ -497,7 +415,7 @@ export function AppSurfacePane({
                           currentMeta,
                           currentIndex,
                         )
-                      : `Pick an ${integrationContext.providerName} account`;
+                      : `Pick a ${bindingProviderName} account`;
                     const currentAvatar = currentMeta?.avatarUrl?.trim();
                     const currentAvatarBroken = currentConn
                       ? avatarFailures.has(currentConn.connection_id)
@@ -530,7 +448,7 @@ export function AppSurfacePane({
                             />
                           ) : (
                             <span className="grid size-4 shrink-0 place-items-center text-muted-foreground">
-                              {providerIcon(integrationContext.providerId, 12) ?? (
+                              {providerIcon(bindingProviderId, 12) ?? (
                                 <Plug size={10} />
                               )}
                             </span>

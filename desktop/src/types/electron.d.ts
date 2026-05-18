@@ -367,6 +367,26 @@ interface DesktopWindowStatePayload {
   isMinimized: boolean;
 }
 
+// Per-toolkit whoami descriptor declared in the app's `app.runtime.yaml`,
+// forwarded from runtime → chat UI → composioConnect → Hono so the profile
+// fetch can resolve identity fields without a Hono-side per-toolkit map.
+// Field values are dot-paths against the provider's /me response; a value
+// containing `{...}` placeholders is treated as a URL template (used e.g.
+// for Discord avatars: "https://cdn.discordapp.com/avatars/{id}/{avatar}.png").
+// Arrays of candidates are also supported (first non-empty wins) to absorb
+// shape drift between provider API versions.
+type PendingIntegrationWhoamiField = string | string[];
+interface PendingIntegrationWhoami {
+  endpoint: string;
+  fallback_endpoints?: string[];
+  fields: {
+    handle?: PendingIntegrationWhoamiField;
+    display_name?: PendingIntegrationWhoamiField;
+    avatar_url?: PendingIntegrationWhoamiField;
+    email?: PendingIntegrationWhoamiField;
+  };
+}
+
 interface DesktopNativeNotificationPayload {
   title: string;
   body: string;
@@ -1022,13 +1042,44 @@ interface RuntimeNotificationListOptionsPayload {
     usageUrl: string;
   }
 
+  interface InstalledWorkspaceAppIntegrationRequirement {
+    key: string;
+    /**
+     * Composio toolkit slug (== `integration.destination` / `provider.id`)
+     * — drives the per-app Connect button on the App Surface and the
+     * `pending_integrations` emit in chat tool results.
+     */
+    provider: string;
+    capability: string | null;
+    required: boolean;
+    /**
+     * Optional whoami descriptor declared in the app's yaml — when present
+     * the desktop forwards it to Hono `/composio/connect` so the per-toolkit
+     * profile fetch resolves without a Hono-side constant. See
+     * `PendingIntegrationWhoami` for the shape.
+     */
+    whoami?: PendingIntegrationWhoami | null;
+  }
+
   interface InstalledWorkspaceAppPayload {
     app_id: string;
+    /**
+     * Display name from yaml's top-level `name:` field. Null when the yaml
+     * is unparseable or omits `name:` — the desktop falls back to a
+     * title-cased `app_id`.
+     */
+    name?: string | null;
     config_path: string;
     lifecycle: Record<string, string> | null;
     build_status?: string;
     ready: boolean;
     error: string | null;
+    /**
+     * Integrations declared in the app's `app.runtime.yaml`. Empty when the
+     * yaml has no `integrations:` block (UI-only apps, data-only apps). The
+     * runtime parses this fresh on every list call.
+     */
+    integrations?: InstalledWorkspaceAppIntegrationRequirement[];
   }
 
   interface InstalledWorkspaceAppListResponsePayload {
@@ -1793,7 +1844,22 @@ interface RuntimeNotificationListOptionsPayload {
       startOAuthFlow: (provider: string) => Promise<OAuthAuthorizeResponsePayload>;
       composioListToolkits: () => Promise<{ toolkits: Array<{ slug: string; name: string; description: string; logo: string | null; auth_schemes: string[]; categories: string[] }> }>;
       composioListConnections: () => Promise<{ connections: Array<{ id: string; toolkitSlug: string; toolkitName: string; toolkitLogo: string | null; userId: string; createdAt: string }> }>;
-      composioConnect: (payload: { provider: string; owner_user_id: string; callback_url?: string }) => Promise<ComposioConnectResult>;
+      restartApp: (workspaceId: string, appId: string) => Promise<{
+        workspace_id: string;
+        app_id: string;
+        restarted: boolean;
+      }>;
+      composioConnect: (payload: {
+        provider: string;
+        owner_user_id: string;
+        callback_url?: string;
+        // Optional whoami descriptor forwarded to Hono and stashed against
+        // `connected_account_id` so the profile-fetch path can resolve
+        // handle / email / display_name / avatar from the provider's /me
+        // endpoint without a Hono-side per-toolkit constant. Shape mirrors
+        // `WhoamiConfig` in runtime/api-server/src/integration-types.ts.
+        whoami?: PendingIntegrationWhoami | null;
+      }) => Promise<ComposioConnectResult>;
       composioAccountStatus: (
         connectedAccountId: string,
         providerId?: string | null,

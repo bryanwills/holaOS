@@ -134,6 +134,7 @@ interface WorkspaceDesktopContextValue {
     appId?: string | null;
     accountLabel?: string | null;
     signal?: AbortSignal;
+    whoami?: PendingIntegrationWhoami | null;
   }) => Promise<{ connectionId: string }>;
   templateSourceMode: TemplateSourceMode;
   setTemplateSourceMode: (value: TemplateSourceMode) => void;
@@ -1109,11 +1110,13 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     provider,
     accountLabel,
     signal,
+    whoami,
   }: {
     provider: string;
     appId?: string | null;
     accountLabel?: string | null;
     signal?: AbortSignal;
+    whoami?: PendingIntegrationWhoami | null;
   }): Promise<{ connectionId: string }> {
     const throwIfAborted = () => {
       if (signal?.aborted) {
@@ -1145,6 +1148,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     const link = await window.electronAPI.workspace.composioConnect({
       provider,
       owner_user_id: userId,
+      ...(whoami ? { whoami } : {}),
     });
 
     throwIfAborted();

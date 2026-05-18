@@ -3231,6 +3231,11 @@ type SubagentPendingIntegration = {
   app_id: string;
   provider_id: string;
   credential_source: string | null;
+  // Opaque whoami config emitted by the runtime; forwarded verbatim to the
+  // chat UI and then to Hono's /composio/connect. Shape lives in
+  // integration-types.ts (WhoamiConfig). Treated as unknown here to keep
+  // this module free of Hono-specific knowledge.
+  whoami: Record<string, unknown> | null;
 };
 
 function parseSubagentPendingIntegrationsFromText(text: string): SubagentPendingIntegration[] {
@@ -3258,6 +3263,7 @@ function parseSubagentPendingIntegrationsFromText(text: string): SubagentPending
       provider_id: provider,
       credential_source:
         typeof entry.credential_source === "string" ? entry.credential_source : null,
+      whoami: isRecord(entry.whoami) ? entry.whoami : null,
     });
   }
   return out;
@@ -3268,6 +3274,14 @@ const PENDING_INTEGRATION_EMITTING_TOOLS = new Set([
   "workspace_apps_ensure_running",
   "workspace_apps_restart",
   "workspace_apps_restart_and_wait_ready",
+  // Also scan completion-ish tools — the agent may end its build flow on
+  // any of these without ever invoking ensure_running, leaving Connect
+  // buttons stranded if we only emit from the four above.
+  "workspace_apps_scaffold",
+  "workspace_apps_register",
+  "workspace_apps_build",
+  "workspace_apps_wait_until_ready",
+  "workspace_apps_get_status",
 ]);
 
 function subagentPendingIntegrations(params: {
