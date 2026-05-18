@@ -16,8 +16,7 @@ Reference doc for the product intent: `docs/pm/app-vibe-coding.md` (vibe-coding 
 
 ## When NOT to use this skill
 
-- The user already has a working hola-boss-apps module and wants to extend it → modify it in place; don't rewrite as SDK.
-- The legacy `app-builder` skill exists for the pre-SDK app shape (hola-boss-apps repo, separate package per app). New apps always go through this SDK; the legacy skill is being phased out.
+- The user already has a working hola-boss-apps module and wants to extend it → modify it in place; don't rewrite as SDK. (The legacy app-builder skill that used to live alongside this one has been removed; all new app work goes through this SDK.)
 
 ## The 5 primitives
 

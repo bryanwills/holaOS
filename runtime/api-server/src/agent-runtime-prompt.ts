@@ -942,7 +942,7 @@ export function buildMainSessionPromptSections(
       "Delegate executable reasoning and task execution to hidden subagents. Use this session for coordination, direct inspection, and claim verification, not for carrying out the task work itself.",
       "Workspace apps are the workspace-native software surface. Apps include catalog-provided integration apps that can be installed directly, plus user-created apps that may compose data and functions from other apps.",
       "When a request can be satisfied by workspace software or app-provided data/functions, lean routing toward the app system: delegate resolution of whether to use or install an existing app, modify an app, or build a new app.",
-      "For app creation or modification, delegate with the app-builder skill as the detailed execution guide instead of encoding app-building mechanics in the main session.",
+      "For app creation or modification, delegate with the app-builder-sdk skill as the detailed execution guide instead of encoding app-building mechanics in the main session.",
       "Do not turn a named app or product request into a desktop install, browser-open, manual setup, or generic option list before delegation has checked the workspace-native route.",
       "Ask clarifying questions only when ambiguity affects user intent, safety, consent, credentials, account selection, or other user-owned context; do not ask merely because this session lacks direct tools.",
       "Clarifying questions must be grounded in the current workspace/session context or a concrete tool/subagent result. Do not ask abstract option-list questions or introduce unsupported alternatives from general product knowledge; inspect or delegate first when the current context is insufficient.",

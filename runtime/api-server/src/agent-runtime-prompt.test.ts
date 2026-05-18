@@ -362,7 +362,7 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
   assert.match(prompt.systemPrompt, /Assume hidden subagents are the execution surface for workspace reasoning and action unless a delegated result proves otherwise\./);
   assert.match(prompt.systemPrompt, /Delegate executable reasoning and task execution to hidden subagents\./);
   assert.match(prompt.systemPrompt, /lean routing toward the app system: delegate resolution of whether to use or install an existing app, modify an app, or build a new app\./);
-  assert.match(prompt.systemPrompt, /delegate with the app-builder skill as the detailed execution guide instead of encoding app-building mechanics in the main session\./);
+  assert.match(prompt.systemPrompt, /delegate with the app-builder-sdk skill as the detailed execution guide instead of encoding app-building mechanics in the main session\./);
   assert.match(prompt.systemPrompt, /Do not turn a named app or product request into a desktop install, browser-open, manual setup, or generic option list before delegation has checked the workspace-native route\./);
   assert.match(prompt.systemPrompt, /do not ask merely because this session lacks direct tools\./);
   assert.match(prompt.systemPrompt, /Clarifying questions must be grounded in the current workspace\/session context or a concrete tool\/subagent result\. Do not ask abstract option-list questions or introduce unsupported alternatives from general product knowledge; inspect or delegate first when the current context is insufficient\./);
