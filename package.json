@@ -3,6 +3,7 @@
   "private": true,
   "packageManager": "bun@1.3.6",
   "workspaces": [
+    "desktop",
     "experiments/app-builder-sdk",
     "packages/*",
     "runtime/api-server",
@@ -14,7 +15,12 @@
     "website/docs"
   ],
   "trustedDependencies": [
-    "better-sqlite3"
+    "@electron/rebuild",
+    "@parcel/watcher",
+    "better-sqlite3",
+    "electron",
+    "electron-builder",
+    "esbuild"
   ],
   "scripts": {
     "clean": "node scripts/remove-paths.mjs out desktop/build runtime/out",
@@ -27,15 +33,15 @@
     "docs:deploy:staging": "bun --filter=docs-next run deploy:staging",
     "docs:deploy:production": "bun --filter=docs-next run deploy:production",
     "desktop:clean": "node scripts/remove-paths.mjs desktop/out desktop/build",
-    "desktop:install": "npm install --prefix desktop",
-    "desktop:prepare": "bun --filter=@holaboss/app-sdk run build && npm install --prefix desktop",
-    "desktop:dev": "npm --prefix desktop run dev",
-    "desktop:e2e": "npm --prefix desktop run e2e",
-    "desktop:typecheck": "npm --prefix desktop run typecheck",
-    "desktop:prepare-runtime": "npm --prefix desktop run prepare:runtime",
-    "desktop:prepare-runtime:local": "npm --prefix desktop run prepare:runtime:local",
-    "desktop:dist:mac:local": "npm --prefix desktop run dist:mac:local",
-    "desktop:dist:win:local": "npm --prefix desktop run dist:win:local",
+    "desktop:install": "bun install",
+    "desktop:prepare": "bun --filter=@holaboss/app-sdk run build",
+    "desktop:dev": "bun --filter=holaboss-local run dev",
+    "desktop:e2e": "bun --filter=holaboss-local run e2e",
+    "desktop:typecheck": "bun --filter=holaboss-local run typecheck",
+    "desktop:prepare-runtime": "bun --filter=holaboss-local run prepare:runtime",
+    "desktop:prepare-runtime:local": "bun --filter=holaboss-local run prepare:runtime:local",
+    "desktop:dist:mac:local": "bun --filter=holaboss-local run dist:mac:local",
+    "desktop:dist:win:local": "bun --filter=holaboss-local run dist:win:local",
     "runtime:harnesses:install": "bun install",
     "runtime:harness-host:install": "bun install",
     "runtime:harness-host:build": "bun --filter=@holaboss/runtime-harness-host run build",

@@ -53,6 +53,8 @@ jobs:
   desktop-typecheck:
     if: ${{ github.event_name != 'workflow_dispatch' }}
     runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -66,22 +68,12 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: desktop/package-lock.json
 
-      - name: Install workspace dependencies (root bun)
+      - name: Install workspace dependencies (covers desktop)
         run: bun install --frozen-lockfile
 
-      - name: Build app SDK
-        run: bun --filter=@holaboss/app-sdk run build
-
-      - name: Install desktop dependencies (npm, Step 2 territory)
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-        run: npm install --prefix desktop
-
       - name: Desktop typecheck
-        run: npm run desktop:typecheck
+        run: bun run desktop:typecheck
 
   runtime-tests:
     if: ${{ github.event_name != 'workflow_dispatch' }}
@@ -281,10 +273,10 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: desktop/package-lock.json
 
-      - name: Install workspace dependencies (root bun)
+      - name: Install workspace dependencies (covers desktop)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: bun install --frozen-lockfile
 
       - name: Build macOS runtime bundle
@@ -308,11 +300,6 @@ jobs:
 
       - name: Build app SDK
         run: bun --filter=@holaboss/app-sdk run build
-
-      - name: Install desktop dependencies (npm, Step 2 territory)
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-        run: npm install --prefix desktop
 
       - name: Require mac signing and notarization credentials
         run: |
@@ -587,10 +574,10 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: desktop/package-lock.json
 
-      - name: Install workspace dependencies (root bun)
+      - name: Install workspace dependencies (covers desktop)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: bun install --frozen-lockfile
 
       - name: Validate Azure Trusted Signing credentials
@@ -731,11 +718,6 @@ jobs:
 
       - name: Build app SDK
         run: bun --filter=@holaboss/app-sdk run build
-
-      - name: Install desktop dependencies (npm, Step 2 territory)
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-        run: npm install --prefix desktop
 
       - name: Build Windows desktop installer
         id: build_windows_installer
