@@ -1,8 +1,8 @@
 import fs from "node:fs/promises";
-import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import dotenv from "dotenv";
+
+import { loadDesktopEnv } from "./load-desktop-env.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDir, "..");
@@ -41,22 +41,8 @@ function resolveAppUpdateEnabled() {
 }
 
 async function loadDesktopEnvDefaults() {
-  const envCandidates = [
-    path.join(desktopRoot, ".env"),
-    path.join(desktopRoot, ".env.production")
-  ];
-  const parsed = {};
-  for (const envPath of envCandidates) {
-    if (!existsSync(envPath)) {
-      continue;
-    }
-    try {
-      Object.assign(parsed, dotenv.parse(await fs.readFile(envPath, "utf8")));
-    } catch {
-      // Ignore malformed optional env files; explicit process env still applies.
-    }
-  }
-  return parsed;
+  loadDesktopEnv({ includeProduction: true });
+  return process.env;
 }
 
 const desktopEnvDefaults = await loadDesktopEnvDefaults();

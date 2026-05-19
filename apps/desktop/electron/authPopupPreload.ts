@@ -1,5 +1,8 @@
-import "dotenv/config";
 import { contextBridge, ipcRenderer } from "electron";
+
+import { loadDesktopEnv } from "./desktopEnv";
+
+loadDesktopEnv();
 
 interface AuthUserPayload {
   id: string;

@@ -1,7 +1,9 @@
-import "dotenv/config";
 import { app as electronApp } from "electron";
+import { loadDesktopEnv } from "./desktopEnv";
 
 electronApp.setName("holaOS");
+
+loadDesktopEnv();
 
 import * as Sentry from "@sentry/electron/main";
 
@@ -9152,7 +9154,7 @@ function embeddedRuntimeStartupConfigError() {
   }
   return (
     "Embedded runtime remote bridge is enabled but no remote base URL is configured. " +
-    "Set HOLABOSS_BACKEND_BASE_URL or HOLABOSS_PROACTIVE_URL in desktop/.env."
+    "Set HOLABOSS_BACKEND_BASE_URL or HOLABOSS_PROACTIVE_URL in apps/desktop/.env."
   );
 }
 

@@ -159,6 +159,7 @@ cp apps/desktop/.env.example apps/desktop/.env
 ```
 
 If you are following the repo exactly, keep the file close to the template and only change the values that your provider or machine needs.
+The canonical path is `apps/desktop/.env`. Existing legacy `desktop/.env` files are still accepted for now, but new setups should use `apps/desktop/.env`.
 
 3. Prepare the local runtime bundle:
 
