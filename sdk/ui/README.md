@@ -14,16 +14,24 @@ bun add @holaboss/ui
 
 Peer deps: `react ^19`, `react-dom ^19`.
 
-## Mount the tokens
+## Mount the styles
 
 At the root of your app (e.g. `routes/__root.tsx`):
+
+```tsx
+import "@holaboss/ui/styles.css";
+```
+
+That one import covers everything: the design tokens, the default theme, and every Tailwind utility class the library's primitives + layouts use (pre-compiled at build time, so you do **not** need to add `@holaboss/ui` to your own Tailwind `@source` list).
+
+If you want just the raw tokens without the baked-in utility set, the escape hatch is:
 
 ```tsx
 import "@holaboss/ui/tokens.css";
 import "@holaboss/ui/themes/holaos.css";
 ```
 
-Both stylesheets ship inside the npm package and are required — without them the CSS variables (`--background`, `--primary`, `--border`, `--radius`, etc.) fall back to defaults and every primitive renders wrong.
+But the recommended path is the single `styles.css` import.
 
 ## What ships
 

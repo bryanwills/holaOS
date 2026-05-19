@@ -91,17 +91,23 @@ The app-builder-sdk itself still installs via `file:` because it's lockstep-vers
 }
 ```
 
-### Tokens are immutable
+### Mount the styles — one import, done
 
-Mount the holaOS tokens at the dashboard root:
+`@holaboss/ui` ships a pre-compiled stylesheet that contains:
+- the holaOS design tokens (`--background`, `--foreground`, `--primary`, `--radius`, etc.)
+- the default theme palette
+- every Tailwind utility class used by the library's primitives + layouts
+
+Import it once at the dashboard root:
 
 ```tsx
 // src/client/routes/__root.tsx
-import "@holaboss/ui/tokens.css";
-import "@holaboss/ui/themes/holaos.css";
+import "@holaboss/ui/styles.css";
 ```
 
-Colors, font sizes, spacing, radii all come from CSS variables wired up by these two stylesheets (`--background`, `--foreground`, `--primary`, `--muted`, `--accent`, `--border`, `--radius`, etc.). No inline `style={{ color: "#f12711" }}`. No custom CSS files. No new Tailwind colors. If a value is missing from the token palette, escalate to the SDK team — do not patch it locally.
+That's it. **Do not** try to add `@holaboss/ui` to your own Tailwind `@source` list — the utilities are already baked in. **Do not** mount `tokens.css` + `themes/holaos.css` separately unless you have an explicit reason (those exports exist as an escape hatch).
+
+Visual rules: colors / spacing / radii come from these CSS variables. No inline `style={{ color: "#f12711" }}`. No custom CSS files. No new Tailwind colors. If a value is missing from the token palette, escalate to the SDK team — do not patch it locally.
 
 ### Catalog of what `@holaboss/ui` ships
 
@@ -128,7 +134,7 @@ Colors, font sizes, spacing, radii all come from CSS variables wired up by these
 ```
 src/client/
 ├── routes/
-│   ├── __root.tsx          # imports @holaboss/ui/tokens.css + @holaboss/ui/themes/holaos.css
+│   ├── __root.tsx          # imports @holaboss/ui/styles.css
 │   └── index.tsx           # dashboard root — uses DashboardShell + DataTable
 └── lib/                    # app-specific code only; no components/ui/
 ```
@@ -179,7 +185,7 @@ Wire it up by:
 
 1. Start TanStack Start (or simple Bun.serve serving a Vite-built dashboard) on `env.PORT` from the same `server.ts` that boots the MCP server on `env.MCP_PORT`. The desktop's iframe loads whatever the http port serves.
 2. The dashboard reads the app's own SQLite (the table `app.resource()` declared) via TanStack Start server functions — same DB the MCP tools mutate. **Never duplicate state.**
-3. Mount `@holaboss/ui/tokens.css` and `@holaboss/ui/themes/holaos.css` at the top of `__root.tsx`. Without them the tokens fall back to defaults and the app looks alien.
+3. Mount `@holaboss/ui/styles.css` at the top of `__root.tsx`. That single import covers the tokens, the default theme, and every Tailwind utility class the library uses. Without it the tokens fall back to defaults and the components render with no styling.
 
 ### Schema migration (from PM doc)
 
@@ -441,6 +447,6 @@ Run all of these. Stop at the first failure and report the symptom verbatim, don
 
 ### For dashboard apps (additionally)
 
-7. `@holaboss/ui` on npmjs.com — public package with the full primitive + layout catalog. Install via `bun add @holaboss/ui`. Import via `import { DashboardShell, DataTable, ... } from "@holaboss/ui"` and the tokens via `import "@holaboss/ui/tokens.css"` + `import "@holaboss/ui/themes/holaos.css"` at the dashboard root.
+7. `@holaboss/ui` on npmjs.com — public package with the full primitive + layout catalog. Install via `bun add @holaboss/ui`. Import components via `import { DashboardShell, DataTable, ... } from "@holaboss/ui"` and mount the bundled styles via a single `import "@holaboss/ui/styles.css"` at the dashboard root.
 8. `reference/dashboard/` — minimal end-to-end dashboard reference; copy as the starting point for any dashboard-shape app and adapt the columns / actions.
 9. Compare against the current live desktop panes if available, but do not leave the workspace or guess repo-root source paths just to locate pane source files.
