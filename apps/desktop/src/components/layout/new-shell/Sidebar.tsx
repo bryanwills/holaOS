@@ -119,7 +119,14 @@ function SidebarExpanded() {
   const skills = useWorkspaceSkills(selectedWorkspaceId || null);
   const cronjobs = useWorkspaceCronjobs(selectedWorkspaceId || null);
   const urlRecents = useRecentBrowserHistory(20);
-  const fileRecents = useAtomValue(recentFilesAtom);
+  const allFileRecents = useAtomValue(recentFilesAtom);
+  const fileRecents = useMemo(
+    () =>
+      allFileRecents.filter(
+        (entry) => entry.workspaceId === (selectedWorkspaceId ?? null),
+      ),
+    [allFileRecents, selectedWorkspaceId],
+  );
   const recents = useMemo<RecentItem[]>(() => {
     const merged: RecentItem[] = [
       ...urlRecents.map((entry) => ({

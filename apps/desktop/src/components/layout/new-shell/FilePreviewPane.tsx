@@ -56,7 +56,10 @@ export function FilePreviewPane({ filePath, onClose }: FilePreviewPaneProps) {
     const fileName = fileNameFromPath(filePath);
     const handleClose = () => {
       if (notFound) {
-        removeRecentFileByPath(filePath);
+        removeRecentFileByPath({
+          filePath,
+          workspaceId: selectedWorkspaceId ?? null,
+        });
       }
       onClose?.();
     };

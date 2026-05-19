@@ -149,7 +149,10 @@ export function TopChrome() {
             .deletePath(tab.filePath, selectedWorkspaceId ?? null)
             .then(() => {
               handleCloseInternalTab(tab.id);
-              removeRecentFileByPath(tab.filePath);
+              removeRecentFileByPath({
+                filePath: tab.filePath,
+                workspaceId: selectedWorkspaceId ?? null,
+              });
             })
             .catch(() => {
               // surfaced via OS notification when applicable; nothing
