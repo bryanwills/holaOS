@@ -1333,122 +1333,7 @@ test("runTsRunnerCli strips subagent orchestration tools from onboarding session
   );
 });
 
-test("runTsRunnerCli gives workspace onboarding executor-grade lab tools", async () => {
-  setTempSandboxRoot("hb-ts-runner-workspace-onboarding-tools-");
-  let capturedProjectRequest: AgentRuntimeConfigCliRequest | null = null;
-
-  const stagedRuntimeTools = [
-    "holaboss_delegate_task",
-    "holaboss_get_subagent",
-    "holaboss_list_background_tasks",
-    "holaboss_cancel_subagent",
-    "holaboss_resume_subagent",
-    "holaboss_continue_subagent",
-    "holaboss_onboarding_complete",
-    "holaboss_update_workspace_instructions",
-  ];
-
-  const exitCode = await runTsRunnerCli(
-    [
-      "--request-base64",
-      encodeRequest({
-        ...baseRequest(),
-        session_kind: "workspace_onboarding",
-      }),
-    ],
-    {
-      deps: {
-        ...testDeps({
-          pluginOverrides: {
-            stageBrowserTools: () => ({
-              changed: false,
-              toolIds: ["browser_get_state"],
-            }),
-            stageRuntimeTools: () => ({
-              changed: false,
-              toolIds: stagedRuntimeTools,
-            }),
-          },
-        }),
-        projectAgentRuntimeConfig: (request) => {
-          capturedProjectRequest = request;
-          return {
-            provider_id: "openai",
-            model_id: "gpt-5.4",
-            mode: "code",
-            system_prompt: "You are concise.",
-            model_client: {
-              model_proxy_provider: "openai_compatible",
-              api_key: "token",
-              base_url: "http://127.0.0.1:4000/openai/v1",
-              default_headers: { "X-Test": "1" },
-            },
-            tools: { read: true },
-            workspace_tool_ids: [],
-            workspace_skill_ids: [],
-            output_schema_member_id: null,
-            output_format: null,
-            workspace_config_checksum: "checksum-1",
-          };
-        },
-      },
-      io: {
-        stdout: {
-          write() {
-            return true;
-          },
-        } as unknown as NodeJS.WritableStream,
-        stderr: {
-          write() {
-            return true;
-          },
-        } as unknown as NodeJS.WritableStream,
-      },
-    },
-  );
-
-  assert.equal(exitCode, 0);
-  assert.ok(capturedProjectRequest);
-  assert.equal(
-    (capturedProjectRequest as { session_kind: string | null }).session_kind,
-    "workspace_onboarding",
-  );
-  assert.deepEqual(
-    (capturedProjectRequest as { browser_tool_ids: string[] }).browser_tool_ids,
-    ["browser_get_state"],
-  );
-  assert.deepEqual(
-    (capturedProjectRequest as { runtime_tool_ids: string[] }).runtime_tool_ids,
-    stagedRuntimeTools,
-  );
-  assert.deepEqual(
-    (capturedProjectRequest as { default_tools: string[] }).default_tools,
-    [
-      "read",
-      "edit",
-      "bash",
-      "grep",
-      "glob",
-      "list",
-      "question",
-      "todowrite",
-      "todoread",
-      "skill",
-    ],
-  );
-  const extraTools = (capturedProjectRequest as { extra_tools: string[] }).extra_tools;
-  assert.ok(extraTools.includes("web_search"));
-  assert.ok(extraTools.includes("browser_get_state"));
-  assert.ok(extraTools.includes("holaboss_delegate_task"));
-  assert.ok(extraTools.includes("holaboss_update_workspace_instructions"));
-  assert.equal(
-    (capturedProjectRequest as { delegated_session_kind?: string | null })
-      .delegated_session_kind,
-    "subagent",
-  );
-});
-
-test("runTsRunnerCli strips staged execution tools from front-of-house workspace sessions", async () => {
+test("runTsRunnerCli keeps staged execution tools on front-of-house workspace sessions", async () => {
   setTempSandboxRoot("hb-ts-runner-runtime-tools-");
   let capturedProjectRequest: AgentRuntimeConfigCliRequest | null = null;
 
@@ -1461,7 +1346,9 @@ test("runTsRunnerCli strips staged execution tools from front-of-house workspace
             stageBrowserTools: ({ sessionKind }) => ({
               changed: false,
               toolIds:
-                sessionKind === "subagent" ? ["browser_get_state"] : [],
+                sessionKind === "main_session" || sessionKind === "subagent"
+                  ? ["browser_get_state"]
+                  : [],
             }),
             stageRuntimeTools: () => ({
               changed: false,
@@ -1511,24 +1398,28 @@ test("runTsRunnerCli strips staged execution tools from front-of-house workspace
   assert.equal(
     (capturedProjectRequest as { browser_tools_available: boolean })
       .browser_tools_available,
-    false,
+    true,
   );
   assert.deepEqual(
     (capturedProjectRequest as { browser_tool_ids: string[] }).browser_tool_ids,
-    [],
+    ["browser_get_state"],
   );
   assert.deepEqual(
     (capturedProjectRequest as { runtime_tool_ids: string[] }).runtime_tool_ids,
-    [],
+    ["holaboss_onboarding_complete", "write_report"],
   );
   assert.deepEqual(
     (capturedProjectRequest as { default_tools: string[] }).default_tools,
     [
       "read",
+      "edit",
+      "bash",
       "grep",
       "glob",
       "list",
       "question",
+      "todowrite",
+      "todoread",
       "skill",
     ],
   );
@@ -1538,7 +1429,12 @@ test("runTsRunnerCli strips staged execution tools from front-of-house workspace
   );
   assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
-    [],
+    [
+      "web_search",
+      "browser_get_state",
+      "holaboss_onboarding_complete",
+      "write_report",
+    ],
   );
   assert.equal(
     (capturedProjectRequest as {
@@ -1651,7 +1547,7 @@ test("runTsRunnerCli exposes workspace-instructions updates only to main workspa
   );
   assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
-    ["holaboss_update_workspace_instructions"],
+    ["web_search", "holaboss_update_workspace_instructions"],
   );
   assert.deepEqual(
     (capturedProjectRequest as { delegated_runtime_tool_ids?: string[] })
@@ -1731,7 +1627,7 @@ test("runTsRunnerCli keeps workspace-instructions updates out of onboarding sess
   );
 });
 
-test("runTsRunnerCli removes direct MCP tools from front-session requests", async () => {
+test("runTsRunnerCli keeps direct MCP tools on front-session requests", async () => {
   const sandboxRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "hb-ts-runner-front-mcp-filter-"),
   );
@@ -1813,7 +1709,18 @@ test("runTsRunnerCli removes direct MCP tools from front-session requests", asyn
         resolved_mcp_tool_refs: Array<Record<string, string>>;
       }
     ).resolved_mcp_tool_refs,
-    [],
+    [
+      {
+        tool_id: "docs.lookup",
+        server_id: "docs",
+        tool_name: "lookup",
+      },
+      {
+        tool_id: "workspace.write_report",
+        server_id: "workspace",
+        tool_name: "write_report",
+      },
+    ],
   );
   assert.deepEqual(
     (
@@ -4228,7 +4135,7 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
     (capturedProjectRequest as { workspace_skill_ids: string[] })
       .workspace_skill_ids,
     [
-      "app-builder",
+      "app-builder-sdk",
       "browser-core-efficient",
       "browser-qa",
       "mcp-configurator",
@@ -4249,7 +4156,7 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
       }
     ).workspace_skill_dirs.map((skillDir) => path.basename(skillDir)),
     [
-      "app-builder",
+      "app-builder-sdk",
       "browser-core-efficient",
       "browser-qa",
       "mcp-configurator",
@@ -4752,7 +4659,7 @@ test(
       assert.deepEqual(
         (capturedProjectRequest as { resolved_mcp_server_ids: string[] })
           .resolved_mcp_server_ids,
-        [],
+        ["context7"],
       );
       assert.deepEqual(
         (
@@ -4767,7 +4674,7 @@ test(
         (
           capturedHarnessRequest as { mcp_servers: Array<{ name: string }> }
         ).mcp_servers.map((server) => server.name),
-        [],
+        ["context7"],
       );
       assert.deepEqual(
         (capturedHarnessRequest as { mcp_tool_refs: unknown[] }).mcp_tool_refs,

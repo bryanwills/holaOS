@@ -100,14 +100,6 @@ const WORKSPACE_MCP_READY_TIMEOUT_S = 10;
 const RECALL_SCOPE_ENTRY_LIMIT = 200;
 const MAIN_SESSION_DEFAULT_TOOLS = [
   "read",
-  "grep",
-  "glob",
-  "list",
-  "question",
-  "skill",
-];
-const SUBAGENT_DEFAULT_TOOLS = [
-  "read",
   "edit",
   "bash",
   "grep",
@@ -118,6 +110,15 @@ const SUBAGENT_DEFAULT_TOOLS = [
   "todoread",
   "skill",
 ];
+const ONBOARDING_DEFAULT_TOOLS = [
+  "read",
+  "grep",
+  "glob",
+  "list",
+  "question",
+  "skill",
+];
+const SUBAGENT_DEFAULT_TOOLS = [...MAIN_SESSION_DEFAULT_TOOLS];
 const SUBAGENT_ORCHESTRATION_RUNTIME_TOOL_IDS = new Set([
   "holaboss_delegate_task",
   "holaboss_get_subagent",
@@ -863,7 +864,7 @@ function loadRecentRuntimeContext(params: {
   }
 
   const lines = [
-    "This main-session run is a coordinator pass for browser work, not the place to repeat a browser-control limitation.",
+    "This main-session run does not currently have direct browser tools. Do not repeat a browser-control limitation as if it were the final answer.",
     "If the user's request is to operate the current browser/tab/page and direct browser tools are unavailable here, route it through `holaboss_delegate_task` instead of answering with a manual browser workaround.",
     "Only surface a browser limitation if delegated subagents also cannot perform the requested browser action.",
   ];
@@ -1025,22 +1026,17 @@ function isFrontSessionKind(value: string | null | undefined): boolean {
   return normalized === "main_session" || normalized === "onboarding";
 }
 
-function isLabControllerSessionKind(value: string | null | undefined): boolean {
-  const normalized = normalizedSessionKindValue(value);
-  return normalized === "workspace_onboarding" || normalized === "meeting_mode";
-}
-
 function isDelegatingFrontSessionKind(value: string | null | undefined): boolean {
   const normalized = normalizedSessionKindValue(value);
-  return normalized === "main_session" || isLabControllerSessionKind(normalized);
+  return normalized === "main_session";
 }
 
-function allowedRuntimeToolIdsForFrontSession(
+function defaultToolsForSessionKind(
   sessionKind: string | null | undefined,
-): Set<string> {
+): string[] {
   return normalizedSessionKindValue(sessionKind) === "onboarding"
-    ? ONBOARDING_SESSION_RUNTIME_TOOL_IDS
-    : MAIN_SESSION_RUNTIME_TOOL_IDS;
+    ? [...ONBOARDING_DEFAULT_TOOLS]
+    : [...MAIN_SESSION_DEFAULT_TOOLS];
 }
 
 function projectBrowserToolIdsForSession(params: {
@@ -1048,7 +1044,7 @@ function projectBrowserToolIdsForSession(params: {
   browserToolIds: string[];
 }): string[] {
   const normalized = normalizedSessionKindValue(params.sessionKind);
-  if (normalized === "subagent" || isLabControllerSessionKind(normalized)) {
+  if (normalized === "main_session" || normalized === "subagent") {
     return [...params.browserToolIds];
   }
   return [];
@@ -1058,11 +1054,12 @@ function projectRuntimeToolIdsForSession(params: {
   sessionKind: string | null | undefined;
   runtimeToolIds: string[];
 }): string[] {
-  if (isFrontSessionKind(params.sessionKind)) {
-    const allowed = allowedRuntimeToolIdsForFrontSession(params.sessionKind);
+  const normalized = normalizedSessionKindValue(params.sessionKind);
+  if (normalized === "onboarding") {
+    const allowed = ONBOARDING_SESSION_RUNTIME_TOOL_IDS;
     return params.runtimeToolIds.filter((toolId) => allowed.has(toolId));
   }
-  if (isLabControllerSessionKind(params.sessionKind)) {
+  if (normalized === "main_session") {
     return [...params.runtimeToolIds];
   }
   return params.runtimeToolIds.filter(
@@ -1077,12 +1074,15 @@ function projectExtraToolIdsForSession(params: {
   sessionKind: string | null | undefined;
   extraToolIds: string[];
 }): string[] {
-  if (isFrontSessionKind(params.sessionKind)) {
-    const allowed = allowedRuntimeToolIdsForFrontSession(params.sessionKind);
+  const normalized = normalizedSessionKindValue(params.sessionKind);
+  if (normalized === "onboarding") {
+    const allowed = ONBOARDING_SESSION_RUNTIME_TOOL_IDS;
     return params.extraToolIds.filter((toolId) => allowed.has(toolId));
   }
-  if (isLabControllerSessionKind(params.sessionKind)) {
-    return Array.from(new Set([...defaultExtraTools(params.harnessId), ...params.extraToolIds]));
+  if (normalized === "main_session") {
+    return Array.from(
+      new Set([...defaultExtraTools(params.harnessId), ...params.extraToolIds]),
+    );
   }
   return Array.from(
     new Set([
@@ -1100,20 +1100,20 @@ function projectResolvedMcpToolRefsForSession(params: {
   sessionKind: string | null | undefined;
   resolvedMcpToolRefs: CompiledWorkspaceRuntimePlan["resolved_mcp_tool_refs"];
 }): CompiledWorkspaceRuntimePlan["resolved_mcp_tool_refs"] {
-  if (!isFrontSessionKind(params.sessionKind) || isLabControllerSessionKind(params.sessionKind)) {
-    return params.resolvedMcpToolRefs;
+  if (normalizedSessionKindValue(params.sessionKind) === "onboarding") {
+    return [];
   }
-  return [];
+  return params.resolvedMcpToolRefs;
 }
 
 function projectResolvedMcpServerIdsForSession(params: {
   sessionKind: string | null | undefined;
   resolvedMcpServerIds: string[];
 }): string[] {
-  if (!isFrontSessionKind(params.sessionKind) || isLabControllerSessionKind(params.sessionKind)) {
-    return params.resolvedMcpServerIds;
+  if (normalizedSessionKindValue(params.sessionKind) === "onboarding") {
+    return [];
   }
-  return [];
+  return params.resolvedMcpServerIds;
 }
 
 function explicitHolabossUserId(request: TsRunnerRequest): string | undefined {
@@ -1419,7 +1419,7 @@ function buildAgentRuntimeConfigRequest(params: {
     workspace_skill_ids: [...params.workspaceSkillIds],
     workspace_command_ids: [...params.workspaceCommandIds],
     default_tools: frontSession
-      ? [...MAIN_SESSION_DEFAULT_TOOLS]
+      ? defaultToolsForSessionKind(normalizedSessionKind)
       : [...SUBAGENT_DEFAULT_TOOLS],
     extra_tools: extraTools,
     ...(delegatedCapabilitySnapshotEligible

@@ -9,6 +9,10 @@ import {
 } from "@holaboss/runtime-state-store";
 
 import { processClaimedInput } from "./claimed-input-executor.js";
+import {
+  ensureCodexTokensFresh,
+  hasCodexProviderConfigured,
+} from "./codex-token-refresh.js";
 import type { MemoryServiceLike } from "./memory.js";
 import { buildRunCompletedEvent, buildRunFailedEvent } from "./runner-worker.js";
 import { captureRuntimeException } from "./runtime-sentry.js";
@@ -16,7 +20,7 @@ import { captureRuntimeException } from "./runtime-sentry.js";
 const DEFAULT_CLAIMED_BY = "sandbox-agent-ts-worker";
 const DEFAULT_LEASE_SECONDS = 300;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
-const DEFAULT_MAX_CONCURRENCY = 2;
+const DEFAULT_MAX_CONCURRENCY = 5;
 const DEFAULT_CLAIM_STALE_HEARTBEAT_MS = 20_000;
 const TERMINAL_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
 const SESSION_CHECKPOINT_JOB_TYPE = "session_checkpoint";
@@ -251,8 +255,12 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
 
   #startClaimedInput(record: SessionInputRecord): void {
     const controller = new AbortController();
+    const codexConfigured = hasCodexProviderConfigured();
     const promise = (async () => {
       try {
+        if (codexConfigured) {
+          await ensureCodexTokensFresh().catch(() => undefined);
+        }
         await this.#executeClaimedInput(record, { signal: controller.signal });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
