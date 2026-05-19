@@ -1547,7 +1547,7 @@ test("runTsRunnerCli exposes workspace-instructions updates only to main workspa
   );
   assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
-    ["holaboss_update_workspace_instructions"],
+    ["web_search", "holaboss_update_workspace_instructions"],
   );
   assert.deepEqual(
     (capturedProjectRequest as { delegated_runtime_tool_ids?: string[] })
@@ -4135,7 +4135,7 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
     (capturedProjectRequest as { workspace_skill_ids: string[] })
       .workspace_skill_ids,
     [
-      "app-builder",
+      "app-builder-sdk",
       "browser-core-efficient",
       "browser-qa",
       "mcp-configurator",
@@ -4156,7 +4156,7 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
       }
     ).workspace_skill_dirs.map((skillDir) => path.basename(skillDir)),
     [
-      "app-builder",
+      "app-builder-sdk",
       "browser-core-efficient",
       "browser-qa",
       "mcp-configurator",

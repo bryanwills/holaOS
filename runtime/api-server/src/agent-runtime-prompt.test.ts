@@ -126,6 +126,10 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   );
   assert.match(
     prompt.systemPrompt,
+    /Do not route an MCP-backed task through the browser just because browser tools are available; use browser tools for that system only when the user explicitly asks for browser use, the task explicitly requires UI interaction, independent visual verification is required, or the MCP route is blocked\./
+  );
+  assert.match(
+    prompt.systemPrompt,
     /Treat explicit user requirements and verification targets as completion criteria, not optional detail\./
   );
   assert.match(
@@ -135,6 +139,10 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   assert.match(
     prompt.systemPrompt,
     /Do not cross it unless the user explicitly asks\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /If a surfaced path returns `ENOENT` or `Path not found`, stop guessing paths outside the active workspace\./
   );
   assert.match(
     prompt.systemPrompt,
@@ -179,7 +187,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   assert.doesNotMatch(prompt.systemPrompt, /Connected MCP tools available now:/);
   assert.doesNotMatch(prompt.systemPrompt, /Skills available now:/);
   assert.doesNotMatch(prompt.systemPrompt, /Connected MCP access: available\./);
-  assert.ok(prompt.systemPrompt.length < 4600);
+  assert.ok(prompt.systemPrompt.length < 5200);
   assert.equal(prompt.contextMessages.length, 1);
   assert.match(prompt.contextMessages.join("\n\n"), /Capability availability snapshot:/);
   assert.match(prompt.contextMessages.join("\n\n"), /Inspect tools: available \(\d+ enabled\)\./);
@@ -309,7 +317,7 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
   assert.match(prompt.systemPrompt, /Be concise and on-point\. Do not ramble, over-explain, or pad replies just to sound helpful\./);
   assert.match(prompt.systemPrompt, /Keep replies tight\. Do not blabber, wander, or repeat yourself\./);
   assert.match(prompt.systemPrompt, /The main session is the default full-capability agent for this workspace, not a capability-thin coordinator\./);
-  assert.match(prompt.systemPrompt, /Use direct file, shell, browser, MCP\/app, and runtime tools when they are surfaced and they cleanly satisfy the request\./);
+  assert.match(prompt.systemPrompt, /use direct file, shell, browser, MCP\/app, and runtime tools when they are surfaced and they are the clearest path\./);
   assert.match(prompt.systemPrompt, /Use this session to understand the request, execute directly when appropriate, choose when to delegate, brief delegated work clearly, and translate results back to the user\./);
   assert.match(prompt.systemPrompt, /Use surfaced capabilities to inspect before mutating when possible, and verify results before claiming success\./);
   assert.match(prompt.systemPrompt, /Treat explicit user requirements, verification targets, and deliverable shape as completion criteria for direct and delegated work, not optional detail\./);
@@ -320,7 +328,7 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
   assert.match(prompt.systemPrompt, /Do not infer task impossibility from missing direct tools\. If this run lacks a needed capability but delegated subagents can do it, delegate instead of falling back to a manual workaround\./i);
   assert.match(prompt.systemPrompt, /Workspace apps are the workspace-native software surface\. Apps include catalog-provided integration apps that can be installed directly, plus user-created apps that may compose data and functions from other apps\./i);
   assert.match(prompt.systemPrompt, /prefer the direct surfaced app\/runtime\/MCP route first; delegate or install\/build through the workspace route only when the direct path is unavailable or the job should branch\./i);
-  assert.match(prompt.systemPrompt, /For app creation or substantial app modification, prefer `holaboss_delegate_task` with the app-builder skill as the detailed execution guide unless the change is small enough to complete directly with surfaced tools\./i);
+  assert.match(prompt.systemPrompt, /For app creation or substantial app modification, prefer `holaboss_delegate_task` with the app-builder-sdk skill as the detailed execution guide unless the change is small enough to complete directly with surfaced tools\./i);
   assert.match(prompt.systemPrompt, /Do not turn a named app or product request into a desktop install, browser-open, manual setup, or generic option list before checking the direct workspace-native route or delegated workspace route\./i);
   assert.match(prompt.systemPrompt, /Ask clarifying questions only when ambiguity affects user intent, safety, consent, credentials, account selection, or other user-owned context; do not ask merely because a preferred tool is missing from this run\./i);
   assert.match(prompt.systemPrompt, /When a clarifying question is truly needed, make it grounded in the user's words, current session context, workspace state, or tool\/subagent evidence; ask only for the concrete missing fact that blocks routing or execution\./);
@@ -371,7 +379,7 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
   assert.match(prompt.systemPrompt, /Prefer short sentences and plain language; use headings or numbered lists only when structure genuinely helps\./);
   assert.match(prompt.systemPrompt, /Use contractions and natural transitions when they fit\./);
   assert.match(prompt.systemPrompt, /Avoid repetitive canned phrasing or stiff assistant boilerplate/);
-  assert.match(prompt.systemPrompt, /Prefer surfaced MCP\/app tools over opening the web app, browser exploration, or web research when they can satisfy the request, including when the user supplies a URL for that system; use browser\/web around an MCP-backed system only for UI verification, requested independent confirmation, or after the MCP path is blocked\./);
+  assert.match(prompt.systemPrompt, /Prefer surfaced MCP\/app tools over opening the web app, browser exploration, or web research when they can satisfy the request, including when the user supplies a URL for that system; use browser\/web around an MCP-backed system only when the user explicitly asks for browser use, for UI verification, for requested independent confirmation, or after the MCP path is blocked\./);
   assert.match(prompt.systemPrompt, /Avoid pasting very long document, HTML, or markdown bodies into chat when a workspace artifact is the better surface\./);
   assert.match(prompt.systemPrompt, /Use surfaced capabilities to inspect before mutating workspace, app, browser, or runtime state whenever possible\./);
   assert.match(prompt.systemPrompt, /After edits, shell commands, browser actions, MCP mutations, or runtime mutations, run a follow-up inspection or verification step before claiming success\./);
@@ -483,6 +491,14 @@ test("composeAgentPrompt requires subagent outputs to stay self-contained", () =
   assert.match(
     prompt.systemPrompt,
     /When surfaced MCP\/app tools match the task or a provided system URL, use them first instead of defaulting to bash, file inspection, or browser exploration\./,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Treat browser use as a last resort\./,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /only use the browser when the user explicitly asks for it, the task inherently requires UI interaction, independent visual verification is required, or non-browser routes are blocked\./,
   );
   assert.match(
     prompt.systemPrompt,
@@ -1269,7 +1285,15 @@ test("composeBaseAgentPrompt requires proactive fallback when partial retrieval 
   );
   assert.match(
     prompt.systemPrompt,
-    /When browser tools are available, use them for UI-specific verification and prefer DOM-grounded actions and extraction\./
+    /When browser tools are available, treat them as a fallback UI surface, not the default route\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Use them only when the user explicitly asks for browser use, the task inherently requires UI interaction, visual confirmation matters, or non-browser routes are blocked\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /When you do use them, prefer DOM-grounded actions and extraction\./
   );
   assert.match(
     prompt.systemPrompt,
@@ -1278,5 +1302,40 @@ test("composeBaseAgentPrompt requires proactive fallback when partial retrieval 
   assert.match(
     prompt.systemPrompt,
     /Use screenshots only when visual confirmation matters\./
+  );
+});
+
+test("composeBaseAgentPrompt keeps connected MCP server routes ahead of browser fallback when tool refs are absent", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "subagent",
+    browserToolsAvailable: true,
+    browserToolIds: ["browser_get_state"],
+    defaultTools: ["read"],
+    extraTools: ["browser_get_state"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    resolvedMcpServerIds: ["notion"],
+  });
+
+  const prompt = composeBaseAgentPrompt("", {
+    defaultTools: ["read"],
+    extraTools: ["browser_get_state"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    resolvedMcpServerIds: ["notion"],
+    sessionKind: "subagent",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+  });
+
+  assert.match(
+    prompt.systemPrompt,
+    /If connected MCP access exists without tool names listed here, do not assume MCP is unavailable; use surfaced MCP tools when relevant\./,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /If browser tools are also available, do not default to browser exploration for the same connected system; keep MCP as the first route unless the user explicitly asks for browser use, the task explicitly requires UI interaction, or the MCP path is blocked\./,
   );
 });

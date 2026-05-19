@@ -103,6 +103,12 @@ function pendingIntegrationsFromAppManifests(params: {
         app_id: appId,
         provider_id: integration.provider,
         credential_source: integration.credentialSource,
+        // Forward the per-yaml whoami config (if any) so the chat UI can
+        // pass it to Hono's /composio/connect — removes the need for the
+        // central PROVIDER_WHOAMI constant in the Hono worker.
+        ...(integration.whoami
+          ? { whoami: integration.whoami as unknown as JsonValue }
+          : {}),
       });
     }
   }
@@ -4191,6 +4197,29 @@ export class RuntimeAgentToolsService {
     return listWorkspaceApplications(path.join(this.options.workspaceRoot, workspaceId));
   }
 
+  // Each completion-type workspace_apps_* tool calls this so the chat UI can
+  // surface a Connect button whenever the agent finishes a build flow. Pass
+  // an explicit appIds list when only one app changed; pass empty for "all
+  // registered apps".
+  private pendingIntegrationsForApps(
+    workspaceId: string,
+    appIds: string[] = [],
+  ): JsonObject[] {
+    const resolvedIds =
+      appIds.length > 0
+        ? appIds
+        : this.listRegisteredWorkspaceAppEntries(workspaceId)
+            .map((entry) => (typeof entry.app_id === "string" ? entry.app_id : ""))
+            .filter((id) => id.length > 0);
+    if (resolvedIds.length === 0) {
+      return [];
+    }
+    return pendingIntegrationsFromAppManifests({
+      workspaceDir: path.join(this.options.workspaceRoot, workspaceId),
+      appIds: resolvedIds,
+    });
+  }
+
   private requireRegisteredWorkspaceApp(params: {
     workspaceId: string;
     appId: string;
@@ -4559,6 +4588,7 @@ export class RuntimeAgentToolsService {
       await fs.writeFile(fullPath, file.content, "utf8");
     }
 
+    const pendingIntegrations = this.pendingIntegrationsForApps(params.workspaceId, [appId]);
     return {
       workspace_id: params.workspaceId,
       app_id: appId,
@@ -4566,6 +4596,9 @@ export class RuntimeAgentToolsService {
       manifest_path: `apps/${appId}/app.runtime.yaml`,
       created_files: files.map((file) => `apps/${appId}/${file.relativePath.replace(/\\/g, "/")}`),
       overwritten: overwrite,
+      ...(pendingIntegrations.length > 0
+        ? { pending_integrations: pendingIntegrations }
+        : {}),
     };
   }
 
@@ -4634,6 +4667,7 @@ export class RuntimeAgentToolsService {
       return applications;
     });
 
+    const pendingIntegrations = this.pendingIntegrationsForApps(params.workspaceId, [appId]);
     return {
       workspace_id: params.workspaceId,
       app_id: appId,
@@ -4641,6 +4675,9 @@ export class RuntimeAgentToolsService {
       lifecycle: Object.keys(lifecycle).length > 0 ? lifecycle : null,
       changed,
       registered: true,
+      ...(pendingIntegrations.length > 0
+        ? { pending_integrations: pendingIntegrations }
+        : {}),
     };
   }
 
@@ -4681,6 +4718,7 @@ export class RuntimeAgentToolsService {
         ? packageJson.scripts.build.trim()
         : "";
     const appDirRelative = path.relative(workspaceDir, resolved.appDir).replace(/\\/g, "/");
+    const pendingIntegrationsSkip = this.pendingIntegrationsForApps(params.workspaceId, [appId]);
     if (!buildScript) {
       return {
         workspace_id: params.workspaceId,
@@ -4692,6 +4730,9 @@ export class RuntimeAgentToolsService {
         skipped: true,
         reason: "no_build_script",
         ok: true,
+        ...(pendingIntegrationsSkip.length > 0
+          ? { pending_integrations: pendingIntegrationsSkip }
+          : {}),
       };
     }
 
@@ -4719,6 +4760,9 @@ export class RuntimeAgentToolsService {
       ok: !result.timedOut && (result.exitCode ?? 1) === 0,
       stdout: result.stdout,
       stderr: result.stderr,
+      ...(pendingIntegrationsSkip.length > 0
+        ? { pending_integrations: pendingIntegrationsSkip }
+        : {}),
     };
   }
 
@@ -4731,10 +4775,17 @@ export class RuntimeAgentToolsService {
         workspaceId: params.workspaceId,
         appId,
       });
-      return this.workspaceAppStatusEntry({
+      const statusEntry = this.workspaceAppStatusEntry({
         workspaceId: params.workspaceId,
         entry,
       });
+      const pendingIntegrations = this.pendingIntegrationsForApps(params.workspaceId, [appId]);
+      return {
+        ...statusEntry,
+        ...(pendingIntegrations.length > 0
+          ? { pending_integrations: pendingIntegrations }
+          : {}),
+      };
     }
 
     const apps = this.listRegisteredWorkspaceAppEntries(params.workspaceId)
@@ -4745,10 +4796,14 @@ export class RuntimeAgentToolsService {
           entry,
         }),
       );
+    const pendingIntegrations = this.pendingIntegrationsForApps(params.workspaceId);
     return {
       workspace_id: params.workspaceId,
       apps,
       count: apps.length,
+      ...(pendingIntegrations.length > 0
+        ? { pending_integrations: pendingIntegrations }
+        : {}),
     };
   }
 
@@ -4871,11 +4926,15 @@ export class RuntimeAgentToolsService {
       workspaceId: params.workspaceId,
       appId,
     });
+    const pendingIntegrations = this.pendingIntegrationsForApps(params.workspaceId, [appId]);
     return {
       workspace_id: params.workspaceId,
       app_id: appId,
       restarted: true,
       status,
+      ...(pendingIntegrations.length > 0
+        ? { pending_integrations: pendingIntegrations }
+        : {}),
     };
   }
 
@@ -4921,11 +4980,15 @@ export class RuntimeAgentToolsService {
         appId,
       });
       if (status.ready === true || status.build_status === "failed") {
+        const pendingIntegrations = this.pendingIntegrationsForApps(params.workspaceId, [appId]);
         return {
           ...(status as JsonObject),
           timed_out: false,
           polls,
           elapsed_ms: Date.now() - startedAt,
+          ...(pendingIntegrations.length > 0
+            ? { pending_integrations: pendingIntegrations }
+            : {}),
         };
       }
       await sleep(pollIntervalMs);
@@ -4935,11 +4998,15 @@ export class RuntimeAgentToolsService {
       workspaceId: params.workspaceId,
       appId,
     });
+    const pendingIntegrations = this.pendingIntegrationsForApps(params.workspaceId, [appId]);
     return {
       ...(status as JsonObject),
       timed_out: true,
       polls,
       elapsed_ms: Date.now() - startedAt,
+      ...(pendingIntegrations.length > 0
+        ? { pending_integrations: pendingIntegrations }
+        : {}),
     };
   }
 

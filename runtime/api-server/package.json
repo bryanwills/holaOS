@@ -13,13 +13,13 @@
   "scripts": {
     "build": "tsup --config tsup.config.ts",
     "clean": "node ../../scripts/remove-paths.mjs dist",
-    "test": "node --import tsx --test src/**/*.test.ts",
+    "test": "node --import tsx --test --test-force-exit src/**/*.test.ts",
     "ts-runner": "node --import tsx src/ts-runner.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@fastify/websocket": "^11.2.0",
-    "@holaboss/runtime-state-store": "file:../state-store",
+    "@holaboss/runtime-state-store": "workspace:*",
     "@mariozechner/pi-coding-agent": "0.66.0",
     "@modelcontextprotocol/sdk": "^1.28.0",
     "@sentry/node": "^10.48.0",
