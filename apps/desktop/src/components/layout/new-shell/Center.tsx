@@ -1,6 +1,6 @@
-import { useAtomValue } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { Search } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { BrowserPane } from "@/components/panes/BrowserPane";
 import { useWorkspaceBrowser } from "@/components/panes/useWorkspaceBrowser";
 import { Input } from "@/components/ui/input";
@@ -15,11 +15,24 @@ export function Center() {
   const { browserState } = useWorkspaceBrowser("user");
   const hasActiveTab = browserState.tabs.length > 0;
   const suspendNativeView = useAtomValue(browserViewSuspendedAtom);
-  const activeInternalTabId = useAtomValue(activeInternalTabIdAtom);
-  const internalTabs = useAtomValue(internalTabsAtom);
+  const [activeInternalTabId, setActiveInternalTabId] = useAtom(
+    activeInternalTabIdAtom,
+  );
+  const [internalTabs, setInternalTabs] = useAtom(internalTabsAtom);
   const activeInternal = activeInternalTabId
     ? internalTabs.find((t) => t.id === activeInternalTabId) ?? null
     : null;
+
+  const closeActiveInternalTab = useCallback(() => {
+    if (!activeInternalTabId) return;
+    setInternalTabs((prev) => {
+      const idx = prev.findIndex((t) => t.id === activeInternalTabId);
+      const next = prev.filter((t) => t.id !== activeInternalTabId);
+      const fallback = next[idx - 1] ?? next[0] ?? null;
+      setActiveInternalTabId(fallback?.id ?? null);
+      return next;
+    });
+  }, [activeInternalTabId, setActiveInternalTabId, setInternalTabs]);
 
   return (
     <main className="flex min-w-[480px] flex-1 flex-col overflow-hidden">
@@ -30,7 +43,10 @@ export function Center() {
             name={activeInternal.label}
           />
         ) : (
-          <FilePreviewPane filePath={activeInternal.filePath} />
+          <FilePreviewPane
+            filePath={activeInternal.filePath}
+            onClose={closeActiveInternalTab}
+          />
         )
       ) : hasActiveTab ? (
         <BrowserPane

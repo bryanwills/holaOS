@@ -5,6 +5,7 @@ import {
   Copy,
   Globe,
   Inbox,
+  Link2,
   Loader2,
   MoreHorizontal,
   Package,
@@ -15,6 +16,7 @@ import {
   Trash2,
   Upload,
   Wrench,
+  X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +38,7 @@ import { WorkspaceIcon } from "@/components/ui/workspace-icon";
 import { WorkspaceIconPicker } from "@/components/ui/workspace-icon-picker";
 import { AppIcon } from "@/components/marketplace/AppIcon";
 import { FileTypeIcon } from "@/lib/fileIcon";
+import { useIntegrationBinding } from "@/lib/useIntegrationBinding";
 import type { WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 import { resolveAppDisplay, useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
@@ -239,6 +242,8 @@ function AppsSection() {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const [expanded, setExpanded] = useAtom(appsExpandedAtom);
   const setMarketplaceOpen = useSetAtom(marketplaceOpenAtom);
+  const setSettingsOpen = useSetAtom(settingsOpenAtom);
+  const setSettingsSection = useSetAtom(settingsSectionAtom);
 
   const openApp = async (appId: string) => {
     if (!selectedWorkspaceId) return;
@@ -316,12 +321,6 @@ function AppsSection() {
                 composioToolkitsByProvider,
               );
               const label = display.name ?? app.label;
-              const error = app.error?.trim();
-              const status: "ready" | "loading" | "error" = error
-                ? "error"
-                : app.ready
-                  ? "ready"
-                  : "loading";
               return (
                 <AppRow
                   key={app.id}
@@ -329,8 +328,6 @@ function AppsSection() {
                   label={label}
                   providerId={providerId}
                   iconUrl={display.logo}
-                  status={status}
-                  errorMessage={error || null}
                   expanded={expanded}
                   onOpen={() => void openApp(app.id)}
                   onReload={() => void reloadApp(app.id)}
@@ -347,6 +344,18 @@ function AppsSection() {
               <Plus className="size-3.5 shrink-0" />
               <span className="truncate">Browse marketplace</span>
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSettingsSection("integrations");
+                setSettingsOpen(true);
+              }}
+              tabIndex={expanded ? 0 : -1}
+              className="flex items-center gap-2 rounded-[6px] px-2 py-[5px] pl-6 text-left text-xs text-foreground/55 transition-colors hover:bg-foreground/[0.04] hover:text-foreground"
+            >
+              <Link2 className="size-3.5 shrink-0" />
+              <span className="truncate">Manage integrations…</span>
+            </button>
           </div>
         </div>
       </div>
@@ -354,35 +363,289 @@ function AppsSection() {
   );
 }
 
-function AppRow({
+interface AppRowProps {
+  app: WorkspaceInstalledAppDefinition;
+  label: string;
+  providerId: string | null;
+  iconUrl: string | null;
+  expanded: boolean;
+  onOpen: () => void;
+  onReload: () => void;
+  onUninstall: () => void;
+}
+
+function AppRow(props: AppRowProps) {
+  // Pick the row's "primary" integration: required wins, else first declared.
+  // Apps with no integrations (UI-only, data-only) skip the binding hook.
+  const declaredIntegration =
+    props.app.integrations?.find((entry) => entry.required) ??
+    props.app.integrations?.[0];
+  if (!declaredIntegration?.provider) {
+    return <AppRowPlain {...props} />;
+  }
+  return (
+    <AppRowWithBinding
+      {...props}
+      providerSlug={declaredIntegration.provider}
+      whoami={declaredIntegration.whoami ?? null}
+    />
+  );
+}
+
+type RowTone =
+  | "ready"
+  | "loading"
+  | "error"
+  | "needs_connect"
+  | "connecting";
+
+function AppRowPlain({
   app,
   label,
   providerId,
   iconUrl,
-  status,
-  errorMessage,
   expanded,
   onOpen,
   onReload,
   onUninstall,
+}: AppRowProps) {
+  const errorMessage = app.error?.trim() || null;
+  const tone: RowTone = errorMessage
+    ? "error"
+    : app.ready
+      ? "ready"
+      : "loading";
+  const tooltip =
+    tone === "error" && errorMessage
+      ? errorMessage
+      : tone === "loading"
+        ? `${label} — starting…`
+        : label;
+  return (
+    <AppRowShell
+      app={app}
+      label={label}
+      providerId={providerId}
+      iconUrl={iconUrl}
+      expanded={expanded}
+      tone={tone}
+      tooltip={tooltip}
+      onRowClick={() => {
+        if (tone === "ready") onOpen();
+      }}
+      renderTrailing={() => {
+        if (tone === "loading") {
+          return <StatusDot variant="info" pulse title="Starting" />;
+        }
+        if (tone === "error") {
+          return (
+            <StatusDot
+              variant="destructive"
+              title={errorMessage ?? "Error"}
+            />
+          );
+        }
+        return null;
+      }}
+      menuItems={
+        <>
+          <DropdownMenuItem onClick={onOpen} disabled={tone !== "ready"}>
+            <Plus className="size-3.5" />
+            Open in new tab
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onReload}>
+            <RotateCw className="size-3.5" />
+            Reload
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onUninstall} variant="destructive">
+            <Trash2 className="size-3.5" />
+            Uninstall
+          </DropdownMenuItem>
+        </>
+      }
+    />
+  );
+}
+
+function AppRowWithBinding({
+  app,
+  label,
+  providerId,
+  iconUrl,
+  expanded,
+  onOpen,
+  onReload,
+  onUninstall,
+  providerSlug,
+  whoami,
+}: AppRowProps & {
+  providerSlug: string;
+  whoami: PendingIntegrationWhoami | null;
+}) {
+  const { composioToolkitsByProvider } = useWorkspaceDesktop();
+  const providerName =
+    composioToolkitsByProvider[providerSlug.toLowerCase()]?.name ??
+    providerSlug;
+
+  const {
+    state: bindingState,
+    busy,
+    connect,
+    cancel,
+  } = useIntegrationBinding({
+    appId: app.id,
+    provider: providerSlug,
+    whoami,
+    considerWorkspaceDefault: true,
+  });
+
+  const errorMessage = app.error?.trim() || null;
+  const tone: RowTone = errorMessage
+    ? "error"
+    : busy === "connecting" || busy === "binding"
+      ? "connecting"
+      : bindingState.kind === "no_connection" ||
+          bindingState.kind === "needs_binding"
+        ? "needs_connect"
+        : !app.ready
+          ? "loading"
+          : "ready";
+
+  const tooltip =
+    tone === "error" && errorMessage
+      ? errorMessage
+      : tone === "connecting"
+        ? `Authorizing ${providerName}…`
+        : tone === "needs_connect"
+          ? `${providerName} not connected — click to authorize`
+          : tone === "loading"
+            ? `${label} — starting…`
+            : label;
+
+  const handleRowClick = () => {
+    if (tone === "ready") {
+      onOpen();
+      return;
+    }
+    if (tone === "needs_connect") {
+      void connect();
+    }
+  };
+
+  return (
+    <AppRowShell
+      app={app}
+      label={label}
+      providerId={providerId}
+      iconUrl={iconUrl}
+      expanded={expanded}
+      tone={tone}
+      tooltip={tooltip}
+      onRowClick={handleRowClick}
+      renderTrailing={() => {
+        if (tone === "connecting") {
+          return (
+            <span className="flex items-center gap-1">
+              <Loader2
+                className="size-3 animate-spin text-foreground/55"
+                aria-hidden
+              />
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  cancel();
+                }}
+                aria-label="Cancel"
+                className="grid size-4 place-items-center rounded text-foreground/45 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+              >
+                <X className="size-3" />
+              </button>
+            </span>
+          );
+        }
+        if (tone === "needs_connect") {
+          return (
+            <StatusDot
+              variant="warning"
+              title={`${providerName} needs a connection`}
+            />
+          );
+        }
+        if (tone === "loading") {
+          return <StatusDot variant="info" pulse title="Starting" />;
+        }
+        if (tone === "error") {
+          return (
+            <StatusDot
+              variant="destructive"
+              title={errorMessage ?? "Error"}
+            />
+          );
+        }
+        return null;
+      }}
+      menuItems={
+        <>
+          {tone === "needs_connect" ? (
+            <DropdownMenuItem
+              onClick={() => void connect()}
+              disabled={busy !== null}
+            >
+              <Link2 className="size-3.5" />
+              Connect {providerName}…
+            </DropdownMenuItem>
+          ) : null}
+          <DropdownMenuItem onClick={onOpen} disabled={tone !== "ready"}>
+            <Plus className="size-3.5" />
+            Open in new tab
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onReload}>
+            <RotateCw className="size-3.5" />
+            Reload
+          </DropdownMenuItem>
+          {bindingState.kind === "bound" ? (
+            <DropdownMenuItem
+              onClick={() => void connect()}
+              disabled={busy !== null}
+            >
+              <Link2 className="size-3.5" />
+              Reconnect {providerName}…
+            </DropdownMenuItem>
+          ) : null}
+          <DropdownMenuItem onClick={onUninstall} variant="destructive">
+            <Trash2 className="size-3.5" />
+            Uninstall
+          </DropdownMenuItem>
+        </>
+      }
+    />
+  );
+}
+
+function AppRowShell({
+  app,
+  label,
+  providerId,
+  iconUrl,
+  expanded,
+  tone,
+  tooltip,
+  onRowClick,
+  renderTrailing,
+  menuItems,
 }: {
   app: WorkspaceInstalledAppDefinition;
   label: string;
   providerId: string | null;
   iconUrl: string | null;
-  status: "ready" | "loading" | "error";
-  errorMessage: string | null;
   expanded: boolean;
-  onOpen: () => void;
-  onReload: () => void;
-  onUninstall: () => void;
+  tone: RowTone;
+  tooltip: string;
+  onRowClick: () => void;
+  renderTrailing: () => React.ReactNode;
+  menuItems: React.ReactNode;
 }) {
-  const tooltip =
-    status === "error" && errorMessage
-      ? errorMessage
-      : status === "loading"
-        ? `${label} — starting…`
-        : label;
   return (
     <div
       role="group"
@@ -390,9 +653,7 @@ function AppRow({
     >
       <button
         type="button"
-        onClick={() => {
-          if (status === "ready") onOpen();
-        }}
+        onClick={onRowClick}
         tabIndex={expanded ? 0 : -1}
         title={tooltip}
         className="flex min-w-0 flex-1 items-center gap-2 rounded-[6px] px-2 py-[5px] pl-6 text-left text-xs text-foreground/80 transition-colors disabled:cursor-default"
@@ -407,20 +668,13 @@ function AppRow({
         <span
           className={cn(
             "min-w-0 flex-1 truncate",
-            status === "error" && "text-foreground/55",
+            (tone === "error" || tone === "needs_connect") &&
+              "text-foreground/55",
           )}
         >
           {label}
         </span>
-        {status === "loading" ? (
-          <StatusDot variant="info" pulse title="Starting" />
-        ) : null}
-        {status === "error" ? (
-          <StatusDot
-            variant="destructive"
-            title={errorMessage || "Error"}
-          />
-        ) : null}
+        {renderTrailing()}
       </button>
       <div
         aria-hidden
@@ -441,21 +695,7 @@ function AppRow({
             }
           />
           <DropdownMenuContent align="end" side="bottom" sideOffset={4}>
-            <DropdownMenuItem
-              onClick={onOpen}
-              disabled={status !== "ready"}
-            >
-              <Plus className="size-3.5" />
-              Open in new tab
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onReload}>
-              <RotateCw className="size-3.5" />
-              Reload
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onUninstall} variant="destructive">
-              <Trash2 className="size-3.5" />
-              Uninstall
-            </DropdownMenuItem>
+            {menuItems}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
