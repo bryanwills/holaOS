@@ -103,7 +103,7 @@ test("runtime delegate-task client forwards use_user_browser_surface when explic
     sessionId: "session-main",
     inputId: "input-1",
     selectedModel: "openai/gpt-5.4",
-    toolId: "holaboss_delegate_task",
+    toolId: "delegate_task",
     toolParams: {
       goal: "Inspect the current tab",
       tools: ["browser"],
@@ -143,7 +143,7 @@ test("runtime workspace-instructions client preserves explicit empty replacement
     sessionId: "session-main",
     inputId: "input-1",
     selectedModel: "openai/gpt-5.4",
-    toolId: "holaboss_update_workspace_instructions",
+    toolId: "update_workspace_instructions",
     toolParams: {
       op: "replace_managed_section",
       content: "",

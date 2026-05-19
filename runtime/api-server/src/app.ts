@@ -6069,7 +6069,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       });
       return await maybeShapeCapabilityToolResult({
         headers: request.headers as Record<string, unknown>,
-        toolId: "holaboss_scratchpad_read",
+        toolId: "scratchpad_read",
         payload: result,
         workspaceId,
         sessionId,
@@ -6134,7 +6134,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       });
       return await maybeShapeCapabilityToolResult({
         headers: request.headers as Record<string, unknown>,
-        toolId: "holaboss_update_workspace_instructions",
+        toolId: "update_workspace_instructions",
         payload: result,
         workspaceId,
         sessionId,

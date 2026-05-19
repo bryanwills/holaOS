@@ -165,7 +165,7 @@ test("shapeCapabilityToolResultPayload clips and spills terminal events in previ
 test("shapeCapabilityToolResultPayload trims oversized scratchpad content in preview mode", async () => {
   const payload = await shapeCapabilityToolResultPayload({
     mode: "preview",
-    toolId: "holaboss_scratchpad_read",
+    toolId: "scratchpad_read",
     workspaceRoot: "/tmp/unused",
     workspaceId: "workspace-1",
     sessionId: "session-main",

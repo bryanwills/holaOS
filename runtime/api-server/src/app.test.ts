@@ -786,7 +786,7 @@ test("runtime tools capability routes expose local onboarding and cronjob action
     assert.ok(
       capabilityStatus
         .json()
-        .tools.some((tool: { id: string }) => tool.id === "holaboss_onboarding_complete")
+        .tools.some((tool: { id: string }) => tool.id === "onboarding_complete")
     );
     assert.ok(
       capabilityStatus
@@ -1817,7 +1817,7 @@ test("runtime subagent capability routes create and cancel hidden background tas
   assert.equal(blockedSameTurnFetch.statusCode, 409);
   assert.match(
     blockedSameTurnFetch.body,
-    /do not use holaboss_get_subagent to poll a freshly delegated task in the same turn/i,
+    /do not use get_subagent to poll a freshly delegated task in the same turn/i,
   );
 
   const blockedSameTurnList = await app.inject({
@@ -1832,7 +1832,7 @@ test("runtime subagent capability routes create and cancel hidden background tas
   assert.equal(blockedSameTurnList.statusCode, 409);
   assert.match(
     blockedSameTurnList.body,
-    /do not use holaboss_list_background_tasks to poll a freshly delegated task in the same turn/i,
+    /do not use list_background_tasks to poll a freshly delegated task in the same turn/i,
   );
 
   const cancelled = await app.inject({

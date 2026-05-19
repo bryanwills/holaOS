@@ -1181,7 +1181,7 @@ test("runTsRunnerCli loads current user context from the runtime profile", async
           pluginOverrides: {
             stageRuntimeTools: () => ({
               changed: false,
-              toolIds: ["holaboss_delegate_task"],
+              toolIds: ["delegate_task"],
             }),
           },
         }),
@@ -1261,13 +1261,13 @@ test("runTsRunnerCli strips subagent orchestration tools from onboarding session
             stageRuntimeTools: () => ({
               changed: false,
               toolIds: [
-                "holaboss_delegate_task",
-                "holaboss_get_subagent",
-                "holaboss_list_background_tasks",
-                "holaboss_cancel_subagent",
-                "holaboss_resume_subagent",
-                "holaboss_continue_subagent",
-                "holaboss_onboarding_complete",
+                "delegate_task",
+                "get_subagent",
+                "list_background_tasks",
+                "cancel_subagent",
+                "resume_subagent",
+                "continue_subagent",
+                "onboarding_complete",
               ],
             }),
           },
@@ -1321,11 +1321,11 @@ test("runTsRunnerCli strips subagent orchestration tools from onboarding session
   );
   assert.deepEqual(
     (capturedProjectRequest as { runtime_tool_ids: string[] }).runtime_tool_ids,
-    ["holaboss_onboarding_complete"],
+    ["onboarding_complete"],
   );
   assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
-    ["holaboss_onboarding_complete"],
+    ["onboarding_complete"],
   );
   assert.equal(
     "delegated_session_kind" in (capturedProjectRequest as Record<string, unknown>),
@@ -1352,7 +1352,7 @@ test("runTsRunnerCli keeps staged execution tools on front-of-house workspace se
             }),
             stageRuntimeTools: () => ({
               changed: false,
-              toolIds: ["holaboss_onboarding_complete", "write_report"],
+              toolIds: ["onboarding_complete", "write_report"],
             }),
           },
         }),
@@ -1406,7 +1406,7 @@ test("runTsRunnerCli keeps staged execution tools on front-of-house workspace se
   );
   assert.deepEqual(
     (capturedProjectRequest as { runtime_tool_ids: string[] }).runtime_tool_ids,
-    ["holaboss_onboarding_complete", "write_report"],
+    ["onboarding_complete", "write_report"],
   );
   assert.deepEqual(
     (capturedProjectRequest as { default_tools: string[] }).default_tools,
@@ -1432,7 +1432,7 @@ test("runTsRunnerCli keeps staged execution tools on front-of-house workspace se
     [
       "web_search",
       "browser_get_state",
-      "holaboss_onboarding_complete",
+      "onboarding_complete",
       "write_report",
     ],
   );
@@ -1456,7 +1456,7 @@ test("runTsRunnerCli keeps staged execution tools on front-of-house workspace se
   assert.deepEqual(
     (capturedProjectRequest as { delegated_runtime_tool_ids?: string[] })
       .delegated_runtime_tool_ids,
-    ["holaboss_onboarding_complete", "write_report"],
+    ["onboarding_complete", "write_report"],
   );
   assert.deepEqual(
     (capturedProjectRequest as { delegated_default_tools?: string[] })
@@ -1480,7 +1480,7 @@ test("runTsRunnerCli keeps staged execution tools on front-of-house workspace se
     [
       "web_search",
       "browser_get_state",
-      "holaboss_onboarding_complete",
+      "onboarding_complete",
       "write_report",
     ],
   );
@@ -1498,7 +1498,7 @@ test("runTsRunnerCli exposes workspace-instructions updates only to main workspa
           pluginOverrides: {
             stageRuntimeTools: () => ({
               changed: false,
-              toolIds: ["holaboss_update_workspace_instructions"],
+              toolIds: ["update_workspace_instructions"],
             }),
           },
         }),
@@ -1543,11 +1543,11 @@ test("runTsRunnerCli exposes workspace-instructions updates only to main workspa
   assert.ok(capturedProjectRequest);
   assert.deepEqual(
     (capturedProjectRequest as { runtime_tool_ids: string[] }).runtime_tool_ids,
-    ["holaboss_update_workspace_instructions"],
+    ["update_workspace_instructions"],
   );
   assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
-    ["web_search", "holaboss_update_workspace_instructions"],
+    ["web_search", "update_workspace_instructions"],
   );
   assert.deepEqual(
     (capturedProjectRequest as { delegated_runtime_tool_ids?: string[] })
@@ -1574,7 +1574,7 @@ test("runTsRunnerCli keeps workspace-instructions updates out of onboarding sess
           pluginOverrides: {
             stageRuntimeTools: () => ({
               changed: false,
-              toolIds: ["holaboss_update_workspace_instructions"],
+              toolIds: ["update_workspace_instructions"],
             }),
           },
         }),
@@ -2043,7 +2043,7 @@ test("runTsRunnerCli injects report-routing recovery context for report-style ma
           pluginOverrides: {
             stageRuntimeTools: () => ({
               changed: false,
-              toolIds: ["holaboss_delegate_task"],
+              toolIds: ["delegate_task"],
             }),
           },
         }),
@@ -2091,12 +2091,12 @@ test("runTsRunnerCli injects report-routing recovery context for report-style ma
   }
   const runtimeConfigRequest = capturedProjectRequest as AgentRuntimeConfigCliRequest;
   assert.deepEqual(runtimeConfigRequest.runtime_tool_ids, [
-    "holaboss_delegate_task",
+    "delegate_task",
   ]);
   assert.deepEqual(runtimeConfigRequest.recent_runtime_context?.lines, [
     "The user is asking for a report-style deliverable. Keep chat as the coordination surface, not the deliverable surface.",
     "Do not paste a long report, memo, brief, recap, or document body into the conversation.",
-    "Use `holaboss_delegate_task` to produce the report artifact, then keep the main-session reply to a brief acknowledgement or short handoff.",
+    "Use `delegate_task` to produce the report artifact, then keep the main-session reply to a brief acknowledgement or short handoff.",
     "Only provide the full content inline if the user explicitly asks for it in chat and it will remain short.",
   ]);
 });
@@ -2120,7 +2120,7 @@ test("runTsRunnerCli injects available-tool fallback context for concrete checks
           pluginOverrides: {
             stageRuntimeTools: () => ({
               changed: false,
-              toolIds: ["holaboss_delegate_task"],
+              toolIds: ["delegate_task"],
             }),
           },
         }),
@@ -2182,7 +2182,7 @@ test("runTsRunnerCli injects available-tool fallback context for concrete checks
   const runtimeConfigRequest =
     capturedProjectRequest as AgentRuntimeConfigCliRequest;
   assert.deepEqual(runtimeConfigRequest.runtime_tool_ids, [
-    "holaboss_delegate_task",
+    "delegate_task",
   ]);
   assert.deepEqual(runtimeConfigRequest.recent_runtime_context?.lines, [
     "The user is asking for a concrete check or lookup where the first-choice tool might be missing.",
@@ -3734,8 +3734,8 @@ test("runTsRunnerCli stages browser tools for subagent executor sessions and str
             stageRuntimeTools: () => ({
               changed: false,
               toolIds: [
-                "holaboss_onboarding_complete",
-                "holaboss_delegate_task",
+                "onboarding_complete",
+                "delegate_task",
               ],
             }),
           },
@@ -3798,7 +3798,7 @@ test("runTsRunnerCli stages browser tools for subagent executor sessions and str
   );
   assert.deepEqual(
     (capturedProjectRequest as { runtime_tool_ids: string[] }).runtime_tool_ids,
-    ["holaboss_onboarding_complete"],
+    ["onboarding_complete"],
   );
   assert.deepEqual(
     (capturedProjectRequest as { default_tools: string[] }).default_tools,
@@ -3817,7 +3817,7 @@ test("runTsRunnerCli stages browser tools for subagent executor sessions and str
   );
   assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
-    ["web_search", "browser_get_state", "holaboss_onboarding_complete"],
+    ["web_search", "browser_get_state", "onboarding_complete"],
   );
 });
 

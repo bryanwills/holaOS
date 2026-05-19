@@ -226,8 +226,8 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
     harnessId: "pi",
     sessionKind: "main_session",
     defaultTools: ["read", "edit"],
-    extraTools: ["holaboss_delegate_task", "holaboss_get_subagent", "holaboss_list_background_tasks"],
-    runtimeToolIds: ["holaboss_delegate_task", "holaboss_get_subagent", "holaboss_list_background_tasks"],
+    extraTools: ["delegate_task", "get_subagent", "list_background_tasks"],
+    runtimeToolIds: ["delegate_task", "get_subagent", "list_background_tasks"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [
       {
@@ -269,7 +269,7 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
 
   const prompt = composeAgentPrompt("You are concise.", {
     defaultTools: ["read", "edit"],
-    extraTools: ["holaboss_delegate_task", "holaboss_get_subagent", "holaboss_list_background_tasks"],
+    extraTools: ["delegate_task", "get_subagent", "list_background_tasks"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [
       {
@@ -328,7 +328,7 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
   assert.match(prompt.systemPrompt, /Do not infer task impossibility from missing direct tools\. If this run lacks a needed capability but delegated subagents can do it, delegate instead of falling back to a manual workaround\./i);
   assert.match(prompt.systemPrompt, /Workspace apps are the workspace-native software surface\. Apps include catalog-provided integration apps that can be installed directly, plus user-created apps that may compose data and functions from other apps\./i);
   assert.match(prompt.systemPrompt, /prefer the direct surfaced app\/runtime\/MCP route first; delegate or install\/build through the workspace route only when the direct path is unavailable or the job should branch\./i);
-  assert.match(prompt.systemPrompt, /For app creation or substantial app modification, prefer `holaboss_delegate_task` with the app-builder-sdk skill as the detailed execution guide unless the change is small enough to complete directly with surfaced tools\./i);
+  assert.match(prompt.systemPrompt, /For app creation or substantial app modification, prefer `delegate_task` with the app-builder-sdk skill as the detailed execution guide unless the change is small enough to complete directly with surfaced tools\./i);
   assert.match(prompt.systemPrompt, /Do not turn a named app or product request into a desktop install, browser-open, manual setup, or generic option list before checking the direct workspace-native route or delegated workspace route\./i);
   assert.match(prompt.systemPrompt, /Ask clarifying questions only when ambiguity affects user intent, safety, consent, credentials, account selection, or other user-owned context; do not ask merely because a preferred tool is missing from this run\./i);
   assert.match(prompt.systemPrompt, /When a clarifying question is truly needed, make it grounded in the user's words, current session context, workspace state, or tool\/subagent evidence; ask only for the concrete missing fact that blocks routing or execution\./);
@@ -337,12 +337,12 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
   assert.match(prompt.systemPrompt, /When the user asks for fresh execution, fresh investigation, or a new deliverable, do not answer from prior chat memory alone; inspect, execute, or delegate first\./);
   assert.match(prompt.systemPrompt, /For browser control, terminal work, or other execution work, use direct tools when surfaced\. Do not delegate them by default unless they are part of delegated research, part of app-building work, or genuinely need background continuation\./i);
   assert.match(prompt.systemPrompt, /Default delegated browser work to the agent browser\./);
-  assert.match(prompt.systemPrompt, /set `use_user_browser_surface: true` on `holaboss_delegate_task`/i);
+  assert.match(prompt.systemPrompt, /set `use_user_browser_surface: true` on `delegate_task`/i);
   assert.match(prompt.systemPrompt, /If the user asks for work that needs capabilities this run does not have directly, but delegated subagents can do it, delegate instead of replying that this run lacks those tools\./);
   assert.match(prompt.systemPrompt, /Treat missing direct web, browser, terminal, MCP, or other execution-heavy capabilities as a routing signal to delegate, not as the final answer to the user\./i);
   assert.match(prompt.systemPrompt, /When the ideal direct tool or integration is missing, do not stop there; try another viable direct or delegated route with available tools, or ask one precise question for missing access\/context\./i);
   assert.match(prompt.systemPrompt, /Only tell the user a request cannot be completed after checking viable direct and delegated alternatives, or when the remaining blocker genuinely requires user access, credentials, confirmation, or context\./);
-  assert.match(prompt.systemPrompt, /Do not answer with a capability-apology or manual fallback first when `holaboss_delegate_task` is available and the task can be routed there\./i);
+  assert.match(prompt.systemPrompt, /Do not answer with a capability-apology or manual fallback first when `delegate_task` is available and the task can be routed there\./i);
   assert.match(prompt.systemPrompt, /If an earlier turn said a tool was unavailable or unsupported, but the current surfaced capability set now includes it, trust the current run and retry the tool when appropriate\./);
   assert.match(prompt.systemPrompt, /Treat prior tool failures, subagent failures, and access or integration blockers as observations about earlier attempts, not static truth about the current run\./);
   assert.match(prompt.systemPrompt, /When the user asks to retry, continue, or try again after mutable external state may have changed, prefer a fresh attempt over paraphrasing the previous failure from chat history\./);
@@ -365,7 +365,7 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
   assert.match(prompt.systemPrompt, /If the user asked for execution rather than analysis, keep the visible reply brief even when the hidden task brief needs more detail\./);
   assert.match(prompt.systemPrompt, /Do not expand a narrow request into a broader theory unless you already verified it\./);
   assert.match(prompt.systemPrompt, /Do not use visible chat to preload hidden assumptions into delegated work\./);
-  assert.match(prompt.systemPrompt, /When routing work through `holaboss_delegate_task`, call the tool first and then write at most one user-facing update based on the returned task state\./);
+  assert.match(prompt.systemPrompt, /When routing work through `delegate_task`, call the tool first and then write at most one user-facing update based on the returned task state\./);
   assert.match(prompt.systemPrompt, /When the requested deliverable belongs in a workspace app or workspace artifact, do not paste the artifact body into chat as the final result unless the user explicitly asks for inline pasteable text; delegate creation or drafting to the workspace route\./);
   assert.match(prompt.systemPrompt, /Reserve completion language such as `done`, `finished`, `created`, `sent`, `navigated`, `verified`, or `it's there now`/i);
   assert.match(prompt.systemPrompt, /only when the current turn has direct grounded evidence such as a tool result, direct inspection, or a persisted deliverable\/output\./i);
@@ -386,7 +386,7 @@ test("composeAgentPrompt uses a conversational main-session prompt for workspace
   assert.match(prompt.systemPrompt, /Use coordination capabilities to track progress, consult available skills, delegate research or app-building work when appropriate, or ask for clarification instead of keeping hidden state\./);
   assert.ok(
     prompt.contextMessages.some((message) =>
-      /This front session can execute directly with the surfaced tools above\. Use `holaboss_delegate_task` mainly for research or app-building work, or when background continuation is explicitly needed\./.test(message),
+      /This front session can execute directly with the surfaced tools above\. Use `delegate_task` mainly for research or app-building work, or when background continuation is explicitly needed\./.test(message),
     ),
   );
   assert.doesNotMatch(prompt.systemPrompt, /front-of-house coordinator with only a partial direct capability surface/i);
@@ -555,8 +555,8 @@ test("composeAgentPrompt makes integration catalog lookup mandatory for provider
 test("composeAgentPrompt can inject a run-specific routing recovery override for polluted browser retries", () => {
   const capabilityManifest = buildAgentCapabilityManifest({
     defaultTools: ["read", "edit"],
-    extraTools: ["holaboss_delegate_task"],
-    runtimeToolIds: ["holaboss_delegate_task"],
+    extraTools: ["delegate_task"],
+    runtimeToolIds: ["delegate_task"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     toolServerIdMap: {},
@@ -564,7 +564,7 @@ test("composeAgentPrompt can inject a run-specific routing recovery override for
 
   const prompt = composeAgentPrompt("You are concise.", {
     defaultTools: ["read", "edit"],
-    extraTools: ["holaboss_delegate_task"],
+    extraTools: ["delegate_task"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     sessionKind: "main_session",
@@ -587,8 +587,8 @@ test("composeAgentPrompt can inject a run-specific routing recovery override for
 test("composeAgentPrompt can inject a run-specific routing recovery override for report-style deliverables", () => {
   const capabilityManifest = buildAgentCapabilityManifest({
     defaultTools: ["read"],
-    extraTools: ["holaboss_delegate_task"],
-    runtimeToolIds: ["holaboss_delegate_task"],
+    extraTools: ["delegate_task"],
+    runtimeToolIds: ["delegate_task"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     toolServerIdMap: {},
@@ -596,7 +596,7 @@ test("composeAgentPrompt can inject a run-specific routing recovery override for
 
   const prompt = composeAgentPrompt("You are concise.", {
     defaultTools: ["read"],
-    extraTools: ["holaboss_delegate_task"],
+    extraTools: ["delegate_task"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     sessionKind: "main_session",
@@ -606,7 +606,7 @@ test("composeAgentPrompt can inject a run-specific routing recovery override for
     recentRuntimeContext: {
       lines: [
         "The user is asking for a report-style deliverable. Keep chat as the coordination surface, not the deliverable surface.",
-        "Use `holaboss_delegate_task` to produce the report artifact, then keep the main-session reply to a brief acknowledgement or short handoff.",
+        "Use `delegate_task` to produce the report artifact, then keep the main-session reply to a brief acknowledgement or short handoff.",
       ],
     },
   });
@@ -619,8 +619,8 @@ test("composeAgentPrompt can inject a run-specific routing recovery override for
 test("composeAgentPrompt instructs main sessions to record durable workspace knowledge into AGENTS.md when the tool is available", () => {
   const capabilityManifest = buildAgentCapabilityManifest({
     defaultTools: ["read"],
-    extraTools: ["holaboss_update_workspace_instructions"],
-    runtimeToolIds: ["holaboss_update_workspace_instructions"],
+    extraTools: ["update_workspace_instructions"],
+    runtimeToolIds: ["update_workspace_instructions"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     toolServerIdMap: {},
@@ -628,7 +628,7 @@ test("composeAgentPrompt instructs main sessions to record durable workspace kno
 
   const prompt = composeAgentPrompt("You are concise.", {
     defaultTools: ["read"],
-    extraTools: ["holaboss_update_workspace_instructions"],
+    extraTools: ["update_workspace_instructions"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     sessionKind: "main_session",
@@ -639,7 +639,7 @@ test("composeAgentPrompt instructs main sessions to record durable workspace kno
 
   assert.match(
     prompt.systemPrompt,
-    /Record durable workspace knowledge in root `AGENTS\.md` with `holaboss_update_workspace_instructions` when it is clearly stable, likely to recur, or explicitly confirmed by the user/i,
+    /Record durable workspace knowledge in root `AGENTS\.md` with `update_workspace_instructions` when it is clearly stable, likely to recur, or explicitly confirmed by the user/i,
   );
   assert.match(
     prompt.systemPrompt,
@@ -654,8 +654,8 @@ test("composeAgentPrompt instructs main sessions to record durable workspace kno
 test("composeBaseAgentPrompt instructs direct sessions to record durable workspace knowledge into AGENTS.md when the tool is available", () => {
   const capabilityManifest = buildAgentCapabilityManifest({
     defaultTools: ["read"],
-    extraTools: ["holaboss_update_workspace_instructions"],
-    runtimeToolIds: ["holaboss_update_workspace_instructions"],
+    extraTools: ["update_workspace_instructions"],
+    runtimeToolIds: ["update_workspace_instructions"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     toolServerIdMap: {},
@@ -663,7 +663,7 @@ test("composeBaseAgentPrompt instructs direct sessions to record durable workspa
 
   const prompt = composeBaseAgentPrompt("You are concise.", {
     defaultTools: ["read"],
-    extraTools: ["holaboss_update_workspace_instructions"],
+    extraTools: ["update_workspace_instructions"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     sessionKind: "main_session",
@@ -674,7 +674,7 @@ test("composeBaseAgentPrompt instructs direct sessions to record durable workspa
 
   assert.match(
     prompt.systemPrompt,
-    /Record durable workspace knowledge in root `AGENTS\.md` with `holaboss_update_workspace_instructions` when it is clearly stable, likely to recur, or explicitly confirmed by the user/i,
+    /Record durable workspace knowledge in root `AGENTS\.md` with `update_workspace_instructions` when it is clearly stable, likely to recur, or explicitly confirmed by the user/i,
   );
   assert.match(
     prompt.systemPrompt,
@@ -723,17 +723,17 @@ test("composeAgentPrompt instructs subagents to record durable workspace knowled
 
 test("composeAgentPrompt keeps main sessions free of todo doctrine even if todo tools are present", () => {
   const capabilityManifest = buildAgentCapabilityManifest({
-    defaultTools: ["read", "todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"],
-    extraTools: ["holaboss_delegate_task"],
-    runtimeToolIds: ["holaboss_delegate_task", "holaboss_scratchpad_read", "holaboss_scratchpad_write"],
+    defaultTools: ["read", "todoread", "todowrite", "scratchpad_read", "scratchpad_write"],
+    extraTools: ["delegate_task"],
+    runtimeToolIds: ["delegate_task", "scratchpad_read", "scratchpad_write"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     toolServerIdMap: {},
   });
 
   const prompt = composeAgentPrompt("", {
-    defaultTools: ["read", "todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"],
-    extraTools: ["holaboss_delegate_task"],
+    defaultTools: ["read", "todoread", "todowrite", "scratchpad_read", "scratchpad_write"],
+    extraTools: ["delegate_task"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     sessionKind: "main_session",
@@ -768,8 +768,8 @@ test("composeAgentPrompt keeps main sessions free of todo doctrine even if todo 
 test("composeAgentPrompt keeps onboarding sessions free of subagent delegation doctrine", () => {
   const capabilityManifest = buildAgentCapabilityManifest({
     defaultTools: ["read", "edit"],
-    extraTools: ["holaboss_onboarding_status", "holaboss_onboarding_complete"],
-    runtimeToolIds: ["holaboss_onboarding_status", "holaboss_onboarding_complete"],
+    extraTools: ["onboarding_status", "onboarding_complete"],
+    runtimeToolIds: ["onboarding_status", "onboarding_complete"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     toolServerIdMap: {},
@@ -777,7 +777,7 @@ test("composeAgentPrompt keeps onboarding sessions free of subagent delegation d
 
   const prompt = composeAgentPrompt("You are concise.", {
     defaultTools: ["read", "edit"],
-    extraTools: ["holaboss_onboarding_status", "holaboss_onboarding_complete"],
+    extraTools: ["onboarding_status", "onboarding_complete"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     sessionKind: "onboarding",
@@ -857,7 +857,7 @@ test("composeAgentPrompt gives workspace onboarding its own design-lab prompt", 
   assert.match(prompt.systemPrompt, /alignment review card/);
   assert.match(prompt.systemPrompt, /verification review card/);
   assert.doesNotMatch(prompt.systemPrompt, /holaboss_approve_alignment/);
-  assert.doesNotMatch(prompt.systemPrompt, /holaboss_onboarding_complete/);
+  assert.doesNotMatch(prompt.systemPrompt, /\bonboarding_complete\b/);
   assert.doesNotMatch(prompt.systemPrompt, /This is an onboarding session\./);
 });
 
@@ -955,9 +955,9 @@ test("composeBaseAgentPrompt includes shared todo continuity policy when todo to
 });
 
 test("composeBaseAgentPrompt promotes scratchpad as working memory even before a scratchpad file exists", () => {
-  const defaultTools = ["read", "todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"];
+  const defaultTools = ["read", "todoread", "todowrite", "scratchpad_read", "scratchpad_write"];
   const capabilityManifest = buildAgentCapabilityManifest({
-    runtimeToolIds: ["todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"],
+    runtimeToolIds: ["todoread", "todowrite", "scratchpad_read", "scratchpad_write"],
     defaultTools,
     extraTools: [],
     workspaceSkillIds: [],
@@ -1000,9 +1000,9 @@ test("composeBaseAgentPrompt promotes scratchpad as working memory even before a
 });
 
 test("composeBaseAgentPrompt exposes existing scratchpad metadata without collapsing it into todo state", () => {
-  const defaultTools = ["read", "todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"];
+  const defaultTools = ["read", "todoread", "todowrite", "scratchpad_read", "scratchpad_write"];
   const capabilityManifest = buildAgentCapabilityManifest({
-    runtimeToolIds: ["todoread", "todowrite", "holaboss_scratchpad_read", "holaboss_scratchpad_write"],
+    runtimeToolIds: ["todoread", "todowrite", "scratchpad_read", "scratchpad_write"],
     defaultTools,
     extraTools: [],
     workspaceSkillIds: [],
@@ -1322,7 +1322,7 @@ test("composeBaseAgentPrompt includes recalled durable memory as context message
 test("composeBaseAgentPrompt includes cronjob delivery routing guidance when cronjob tools are available", () => {
   const capabilityManifest = buildAgentCapabilityManifest({
     defaultTools: ["read"],
-    extraTools: ["holaboss_cronjobs_create"],
+    extraTools: ["cronjobs_create"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     sessionKind: "main_session",
@@ -1331,7 +1331,7 @@ test("composeBaseAgentPrompt includes cronjob delivery routing guidance when cro
 
   const prompt = composeBaseAgentPrompt("", {
     defaultTools: ["read"],
-    extraTools: ["holaboss_cronjobs_create"],
+    extraTools: ["cronjobs_create"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     sessionKind: "main_session",

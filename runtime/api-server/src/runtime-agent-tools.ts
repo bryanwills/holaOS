@@ -1096,10 +1096,10 @@ function runtimeToolBaseDefinition(id: string) {
 
 export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
   {
-    id: runtimeToolBaseDefinition("holaboss_onboarding_status").id,
+    id: runtimeToolBaseDefinition("onboarding_status").id,
     method: "GET",
     path: "/api/v1/capabilities/runtime-tools/onboarding/status",
-    description: runtimeToolBaseDefinition("holaboss_onboarding_status").description
+    description: runtimeToolBaseDefinition("onboarding_status").description
   },
   {
     id: runtimeToolBaseDefinition("holaboss_create_alignment_question").id,
@@ -1120,76 +1120,76 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     description: runtimeToolBaseDefinition("holaboss_create_verification_report").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_onboarding_complete").id,
+    id: runtimeToolBaseDefinition("onboarding_complete").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/onboarding/complete",
-    description: runtimeToolBaseDefinition("holaboss_onboarding_complete").description
+    description: runtimeToolBaseDefinition("onboarding_complete").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_cronjobs_list").id,
+    id: runtimeToolBaseDefinition("cronjobs_list").id,
     method: "GET",
     path: "/api/v1/capabilities/runtime-tools/cronjobs",
-    description: runtimeToolBaseDefinition("holaboss_cronjobs_list").description
+    description: runtimeToolBaseDefinition("cronjobs_list").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_cronjobs_create").id,
+    id: runtimeToolBaseDefinition("cronjobs_create").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/cronjobs",
-    description: runtimeToolBaseDefinition("holaboss_cronjobs_create").description
+    description: runtimeToolBaseDefinition("cronjobs_create").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_cronjobs_get").id,
+    id: runtimeToolBaseDefinition("cronjobs_get").id,
     method: "GET",
     path: "/api/v1/capabilities/runtime-tools/cronjobs/:jobId",
-    description: runtimeToolBaseDefinition("holaboss_cronjobs_get").description
+    description: runtimeToolBaseDefinition("cronjobs_get").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_cronjobs_update").id,
+    id: runtimeToolBaseDefinition("cronjobs_update").id,
     method: "PATCH",
     path: "/api/v1/capabilities/runtime-tools/cronjobs/:jobId",
-    description: runtimeToolBaseDefinition("holaboss_cronjobs_update").description
+    description: runtimeToolBaseDefinition("cronjobs_update").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_cronjobs_delete").id,
+    id: runtimeToolBaseDefinition("cronjobs_delete").id,
     method: "DELETE",
     path: "/api/v1/capabilities/runtime-tools/cronjobs/:jobId",
-    description: runtimeToolBaseDefinition("holaboss_cronjobs_delete").description
+    description: runtimeToolBaseDefinition("cronjobs_delete").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_delegate_task").id,
+    id: runtimeToolBaseDefinition("delegate_task").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/subagents",
-    description: runtimeToolBaseDefinition("holaboss_delegate_task").description
+    description: runtimeToolBaseDefinition("delegate_task").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_get_subagent").id,
+    id: runtimeToolBaseDefinition("get_subagent").id,
     method: "GET",
     path: "/api/v1/capabilities/runtime-tools/subagents/:subagentId",
-    description: runtimeToolBaseDefinition("holaboss_get_subagent").description
+    description: runtimeToolBaseDefinition("get_subagent").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_list_background_tasks").id,
+    id: runtimeToolBaseDefinition("list_background_tasks").id,
     method: "GET",
     path: "/api/v1/capabilities/runtime-tools/background-tasks",
-    description: runtimeToolBaseDefinition("holaboss_list_background_tasks").description
+    description: runtimeToolBaseDefinition("list_background_tasks").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_cancel_subagent").id,
+    id: runtimeToolBaseDefinition("cancel_subagent").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/subagents/:subagentId/cancel",
-    description: runtimeToolBaseDefinition("holaboss_cancel_subagent").description
+    description: runtimeToolBaseDefinition("cancel_subagent").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_resume_subagent").id,
+    id: runtimeToolBaseDefinition("resume_subagent").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/subagents/:subagentId/resume",
-    description: runtimeToolBaseDefinition("holaboss_resume_subagent").description
+    description: runtimeToolBaseDefinition("resume_subagent").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_continue_subagent").id,
+    id: runtimeToolBaseDefinition("continue_subagent").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/subagents/:subagentId/continue",
-    description: runtimeToolBaseDefinition("holaboss_continue_subagent").description
+    description: runtimeToolBaseDefinition("continue_subagent").description
   },
   {
     id: runtimeToolBaseDefinition("image_generate").id,
@@ -1228,22 +1228,22 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     description: runtimeToolBaseDefinition("todowrite").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_scratchpad_read").id,
+    id: runtimeToolBaseDefinition("scratchpad_read").id,
     method: "GET",
     path: "/api/v1/capabilities/runtime-tools/scratchpad",
-    description: runtimeToolBaseDefinition("holaboss_scratchpad_read").description
+    description: runtimeToolBaseDefinition("scratchpad_read").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_scratchpad_write").id,
+    id: runtimeToolBaseDefinition("scratchpad_write").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/scratchpad",
-    description: runtimeToolBaseDefinition("holaboss_scratchpad_write").description
+    description: runtimeToolBaseDefinition("scratchpad_write").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_update_workspace_instructions").id,
+    id: runtimeToolBaseDefinition("update_workspace_instructions").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/workspace-instructions",
-    description: runtimeToolBaseDefinition("holaboss_update_workspace_instructions").description
+    description: runtimeToolBaseDefinition("update_workspace_instructions").description
   },
   {
     id: runtimeToolBaseDefinition("skill").id,
@@ -3871,7 +3871,7 @@ export class RuntimeAgentToolsService {
       sessionId: requestedSessionId || null,
       inputId: normalizedString(params.inputId) || null,
       states: synced,
-      toolId: "holaboss_list_background_tasks",
+      toolId: "list_background_tasks",
     });
     return {
       tasks: synced.map((state) => subagentRunPayload(state)),
@@ -3895,7 +3895,7 @@ export class RuntimeAgentToolsService {
       sessionId: requestedSessionId || null,
       inputId: normalizedString(params.inputId) || null,
       states: [state],
-      toolId: "holaboss_get_subagent",
+      toolId: "get_subagent",
     });
     if (!this.isVisibleBackgroundTask(state.run)) {
       throw new RuntimeAgentToolsServiceError(404, "subagent_not_found", "subagent not found");
@@ -4880,7 +4880,7 @@ export class RuntimeAgentToolsService {
     sessionId?: string | null;
     inputId?: string | null;
     states: SyncedSubagentRunState[];
-    toolId: "holaboss_get_subagent" | "holaboss_list_background_tasks";
+    toolId: "get_subagent" | "list_background_tasks";
   }): void {
     const sessionId = normalizedString(params.sessionId);
     const inputId = normalizedString(params.inputId);

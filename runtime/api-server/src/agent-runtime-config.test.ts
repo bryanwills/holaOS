@@ -812,7 +812,7 @@ test("projectAgentRuntimeConfig includes delegated executor capability context f
       harness_id: "pi",
       browser_tools_available: false,
       browser_tool_ids: [],
-      runtime_tool_ids: ["holaboss_delegate_task"],
+      runtime_tool_ids: ["delegate_task"],
       workspace_command_ids: [],
       delegated_session_kind: "subagent",
       delegated_browser_tools_available: true,
@@ -833,7 +833,7 @@ test("projectAgentRuntimeConfig includes delegated executor capability context f
       workspace_config_checksum: "checksum-1",
       workspace_skill_ids: [],
       default_tools: ["read"],
-      extra_tools: ["holaboss_delegate_task"],
+      extra_tools: ["delegate_task"],
       delegated_default_tools: ["read", "edit", "bash"],
       delegated_extra_tools: [
         "browser_get_state",

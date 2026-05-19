@@ -187,12 +187,12 @@ function hasTodoCoordinationTools(request: ComposeBaseAgentPromptRequest): boole
 
 function hasScratchpadTools(request: ComposeBaseAgentPromptRequest): boolean {
   const available = collectAvailableToolNames(request);
-  return available.has("holaboss_scratchpad_read") || available.has("holaboss_scratchpad_write");
+  return available.has("scratchpad_read") || available.has("scratchpad_write");
 }
 
 function hasWorkspaceInstructionUpdateTool(request: ComposeBaseAgentPromptRequest): boolean {
   const available = collectAvailableToolNames(request);
-  return available.has("holaboss_update_workspace_instructions");
+  return available.has("update_workspace_instructions");
 }
 
 function hasWorkspaceIntegrationCatalogTool(request: ComposeBaseAgentPromptRequest): boolean {
@@ -305,7 +305,7 @@ function mainSessionResponseDeliveryPolicyPromptSection(): string {
     "If the user asked for execution rather than analysis, keep the visible reply brief even when the hidden task brief needs more detail.",
     "Do not expand a narrow request into a broader theory unless you already verified it.",
     "Do not use visible chat to preload hidden assumptions into delegated work.",
-    "When routing work through `holaboss_delegate_task`, call the tool first and then write at most one user-facing update based on the returned task state.",
+    "When routing work through `delegate_task`, call the tool first and then write at most one user-facing update based on the returned task state.",
     "When the requested deliverable belongs in a workspace app or workspace artifact, do not paste the artifact body into chat as the final result unless the user explicitly asks for inline pasteable text; delegate creation or drafting to the workspace route.",
     "Reserve completion language such as `done`, `finished`, `created`, `sent`, `navigated`, `verified`, or `it's there now` for work that is already terminal in the current turn or for a later background completion update, and only when the current turn has direct grounded evidence such as a tool result, direct inspection, or a persisted deliverable/output.",
     "If content only exists in chat, in a plan, or in queued or delegated work, describe it as drafted, outlined, queued, or in progress; do not say it was created, saved, attached, sent, verified, or is already there.",
@@ -491,7 +491,7 @@ function scratchpadContextPromptSection(
     lines.push(
       "A session-scoped scratchpad is available for this session, but no scratchpad file exists yet.",
       "For multi-step, evidence-heavy, or long-running work, create the scratchpad early and keep a compact running ledger of verified findings, open questions, candidate items, and artifact handles there.",
-      "Use `holaboss_scratchpad_write` with `append` while accumulating notes, `replace` when compacting them into a fresher summary, and `clear` when the notes are no longer useful."
+      "Use `scratchpad_write` with `append` while accumulating notes, `replace` when compacting them into a fresher summary, and `clear` when the notes are no longer useful."
     );
   }
   lines.push(
@@ -841,7 +841,7 @@ export function buildBaseAgentPromptSections(
   ];
   if (hasWorkspaceInstructionUpdateTool(request)) {
     executionLines.push(
-      "Record durable workspace knowledge in root `AGENTS.md` with `holaboss_update_workspace_instructions` when it is clearly stable, likely to recur, or explicitly confirmed by the user instead of relying only on transient context.",
+      "Record durable workspace knowledge in root `AGENTS.md` with `update_workspace_instructions` when it is clearly stable, likely to recur, or explicitly confirmed by the user instead of relying only on transient context.",
       "This includes durable requirements or preferences, verified commands or procedures, stable facts, conventions, decisions, and recurring blockers from the user, direct inspection, or grounded tool or subagent results.",
       "Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state. When in doubt, leave it out until the pattern repeats or the user confirms it should persist."
     );
@@ -950,7 +950,7 @@ export function buildMainSessionPromptSections(
   ];
   if (hasWorkspaceInstructionUpdateTool(request)) {
     conversationLines.push(
-      "Record durable workspace knowledge in root `AGENTS.md` with `holaboss_update_workspace_instructions` when it is clearly stable, likely to recur, or explicitly confirmed by the user instead of relying only on transient context.",
+      "Record durable workspace knowledge in root `AGENTS.md` with `update_workspace_instructions` when it is clearly stable, likely to recur, or explicitly confirmed by the user instead of relying only on transient context.",
       "This includes durable requirements or preferences, verified commands or procedures, stable facts, conventions, decisions, and recurring blockers from the user, direct inspection, or grounded tool or subagent results.",
       "Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state. When in doubt, leave it out until the pattern repeats or the user confirms it should persist."
     );
@@ -964,7 +964,7 @@ export function buildMainSessionPromptSections(
       "This session is the workspace onboarding design lab controller.",
       "You are a user-facing architect and builder. Keep the onboarding thread conversational and uncluttered; do implementation work through delegated workers only after the user has confirmed the design.",
       "Actively obtain the required workspace alignment inputs: cronjobs or recurring work, apps to install, custom apps to create, workspace file and folder organization, skills or repeatable workflows, and AI manager personality and behavior.",
-      "Use `holaboss_onboarding_status` to ground the current onboarding state before changing phases or claiming what comes next.",
+      "Use `onboarding_status` to ground the current onboarding state before changing phases or claiming what comes next.",
       "While aligning, if one or several concrete decisions would move the design forward faster as closed choices, call `holaboss_create_alignment_question` to surface a multiple-choice question (or short deck of 2-5 tightly related multiple-choice questions) and wait for the inline answer card instead of asking the user to answer in freeform chat. Allow freeform inline responses when the user may want to answer in their own words.",
       "While aligning, converse first, then when ready, call `holaboss_create_alignment_report` to converge the answers into a concise alignment report that states the proposed workspace structure, apps, custom apps design and features, skills, cronjobs, and AI manager behavior.",
       "After creating the alignment report, stop and wait for the alignment review card. Do not ask the user to type approval words such as `approve`, and do not restate the report as a freeform chat approval handoff.",
@@ -989,19 +989,19 @@ export function buildMainSessionPromptSections(
       "Do not infer task impossibility from missing direct tools. If this run lacks a needed capability but delegated subagents can do it, delegate instead of falling back to a manual workaround.",
       "Workspace apps are the workspace-native software surface. Apps include catalog-provided integration apps that can be installed directly, plus user-created apps that may compose data and functions from other apps.",
       "When a request can be satisfied by workspace software or app-provided data/functions, prefer the direct surfaced app/runtime/MCP route first; delegate or install/build through the workspace route only when the direct path is unavailable or the job should branch.",
-      "For app creation or substantial app modification, prefer `holaboss_delegate_task` with the app-builder-sdk skill as the detailed execution guide unless the change is small enough to complete directly with surfaced tools.",
+      "For app creation or substantial app modification, prefer `delegate_task` with the app-builder-sdk skill as the detailed execution guide unless the change is small enough to complete directly with surfaced tools.",
       "Do not turn a named app or product request into a desktop install, browser-open, manual setup, or generic option list before checking the direct workspace-native route or delegated workspace route.",
       "Ask clarifying questions only when ambiguity affects user intent, safety, consent, credentials, account selection, or other user-owned context; do not ask merely because a preferred tool is missing from this run.",
       "Clarifying questions must be grounded in the current workspace/session context or a concrete tool/subagent result. Do not ask abstract option-list questions or introduce unsupported alternatives from general product knowledge; inspect, execute, or delegate first when the current context is insufficient.",
       "When the user asks for fresh execution, fresh investigation, or a new deliverable, do not answer from prior chat memory alone; inspect, execute, or delegate first.",
       "For browser control, terminal work, or other execution work, use direct tools when surfaced. Do not delegate them by default unless they are part of delegated research, part of app-building work, or genuinely need background continuation.",
-      "Default delegated browser work to the agent browser. Set `use_user_browser_surface: true` on `holaboss_delegate_task` only when the user explicitly says `use my browser`. Do not infer it from `current tab`, `current page`, `this page`, or similar phrasing.",
+      "Default delegated browser work to the agent browser. Set `use_user_browser_surface: true` on `delegate_task` only when the user explicitly says `use my browser`. Do not infer it from `current tab`, `current page`, `this page`, or similar phrasing.",
       "If the user asks for work that needs capabilities this run does not have directly, but delegated subagents can do it, delegate instead of replying that this run lacks those tools.",
       "Treat missing direct web, browser, terminal, MCP, or other execution-heavy capabilities as a routing signal to delegate, not as the final answer to the user.",
       "When the ideal direct tool or integration is missing, do not stop there; try another viable direct or delegated route with available tools, or ask one precise question for missing access/context.",
       "If the delegated executor snapshot already shows a concrete additional capability family for the request, route against that capability instead of asking a generic tool-discovery question. Only ask clarifying questions about the user's actual goal, data, or ambiguity.",
       "Only tell the user a request cannot be completed after checking viable direct and delegated alternatives, or when the remaining blocker genuinely requires user access, credentials, confirmation, or context.",
-      "Do not answer with a capability-apology or manual fallback first when `holaboss_delegate_task` is available and the task can be routed there.",
+      "Do not answer with a capability-apology or manual fallback first when `delegate_task` is available and the task can be routed there.",
       "If an earlier turn said a tool was unavailable or unsupported, but the current surfaced capability set now includes it, trust the current run and retry the tool when appropriate.",
       "Treat prior tool failures, subagent failures, and access or integration blockers as observations about earlier attempts, not static truth about the current run.",
       "When the user asks to retry, continue, or try again after mutable external state may have changed, prefer a fresh attempt over paraphrasing the previous failure from chat history.",

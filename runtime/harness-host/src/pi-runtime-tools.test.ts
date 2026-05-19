@@ -83,7 +83,7 @@ test("Pi runtime tools execute through the local runtime capability API", async 
     [...RUNTIME_AGENT_TOOL_IDS]
   );
 
-  const completeTool = tools.find((tool) => tool.name === "holaboss_onboarding_complete");
+  const completeTool = tools.find((tool) => tool.name === "onboarding_complete");
   assert.ok(completeTool);
   const result = await completeTool.execute(
     "call-1",
@@ -106,7 +106,7 @@ test("Pi runtime tools execute through the local runtime capability API", async 
   ]);
   assert.equal(result.content[0]?.type, "text");
   assert.equal(result.content[0]?.text, JSON.stringify({ onboarding_status: "completed" }, null, 2));
-  assert.deepEqual(result.details, { tool_id: "holaboss_onboarding_complete" });
+  assert.deepEqual(result.details, { tool_id: "onboarding_complete" });
 });
 
 test("Pi runtime tools compact large capability results and preserve raw details", async () => {
@@ -211,7 +211,7 @@ test("Pi runtime cronjob tools send instruction separately from description", as
     fetchImpl,
   });
 
-  const createTool = tools.find((tool) => tool.name === "holaboss_cronjobs_create");
+  const createTool = tools.find((tool) => tool.name === "cronjobs_create");
   assert.ok(createTool);
 
   const result = await createTool.execute(
@@ -259,8 +259,8 @@ test("Pi runtime cronjob tools expose only allowed delivery enum values", async 
       }),
   });
 
-  const createTool = tools.find((tool) => tool.name === "holaboss_cronjobs_create");
-  const updateTool = tools.find((tool) => tool.name === "holaboss_cronjobs_update");
+  const createTool = tools.find((tool) => tool.name === "cronjobs_create");
+  const updateTool = tools.find((tool) => tool.name === "cronjobs_update");
   assert.ok(createTool);
   assert.ok(updateTool);
 
@@ -327,11 +327,11 @@ test("Pi runtime subagent tools normalize delegated task bodies and control rout
     fetchImpl,
   });
 
-  const delegateTool = tools.find((tool) => tool.name === "holaboss_delegate_task");
-  const getTool = tools.find((tool) => tool.name === "holaboss_get_subagent");
-  const listTool = tools.find((tool) => tool.name === "holaboss_list_background_tasks");
-  const cancelTool = tools.find((tool) => tool.name === "holaboss_cancel_subagent");
-  const continueTool = tools.find((tool) => tool.name === "holaboss_continue_subagent");
+  const delegateTool = tools.find((tool) => tool.name === "delegate_task");
+  const getTool = tools.find((tool) => tool.name === "get_subagent");
+  const listTool = tools.find((tool) => tool.name === "list_background_tasks");
+  const cancelTool = tools.find((tool) => tool.name === "cancel_subagent");
+  const continueTool = tools.find((tool) => tool.name === "continue_subagent");
   assert.ok(delegateTool);
   assert.ok(getTool);
   assert.ok(listTool);
@@ -660,6 +660,33 @@ test("Pi runtime download_url tool forwards remote download parameters and guida
   );
 });
 
+test("Pi runtime update_workspace_instructions tool exposes exact op guidance", async () => {
+  const tools = await resolvePiRuntimeToolDefinitions({
+    runtimeApiBaseUrl: "http://127.0.0.1:5060",
+    fetchImpl: async () =>
+      new Response(JSON.stringify({ available: true }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      }),
+  });
+
+  const updateTool = tools.find((tool) => tool.name === "update_workspace_instructions");
+  assert.ok(updateTool);
+  assert.match(
+    updateTool.description ?? "",
+    /Valid `op` values are `read_current`, `append_rule`, `remove_rule`, and `replace_managed_section`; use `read_current` for reads, not `read`\./,
+  );
+  const promptGuidelines = (updateTool.promptGuidelines ?? []).join("\n");
+  assert.match(
+    promptGuidelines,
+    /Valid `op` values are exactly `read_current`, `append_rule`, `remove_rule`, and `replace_managed_section`\./,
+  );
+  assert.match(
+    promptGuidelines,
+    /Do not invent alias op names such as `read`; the read operation is `read_current`\./,
+  );
+});
+
 test("Pi runtime write_report tool forwards report content and current run headers", async () => {
   const requests: Array<{
     method: string;
@@ -817,7 +844,7 @@ test("Pi runtime tools fall back to node http when no fetch implementation is pr
       sessionId: "session-main",
       selectedModel: "openai/gpt-5.4",
     });
-    const completeTool = tools.find((tool) => tool.name === "holaboss_onboarding_complete");
+    const completeTool = tools.find((tool) => tool.name === "onboarding_complete");
     assert.ok(completeTool);
 
     const result = await completeTool.execute(
@@ -840,7 +867,7 @@ test("Pi runtime tools fall back to node http when no fetch implementation is pr
     ]);
     assert.equal(result.content[0]?.type, "text");
     assert.equal(result.content[0]?.text, JSON.stringify({ onboarding_status: "completed" }, null, 2));
-    assert.deepEqual(result.details, { tool_id: "holaboss_onboarding_complete" });
+    assert.deepEqual(result.details, { tool_id: "onboarding_complete" });
   } finally {
     server.close();
     await once(server, "close");

@@ -374,7 +374,7 @@ function runtimeToolAvailability(toolId: string): CapabilityAvailabilityRules | 
   ) {
     return { sessionKinds: ["workspace_onboarding"] };
   }
-  if (toolId === "holaboss_onboarding_complete") {
+  if (toolId === "onboarding_complete") {
     return { excludedSessionKinds: ["workspace_onboarding"] };
   }
   return undefined;
@@ -606,7 +606,7 @@ function executionSemanticsForDescriptor(params: {
       concurrency: "serial_only",
       requires_runtime_service: true,
       requires_browser: false,
-      requires_user_confirmation: normalizedId === "holaboss_onboarding_complete",
+      requires_user_confirmation: normalizedId === "onboarding_complete",
     };
   }
   if (params.kind === "workspace_command") {
@@ -1423,16 +1423,16 @@ export function renderCapabilityToolRoutingPromptSection(
       lines.push("Capability routing addenda:");
     }
   };
-  if (manifest.runtime_tools.some((capability) => capability.id === "holaboss_cronjobs_create")) {
+  if (manifest.runtime_tools.some((capability) => capability.id === "cronjobs_create")) {
     ensureHeading();
     lines.push("Cronjob delivery routing: use `session_run` for recurring agent work such as running instructions, tasks, analysis, browsing, or writing.");
     lines.push("Use `system_notification` only for lightweight reminders or notifications where the primary outcome is a short message rather than agent execution.");
     lines.push("When creating or updating cronjobs, put the executable task in `instruction` and keep `description` as a short display summary only.");
     lines.push("Do not repeat schedule wording such as 'every 5 minutes' inside the cronjob `instruction` unless the task itself genuinely requires saying that phrase.");
   }
-  if (manifest.runtime_tools.some((capability) => capability.id === "holaboss_delegate_task")) {
+  if (manifest.runtime_tools.some((capability) => capability.id === "delegate_task")) {
     ensureHeading();
-    lines.push("Delegation routing: keep work inline by default. Use `holaboss_delegate_task` primarily for research and investigation work that benefits from a separate execution branch, or for creating apps and making substantial app modifications.");
+    lines.push("Delegation routing: keep work inline by default. Use `delegate_task` primarily for research and investigation work that benefits from a separate execution branch, or for creating apps and making substantial app modifications.");
     lines.push("Outside research and app-building, delegate only when the user explicitly asks for background execution or the task genuinely must continue outside the current turn.");
     lines.push("Direct execution is allowed in this session when the surfaced tools can satisfy the request cleanly; do not delegate just because work is executable.");
     lines.push("Do not treat deliverable length alone as a delegation signal; keep long-form answers inline unless the underlying task already fits delegated research, app-building, or an explicit artifact/workspace route.");
@@ -1448,11 +1448,11 @@ export function renderCapabilityToolRoutingPromptSection(
     lines.push("Do not lead with a capability apology, manual workaround, or \"I can't do that here\" answer when delegation is available.");
     lines.push("If an earlier turn said a tool was unavailable or unsupported, but the current surfaced capability set now includes it, trust the current run and retry the tool when it is the right path.");
     lines.push("Only surface a hard capability limitation to the user when neither the current run nor delegated subagents can actually carry out the request.");
-    lines.push("Do not simulate waiting on a delegated task by repeatedly calling `holaboss_get_subagent` or `holaboss_list_background_tasks` in the same turn after you just spawned it.");
+    lines.push("Do not simulate waiting on a delegated task by repeatedly calling `get_subagent` or `list_background_tasks` in the same turn after you just spawned it.");
   }
-  if (manifest.runtime_tools.some((capability) => capability.id === "holaboss_continue_subagent")) {
+  if (manifest.runtime_tools.some((capability) => capability.id === "continue_subagent")) {
     ensureHeading();
-    lines.push("Continuation routing: when the user asks to continue, transform, save, summarize, compare, or report on a previous delegated result, use `holaboss_continue_subagent` on the relevant completed child session instead of creating a brand-new delegated task.");
+    lines.push("Continuation routing: when the user asks to continue, transform, save, summarize, compare, or report on a previous delegated result, use `continue_subagent` on the relevant completed child session instead of creating a brand-new delegated task.");
     lines.push("If more than one prior child result could match a continuation request, ask which one the user means before continuing.");
   }
   if (manifest.runtime_tools.some((capability) => capability.id === "terminal_session_start")) {
@@ -1528,10 +1528,10 @@ export function renderCapabilityAvailabilityContextPromptSection(
   }
   if (
     normalizedSessionKind === "main_session" &&
-    manifest.runtime_tools.some((capability) => capability.id === "holaboss_delegate_task")
+    manifest.runtime_tools.some((capability) => capability.id === "delegate_task")
   ) {
     lines.push(
-      "This front session can execute directly with the surfaced tools above. Use `holaboss_delegate_task` mainly for research or app-building work, or when background continuation is explicitly needed.",
+      "This front session can execute directly with the surfaced tools above. Use `delegate_task` mainly for research or app-building work, or when background continuation is explicitly needed.",
     );
   }
   return lines.join("\n");

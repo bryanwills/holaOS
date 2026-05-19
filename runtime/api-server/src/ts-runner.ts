@@ -120,29 +120,29 @@ const ONBOARDING_DEFAULT_TOOLS = [
 ];
 const SUBAGENT_DEFAULT_TOOLS = [...MAIN_SESSION_DEFAULT_TOOLS];
 const SUBAGENT_ORCHESTRATION_RUNTIME_TOOL_IDS = new Set([
-  "holaboss_delegate_task",
-  "holaboss_get_subagent",
-  "holaboss_list_background_tasks",
-  "holaboss_cancel_subagent",
-  "holaboss_resume_subagent",
-  "holaboss_continue_subagent",
+  "delegate_task",
+  "get_subagent",
+  "list_background_tasks",
+  "cancel_subagent",
+  "resume_subagent",
+  "continue_subagent",
 ]);
 const MAIN_SESSION_ONLY_RUNTIME_TOOL_IDS = new Set([
-  "holaboss_update_workspace_instructions",
+  "update_workspace_instructions",
 ]);
 const MAIN_SESSION_RUNTIME_TOOL_IDS = new Set([
-  "holaboss_delegate_task",
-  "holaboss_get_subagent",
-  "holaboss_list_background_tasks",
-  "holaboss_cancel_subagent",
-  "holaboss_resume_subagent",
-  "holaboss_continue_subagent",
-  "holaboss_update_workspace_instructions",
-  "holaboss_cronjobs_list",
-  "holaboss_cronjobs_create",
-  "holaboss_cronjobs_get",
-  "holaboss_cronjobs_update",
-  "holaboss_cronjobs_delete",
+  "delegate_task",
+  "get_subagent",
+  "list_background_tasks",
+  "cancel_subagent",
+  "resume_subagent",
+  "continue_subagent",
+  "update_workspace_instructions",
+  "cronjobs_list",
+  "cronjobs_create",
+  "cronjobs_get",
+  "cronjobs_update",
+  "cronjobs_delete",
 ]);
 const ONBOARDING_SESSION_RUNTIME_TOOL_IDS = new Set([
   ...Array.from(MAIN_SESSION_RUNTIME_TOOL_IDS).filter(
@@ -150,8 +150,8 @@ const ONBOARDING_SESSION_RUNTIME_TOOL_IDS = new Set([
       !SUBAGENT_ORCHESTRATION_RUNTIME_TOOL_IDS.has(toolId) &&
       !MAIN_SESSION_ONLY_RUNTIME_TOOL_IDS.has(toolId),
   ),
-  "holaboss_onboarding_status",
-  "holaboss_onboarding_complete",
+  "onboarding_status",
+  "onboarding_complete",
 ]);
 const BROWSER_RETRY_REQUEST_PATTERN = /\b(?:try again|retry|do it again|again)\b/i;
 const BROWSER_ACTION_REQUEST_PATTERN =
@@ -787,7 +787,7 @@ function loadRecentRuntimeContext(params: {
   if (!isFrontSessionKind(params.sessionKind)) {
     return null;
   }
-  if (!params.runtimeToolIds.includes("holaboss_delegate_task")) {
+  if (!params.runtimeToolIds.includes("delegate_task")) {
     return null;
   }
 
@@ -805,7 +805,7 @@ function loadRecentRuntimeContext(params: {
       lines: [
         "The user is asking for a report-style deliverable. Keep chat as the coordination surface, not the deliverable surface.",
         "Do not paste a long report, memo, brief, recap, or document body into the conversation.",
-        "Use `holaboss_delegate_task` to produce the report artifact, then keep the main-session reply to a brief acknowledgement or short handoff.",
+        "Use `delegate_task` to produce the report artifact, then keep the main-session reply to a brief acknowledgement or short handoff.",
         "Only provide the full content inline if the user explicitly asks for it in chat and it will remain short.",
       ],
     };
@@ -865,7 +865,7 @@ function loadRecentRuntimeContext(params: {
 
   const lines = [
     "This main-session run does not currently have direct browser tools. Do not repeat a browser-control limitation as if it were the final answer.",
-    "If the user's request is to operate the current browser/tab/page and direct browser tools are unavailable here, route it through `holaboss_delegate_task` instead of answering with a manual browser workaround.",
+    "If the user's request is to operate the current browser/tab/page and direct browser tools are unavailable here, route it through `delegate_task` instead of answering with a manual browser workaround.",
     "Only surface a browser limitation if delegated subagents also cannot perform the requested browser action.",
   ];
   if (staleBrowserRefusal) {

@@ -2541,10 +2541,10 @@ const PENDING_INTEGRATION_TOOL_NAMES = new Set([
   "workspace_apps_ensure_running",
   "workspace_apps_restart",
   "workspace_apps_restart_and_wait_ready",
-  "holaboss_delegate_task",
-  "holaboss_resume_subagent",
-  "holaboss_continue_subagent",
-  "holaboss_get_subagent",
+  "delegate_task",
+  "resume_subagent",
+  "continue_subagent",
+  "get_subagent",
 ]);
 
 function parseProposedIntegration(value: unknown): ChatProposedIntegration | null {

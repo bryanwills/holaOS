@@ -167,7 +167,7 @@ function alignmentQuestionDeckSchema(): Record<string, unknown> {
 
 function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unknown> {
   switch (toolId) {
-    case "holaboss_onboarding_status":
+    case "onboarding_status":
       return { type: "object", properties: {}, additionalProperties: false };
     case "holaboss_create_alignment_question":
       return {
@@ -196,7 +196,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         required: ["report"],
         additionalProperties: false,
       };
-    case "holaboss_onboarding_complete":
+    case "onboarding_complete":
       return {
         type: "object",
         properties: {
@@ -206,7 +206,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         required: ["summary"],
         additionalProperties: false,
       };
-    case "holaboss_cronjobs_list":
+    case "cronjobs_list":
       return {
         type: "object",
         properties: {
@@ -214,8 +214,8 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         },
         additionalProperties: false,
       };
-    case "holaboss_cronjobs_get":
-    case "holaboss_cronjobs_delete":
+    case "cronjobs_get":
+    case "cronjobs_delete":
       return {
         type: "object",
         properties: {
@@ -224,7 +224,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         required: ["job_id"],
         additionalProperties: false,
       };
-    case "holaboss_cronjobs_create":
+    case "cronjobs_create":
       return {
         type: "object",
         properties: {
@@ -249,7 +249,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         required: ["cron", "description", "instruction"],
         additionalProperties: false,
       };
-    case "holaboss_cronjobs_update":
+    case "cronjobs_update":
       return {
         type: "object",
         properties: {
@@ -274,7 +274,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         required: ["job_id"],
         additionalProperties: false,
       };
-    case "holaboss_delegate_task":
+    case "delegate_task":
       return {
         type: "object",
         properties: {
@@ -331,7 +331,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         },
         additionalProperties: false,
       };
-    case "holaboss_get_subagent":
+    case "get_subagent":
       return {
         type: "object",
         properties: {
@@ -343,7 +343,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         required: ["subagent_id"],
         additionalProperties: false,
       };
-    case "holaboss_list_background_tasks":
+    case "list_background_tasks":
       return {
         type: "object",
         properties: {
@@ -367,7 +367,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         },
         additionalProperties: false,
       };
-    case "holaboss_cancel_subagent":
+    case "cancel_subagent":
       return {
         type: "object",
         properties: {
@@ -376,7 +376,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         required: ["subagent_id"],
         additionalProperties: false,
       };
-    case "holaboss_resume_subagent":
+    case "resume_subagent":
       return {
         type: "object",
         properties: {
@@ -387,7 +387,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         required: ["subagent_id", "answer"],
         additionalProperties: false,
       };
-    case "holaboss_continue_subagent":
+    case "continue_subagent":
       return {
         type: "object",
         properties: {
@@ -650,9 +650,9 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         required: ["ops"],
         additionalProperties: false,
       };
-    case "holaboss_scratchpad_read":
+    case "scratchpad_read":
       return { type: "object", properties: {}, additionalProperties: false };
-    case "holaboss_scratchpad_write":
+    case "scratchpad_write":
       return {
         type: "object",
         properties: {
@@ -666,13 +666,13 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         required: ["op"],
         additionalProperties: false,
       };
-    case "holaboss_update_workspace_instructions":
+    case "update_workspace_instructions":
       return {
         type: "object",
         properties: {
           op: literalStringUnion(
             ["read_current", "append_rule", "remove_rule", "replace_managed_section"],
-            "Workspace-instruction update operation.",
+            "Workspace-instruction operation. Valid values are exactly `read_current`, `append_rule`, `remove_rule`, and `replace_managed_section`. Use `read_current` for reads; do not use `read` or other aliases.",
           ),
           rule: {
             type: "string",
@@ -1095,9 +1095,11 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "If required facts remain unverified after search, escalate to browser tools or another more direct capability.",
     ];
   }
-  if (toolId === "holaboss_update_workspace_instructions") {
+  if (toolId === "update_workspace_instructions") {
     return [
-      "Use `holaboss_update_workspace_instructions` when durable workspace knowledge should be recorded in root `AGENTS.md`.",
+      "Use `update_workspace_instructions` when durable workspace knowledge should be recorded in root `AGENTS.md`.",
+      "Valid `op` values are exactly `read_current`, `append_rule`, `remove_rule`, and `replace_managed_section`.",
+      "Do not invent alias op names such as `read`; the read operation is `read_current`.",
       "Record durable user requirements and preferences, verified commands and procedures, stable workspace facts, conventions, decisions, and recurring blockers that future runs should reuse when they are clearly stable, likely to recur, or explicitly confirmed by the user, whether they came from the user, direct inspection, or grounded tool or subagent results.",
       "Do not record narrow one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state. When in doubt, leave it out until the pattern repeats or the user confirms it should persist.",
       "After recording durable guidance in `AGENTS.md`, if it is conditional, situational, or procedural rather than always-on policy, also create or update a workspace-local skill and keep a short skills index entry in `AGENTS.md`.",
@@ -1113,9 +1115,9 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "Use `args` only for short follow-up instructions that should accompany the skill block.",
     ];
   }
-  if (toolId === "holaboss_delegate_task") {
+  if (toolId === "delegate_task") {
     return [
-      "Use `holaboss_delegate_task` for longer-running, multi-step, or interruptible work that should continue while the main conversation remains free.",
+      "Use `delegate_task` for longer-running, multi-step, or interruptible work that should continue while the main conversation remains free.",
       "Keep each delegated task narrowly scoped and self-contained. Use the canonical `tasks` array for batched delegation and the singleton top-level fields only for one task.",
       "Use `tools` as coarse capability buckets such as `web`, `browser`, `terminal`, or `file`; do not treat them as raw low-level tool ids.",
       "Default delegated browser work to the agent browser. Set `use_user_browser_surface` only when the user explicitly says `use my browser`.",
@@ -1126,38 +1128,38 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "When the ideal direct integration is missing, delegate with the capability bucket that can still solve the task: `browser` for UI/app state, `web` for public information, and `terminal` or `file` for workspace inspection.",
     ];
   }
-  if (toolId === "holaboss_get_subagent") {
+  if (toolId === "get_subagent") {
     return [
-      "Use `holaboss_get_subagent` when you need the latest structured state for one delegated background task.",
+      "Use `get_subagent` when you need the latest structured state for one delegated background task.",
       "Use this for targeted status questions like whether one task is done, failed, or waiting on user input.",
       "This reads persisted task state only; it does not block waiting for the task to change.",
       "Do not call this repeatedly in the same turn right after delegating a fresh task just to see if it finished; return control unless the task is already in a terminal or waiting-on-user state.",
     ];
   }
-  if (toolId === "holaboss_list_background_tasks") {
+  if (toolId === "list_background_tasks") {
     return [
-      "Use `holaboss_list_background_tasks` when you need a compact overview of delegated background work for the current workspace.",
+      "Use `list_background_tasks` when you need a compact overview of delegated background work for the current workspace.",
       "Use optional filters to narrow the list instead of asking every task to report in full.",
       "This reads persisted task state only; it does not block waiting for any task to change.",
       "Do not use this as a polling loop in the same turn after spawning fresh delegated work.",
     ];
   }
-  if (toolId === "holaboss_cancel_subagent") {
+  if (toolId === "cancel_subagent") {
     return [
-      "Use `holaboss_cancel_subagent` only when the user clearly wants to stop a specific delegated task.",
+      "Use `cancel_subagent` only when the user clearly wants to stop a specific delegated task.",
       "Resolve which delegated task the user means before calling this tool; do not guess if multiple background tasks are plausible matches.",
     ];
   }
-  if (toolId === "holaboss_resume_subagent") {
+  if (toolId === "resume_subagent") {
     return [
-      "Use `holaboss_resume_subagent` when a delegated task is waiting on user input and the user has provided that answer.",
+      "Use `resume_subagent` when a delegated task is waiting on user input and the user has provided that answer.",
       "Resume the same paused subagent run instead of delegating a brand-new task when the user is answering an explicit blocker question.",
       "Pass only the answer needed to continue the task; do not restate the entire conversation unless it materially changes the task.",
     ];
   }
-  if (toolId === "holaboss_continue_subagent") {
+  if (toolId === "continue_subagent") {
     return [
-      "Use `holaboss_continue_subagent` when the user asks to transform, save, refine, compare, or otherwise continue the result of a completed delegated task.",
+      "Use `continue_subagent` when the user asks to transform, save, refine, compare, or otherwise continue the result of a completed delegated task.",
       "Prefer continuing the existing child session for referential requests like 'turn that into a report', 'save item 2', 'summarize those', or 'compare them'.",
       "If it is unclear which delegated task the user means, ask a short clarifying question before continuing.",
       "Do not start a fresh delegated task for a true continuation of the most recent relevant child result.",
@@ -1184,17 +1186,17 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "Keep exactly one task `in_progress` whenever unfinished tasks remain unless the current task is blocked on user input or another external dependency.",
     ];
   }
-  if (toolId === "holaboss_scratchpad_read") {
+  if (toolId === "scratchpad_read") {
     return [
-      "Use `holaboss_scratchpad_read` when a resumed or long-running session likely has session-scoped notes that matter for the current turn.",
+      "Use `scratchpad_read` when a resumed or long-running session likely has session-scoped notes that matter for the current turn.",
       "Treat scratchpad notes as session continuity, not as durable memory or verified current truth.",
       "Read the scratchpad when you need the saved notes again; do not assume they are already in prompt context.",
       "When the scratchpad already contains the needed working state, prefer reading it instead of reopening or re-parsing large prior tool artifacts.",
     ];
   }
-  if (toolId === "holaboss_scratchpad_write") {
+  if (toolId === "scratchpad_write") {
     return [
-      "Use `holaboss_scratchpad_write` for long-running working notes, interim findings, open questions, evidence ledgers, or compacted current state that should survive beyond the current prompt window.",
+      "Use `scratchpad_write` for long-running working notes, interim findings, open questions, evidence ledgers, or compacted current state that should survive beyond the current prompt window.",
       "After the first material findings in a multi-step task, start or update the scratchpad so verified state does not live only in transient prompt context.",
       "Use `append` while accumulating notes, `replace` when compacting the scratchpad into a fresher shorter summary, and `clear` when the notes are no longer useful.",
       "Use the scratchpad as working memory for verified findings, extracted facts, candidate lists, artifact handles, open questions, and compacted current state.",

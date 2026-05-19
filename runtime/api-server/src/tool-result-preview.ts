@@ -579,7 +579,7 @@ async function shapeScratchpadReadPayload(
   }
 
   shaped._preview = previewMeta({
-    toolId: "holaboss_scratchpad_read",
+    toolId: "scratchpad_read",
     truncated,
     spilled: false,
     spilloverPaths: [],
@@ -796,7 +796,7 @@ export async function shapeCapabilityToolResultPayload(
         return await shapeWebSearchPayload(params);
       case "skill":
         return await shapeSkillPayload(params);
-      case "holaboss_scratchpad_read":
+      case "scratchpad_read":
         return await shapeScratchpadReadPayload(params.payload);
       case "terminal_session_read":
       case "terminal_session_wait":
