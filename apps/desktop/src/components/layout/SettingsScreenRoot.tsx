@@ -173,7 +173,7 @@ function pageDescription(section: UiSettingsPaneSection): string | undefined {
     case "providers":
       return "Default models, providers, and per-workspace overrides.";
     case "integrations":
-      return "Manage connections to third-party services your apps depend on.";
+      return "Your toolkit pool. Connect once, use across workspaces.";
     case "submissions":
       return "Review templates and apps you've submitted for marketplace listing.";
     case "experimental":

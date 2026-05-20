@@ -799,14 +799,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     );
 
     if (embedded) {
-      return (
-        <div>
-          <p className="text-sm text-muted-foreground">
-            Connect your accounts to use them in workspaces.
-          </p>
-          {embeddedSkeleton}
-        </div>
-      );
+      return <div>{embeddedSkeleton}</div>;
     }
 
     return (
@@ -1001,10 +994,6 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
   if (embedded) {
     return (
       <div className="grid gap-6">
-        <p className="text-sm text-muted-foreground">
-          Connect your accounts to use them in workspaces.
-        </p>
-
         {/* Auth gate */}
         {!authSessionState.isPending && !isSignedIn ? (
           <SettingsCard>
