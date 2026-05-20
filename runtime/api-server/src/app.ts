@@ -4027,6 +4027,25 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     return { entries: listStoreCatalog() };
   });
 
+  // Account-scoped view: every workspace_integration_override row in
+  // one call. The account-level Integrations pane uses this to render
+  // per-toolkit rows with expandable per-workspace state without
+  // having to fan out one /workspaces/:id/integrations call per
+  // workspace.
+  app.get("/api/v1/integrations/all-workspace-overrides", async () => {
+    const overrides = store.listAllWorkspaceIntegrationOverrides();
+    return {
+      overrides: overrides.map((o) => ({
+        workspace_id: o.workspaceId,
+        toolkit_slug: o.toolkitSlug,
+        state: o.state,
+        pinned_connection_id: o.pinnedConnectionId,
+        created_at: o.createdAt,
+        updated_at: o.updatedAt,
+      })),
+    };
+  });
+
   app.get("/api/v1/integrations/connections", async (request, reply) => {
     const query = isRecord(request.query) ? request.query : {};
     try {

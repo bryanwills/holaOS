@@ -1444,6 +1444,17 @@ interface RuntimeNotificationListOptionsPayload {
     entries: IntegrationStoreCatalogEntry[];
   }
 
+  interface AllWorkspaceIntegrationOverridesPayload {
+    overrides: Array<{
+      workspace_id: string;
+      toolkit_slug: string;
+      state: "disabled" | "pinned";
+      pinned_connection_id: string | null;
+      created_at: string;
+      updated_at: string;
+    }>;
+  }
+
   interface WorkspaceIntegrationConnectionPayload {
     connected_account_id: string;
     status: string;
@@ -1909,6 +1920,7 @@ interface RuntimeNotificationListOptionsPayload {
       listConnectionWorkspaceUsage: () => Promise<ConnectionWorkspaceUsagePayload>;
       listComposioToolkitCapabilities: () => Promise<ComposioToolkitCapabilitiesPayload>;
       listIntegrationStoreCatalog: () => Promise<IntegrationStoreCatalogPayload>;
+      listAllWorkspaceIntegrationOverrides: () => Promise<AllWorkspaceIntegrationOverridesPayload>;
       listWorkspaceIntegrations: (workspaceId: string) => Promise<WorkspaceIntegrationsListResponsePayload>;
       setWorkspaceIntegrationOverride: (
         workspaceId: string,

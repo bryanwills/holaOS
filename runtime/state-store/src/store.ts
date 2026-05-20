@@ -3506,6 +3506,15 @@ export class RuntimeStateStore {
     return rows.map((row) => this.workspaceIntegrationOverrideRowToRecord(row));
   }
 
+  listAllWorkspaceIntegrationOverrides(): WorkspaceIntegrationOverrideRecord[] {
+    const rows = this.controlPlaneDb()
+      .prepare<[], Record<string, unknown>>(
+        "SELECT * FROM workspace_integration_overrides ORDER BY workspace_id, toolkit_slug ASC",
+      )
+      .all();
+    return rows.map((row) => this.workspaceIntegrationOverrideRowToRecord(row));
+  }
+
   getWorkspaceIntegrationOverride(params: {
     workspaceId: string;
     toolkitSlug: string;

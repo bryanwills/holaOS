@@ -10263,6 +10263,31 @@ async function listIntegrationStoreCatalog(): Promise<{
   });
 }
 
+async function listAllWorkspaceIntegrationOverrides(): Promise<{
+  overrides: Array<{
+    workspace_id: string;
+    toolkit_slug: string;
+    state: "disabled" | "pinned";
+    pinned_connection_id: string | null;
+    created_at: string;
+    updated_at: string;
+  }>;
+}> {
+  return requestRuntimeJson<{
+    overrides: Array<{
+      workspace_id: string;
+      toolkit_slug: string;
+      state: "disabled" | "pinned";
+      pinned_connection_id: string | null;
+      created_at: string;
+      updated_at: string;
+    }>;
+  }>({
+    method: "GET",
+    path: "/api/v1/integrations/all-workspace-overrides",
+  });
+}
+
 async function listComposioToolkitCapabilities(): Promise<{
   toolkits: Record<
     string,
@@ -22969,6 +22994,11 @@ app.whenReady().then(async () => {
     "workspace:listIntegrationStoreCatalog",
     ["main"],
     async () => listIntegrationStoreCatalog(),
+  );
+  handleTrustedIpc(
+    "workspace:listAllWorkspaceIntegrationOverrides",
+    ["main"],
+    async () => listAllWorkspaceIntegrationOverrides(),
   );
   handleTrustedIpc(
     "workspace:listWorkspaceIntegrations",

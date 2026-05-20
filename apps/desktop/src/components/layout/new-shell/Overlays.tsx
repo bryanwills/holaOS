@@ -9,7 +9,6 @@ import { ArtifactsPane } from "@/components/panes/ArtifactsPane";
 import { AutomationsPane } from "@/components/panes/AutomationsPane";
 import { MarketplacePane } from "@/components/panes/MarketplacePane";
 import { SubagentSessionsPane } from "@/components/panes/SubagentSessionsPane";
-import { WorkspaceIntegrationsPane } from "@/components/panes/WorkspaceIntegrationsPane";
 import { Button } from "@/components/ui/button";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import {
@@ -20,7 +19,6 @@ import {
   sessionsOpenAtom,
   settingsOpenAtom,
   settingsSectionAtom,
-  workspaceIntegrationsOpenAtom,
 } from "./state/ui";
 import { useSettingsState } from "./useSettingsState";
 import { useTaskProposals } from "./useTaskProposals";
@@ -33,7 +31,6 @@ export function Overlays() {
       <AutomationsOverlay />
       <SessionsOverlay />
       <MarketplaceOverlay />
-      <WorkspaceIntegrationsOverlay />
       <SettingsOverlay />
     </>
   );
@@ -157,27 +154,6 @@ function MarketplaceOverlay() {
     >
       <div className="h-full overflow-y-auto">
         <MarketplacePane variant="embedded" />
-      </div>
-    </PaneOverlay>
-  );
-}
-
-function WorkspaceIntegrationsOverlay() {
-  const { selectedWorkspaceId } = useWorkspaceSelection();
-  return (
-    <PaneOverlay
-      openAtom={workspaceIntegrationsOpenAtom}
-      title="Workspace integrations"
-      size="lg"
-    >
-      <div className="h-full overflow-y-auto p-5">
-        {selectedWorkspaceId ? (
-          <WorkspaceIntegrationsPane workspaceId={selectedWorkspaceId} />
-        ) : (
-          <p className="px-2 text-sm text-muted-foreground">
-            Select a workspace to manage its integrations.
-          </p>
-        )}
       </div>
     </PaneOverlay>
   );

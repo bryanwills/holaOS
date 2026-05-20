@@ -1016,6 +1016,17 @@ interface IntegrationStoreCatalogPayload {
   entries: IntegrationStoreCatalogEntry[];
 }
 
+interface AllWorkspaceIntegrationOverridesPayload {
+  overrides: Array<{
+    workspace_id: string;
+    toolkit_slug: string;
+    state: "disabled" | "pinned";
+    pinned_connection_id: string | null;
+    created_at: string;
+    updated_at: string;
+  }>;
+}
+
 interface WorkspaceIntegrationConnectionPayload {
   connected_account_id: string;
   status: string;
@@ -1518,6 +1529,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:listComposioToolkitCapabilities") as Promise<ComposioToolkitCapabilitiesPayload>,
     listIntegrationStoreCatalog: () =>
       ipcRenderer.invoke("workspace:listIntegrationStoreCatalog") as Promise<IntegrationStoreCatalogPayload>,
+    listAllWorkspaceIntegrationOverrides: () =>
+      ipcRenderer.invoke("workspace:listAllWorkspaceIntegrationOverrides") as Promise<AllWorkspaceIntegrationOverridesPayload>,
     listWorkspaceIntegrations: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listWorkspaceIntegrations", workspaceId) as Promise<WorkspaceIntegrationsListResponsePayload>,
     setWorkspaceIntegrationOverride: (

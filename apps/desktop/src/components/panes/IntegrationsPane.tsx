@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/select";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
 import { accountDisplayLabel } from "@/lib/integrationDisplay";
+import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import {
   invalidateIntegrationAccountCache,
   useIntegrationAccountMetadata,
@@ -185,6 +186,12 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
   const [storeCatalog, setStoreCatalog] = useState<
     Map<string, IntegrationStoreCatalogEntry>
   >(new Map());
+  const [overridesByToolkit, setOverridesByToolkit] = useState<
+    Map<string, Map<string, AllWorkspaceIntegrationOverridesPayload["overrides"][number]>>
+  >(new Map());
+  const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null);
+  const [mutatingOverrideKey, setMutatingOverrideKey] = useState<string | null>(null);
+  const { workspaces } = useWorkspaceDesktop();
   const accountMetadata = useIntegrationAccountMetadata(connections);
 
   const loadData = useCallback(async () => {
@@ -197,6 +204,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
         usageResult,
         capabilitiesResult,
         storeCatalogResult,
+        overridesResult,
       ] = await Promise.all([
         window.electronAPI.workspace.listIntegrationCatalog(),
         window.electronAPI.workspace.listIntegrationConnections(),
@@ -212,6 +220,11 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
         window.electronAPI.workspace
           .listIntegrationStoreCatalog()
           .catch(() => ({ entries: [] as IntegrationStoreCatalogEntry[] })),
+        window.electronAPI.workspace
+          .listAllWorkspaceIntegrationOverrides()
+          .catch(() => ({
+            overrides: [] as AllWorkspaceIntegrationOverridesPayload["overrides"],
+          })),
       ]);
       setIntegrations(
         mergeIntegrationCards(catalogResult.providers, toolkitResult.toolkits),
@@ -228,6 +241,20 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
         storeMap.set(entry.slug.trim().toLowerCase(), entry);
       }
       setStoreCatalog(storeMap);
+      const ovMap = new Map<
+        string,
+        Map<string, AllWorkspaceIntegrationOverridesPayload["overrides"][number]>
+      >();
+      for (const o of overridesResult.overrides) {
+        const key = o.toolkit_slug.toLowerCase();
+        let inner = ovMap.get(key);
+        if (!inner) {
+          inner = new Map();
+          ovMap.set(key, inner);
+        }
+        inner.set(o.workspace_id, o);
+      }
+      setOverridesByToolkit(ovMap);
     } catch (error) {
       setIntegrations([]);
       setConnections([]);
@@ -659,6 +686,66 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     }
   }
 
+  const setWorkspaceToolkitEnabled = useCallback(
+    async (workspaceId: string, toolkitSlug: string, enabled: boolean) => {
+      const key = `${workspaceId}:${toolkitSlug}`;
+      setMutatingOverrideKey(key);
+      setStatusMessage("");
+      try {
+        if (enabled) {
+          await window.electronAPI.workspace.clearWorkspaceIntegrationOverride(
+            workspaceId,
+            toolkitSlug,
+          );
+        } else {
+          await window.electronAPI.workspace.setWorkspaceIntegrationOverride(
+            workspaceId,
+            toolkitSlug,
+            { state: "disabled" },
+          );
+        }
+        await loadData();
+      } catch (error) {
+        setStatusMessage(normalizeErrorMessage(error));
+      } finally {
+        setMutatingOverrideKey(null);
+      }
+    },
+    [loadData],
+  );
+
+  const setWorkspaceToolkitPin = useCallback(
+    async (
+      workspaceId: string,
+      toolkitSlug: string,
+      connectionId: string | "auto",
+    ) => {
+      const key = `${workspaceId}:${toolkitSlug}`;
+      setMutatingOverrideKey(key);
+      setStatusMessage("");
+      try {
+        if (connectionId === "auto") {
+          await window.electronAPI.workspace.clearWorkspaceIntegrationOverride(
+            workspaceId,
+            toolkitSlug,
+          );
+        } else {
+          await window.electronAPI.workspace.setWorkspaceIntegrationOverride(
+            workspaceId,
+            toolkitSlug,
+            { state: "pinned", pinned_connection_id: connectionId },
+          );
+        }
+        await loadData();
+      } catch (error) {
+        setStatusMessage(normalizeErrorMessage(error));
+      } finally {
+        setMutatingOverrideKey(null);
+      }
+    },
+    [loadData],
+  );
+
   async function handleRefresh(connectionId: string) {
     setRefreshingConnectionId(connectionId);
     setStatusMessage("");
@@ -870,9 +957,27 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
                 onRefresh={(connectionId) =>
                   void handleRefresh(connectionId)
                 }
+                expanded={expandedProviderId === integration.providerId}
+                mutatingOverrideKey={mutatingOverrideKey}
+                onSetWorkspaceEnabled={(workspaceId, enabled) =>
+                  void setWorkspaceToolkitEnabled(
+                    workspaceId,
+                    integration.providerId,
+                    enabled,
+                  )
+                }
+                onToggleExpanded={() =>
+                  setExpandedProviderId((prev) =>
+                    prev === integration.providerId ? null : integration.providerId,
+                  )
+                }
                 refreshingConnectionId={refreshingConnectionId}
                 toolkitCapabilities={capabilitiesByToolkit[integration.providerId] ?? []}
+                toolkitOverrides={
+                  overridesByToolkit.get(integration.providerId) ?? new Map()
+                }
                 workspaceUsageByConnection={workspaceUsageByConnection}
+                workspaces={workspaces.map((w) => ({ id: w.id, name: w.name }))}
               />
             ))}
           </div>
@@ -1070,9 +1175,27 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
                   onRefresh={(connectionId) =>
                     void handleRefresh(connectionId)
                   }
+                  expanded={expandedProviderId === integration.providerId}
+                  mutatingOverrideKey={mutatingOverrideKey}
+                  onSetWorkspaceEnabled={(workspaceId, enabled) =>
+                    void setWorkspaceToolkitEnabled(
+                      workspaceId,
+                      integration.providerId,
+                      enabled,
+                    )
+                  }
+                  onToggleExpanded={() =>
+                    setExpandedProviderId((prev) =>
+                      prev === integration.providerId ? null : integration.providerId,
+                    )
+                  }
                   refreshingConnectionId={refreshingConnectionId}
                   toolkitCapabilities={capabilitiesByToolkit[integration.providerId] ?? []}
+                  toolkitOverrides={
+                    overridesByToolkit.get(integration.providerId) ?? new Map()
+                  }
                   workspaceUsageByConnection={workspaceUsageByConnection}
+                  workspaces={workspaces.map((w) => ({ id: w.id, name: w.name }))}
                 />
               ))}
             </div>
@@ -1357,6 +1480,18 @@ function IntegrationEmbeddedCard({
   );
 }
 
+interface WorkspaceOverrideDescriptor {
+  workspace_id: string;
+  toolkit_slug: string;
+  state: "disabled" | "pinned";
+  pinned_connection_id: string | null;
+}
+
+interface WorkspaceSummary {
+  id: string;
+  name: string;
+}
+
 function ConnectedProviderCard({
   integration,
   connections,
@@ -1372,6 +1507,12 @@ function ConnectedProviderCard({
   compact,
   workspaceUsageByConnection,
   toolkitCapabilities,
+  workspaces,
+  toolkitOverrides,
+  expanded,
+  onToggleExpanded,
+  onSetWorkspaceEnabled,
+  mutatingOverrideKey,
 }: {
   integration: IntegrationCard;
   connections: IntegrationConnectionPayload[];
@@ -1387,8 +1528,13 @@ function ConnectedProviderCard({
   compact: boolean;
   workspaceUsageByConnection: Map<string, ConnectionWorkspaceUsageEntry["workspaces"]>;
   toolkitCapabilities: ComposioToolkitCapability[];
+  workspaces: WorkspaceSummary[];
+  toolkitOverrides: Map<string, WorkspaceOverrideDescriptor>;
+  expanded: boolean;
+  onToggleExpanded: () => void;
+  onSetWorkspaceEnabled: (workspaceId: string, enabled: boolean) => void;
+  mutatingOverrideKey: string | null;
 }) {
-  const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
   const containerClass = compact
     ? "flex flex-col gap-1 rounded-xl bg-card px-3 py-2.5 ring-1 ring-border"
     : "flex flex-col gap-1 rounded-xl border border-border px-3 py-2.5";
@@ -1533,23 +1679,120 @@ function ConnectedProviderCard({
             </div>
           );
         })}
-        {toolkitCapabilities.length > 0 ? (
-          <div className="mt-1 border-border border-t pt-2">
-            <button
-              aria-expanded={capabilitiesOpen}
-              className="flex w-full items-center justify-between text-[11px] text-muted-foreground transition-colors hover:text-foreground"
-              onClick={() => setCapabilitiesOpen((prev) => !prev)}
-              type="button"
-            >
-              <span>
-                {toolkitCapabilities.length} agent{" "}
-                {toolkitCapabilities.length === 1 ? "tool" : "tools"} available
-              </span>
-              <span>{capabilitiesOpen ? "Hide" : "Show"}</span>
-            </button>
-            {capabilitiesOpen ? (
-              <ul className="mt-2 space-y-1.5">
-                {toolkitCapabilities.map((cap) => (
+        <WorkspaceScopeSection
+          capabilities={toolkitCapabilities}
+          expanded={expanded}
+          mutatingOverrideKey={mutatingOverrideKey}
+          onSetWorkspaceEnabled={onSetWorkspaceEnabled}
+          onToggleExpanded={onToggleExpanded}
+          toolkitOverrides={toolkitOverrides}
+          toolkitSlug={integration.providerId}
+          workspaces={workspaces}
+        />
+      </div>
+    </div>
+  );
+}
+
+function WorkspaceScopeSection({
+  workspaces,
+  toolkitOverrides,
+  toolkitSlug,
+  capabilities,
+  expanded,
+  onToggleExpanded,
+  onSetWorkspaceEnabled,
+  mutatingOverrideKey,
+}: {
+  workspaces: WorkspaceSummary[];
+  toolkitOverrides: Map<string, WorkspaceOverrideDescriptor>;
+  toolkitSlug: string;
+  capabilities: ComposioToolkitCapability[];
+  expanded: boolean;
+  onToggleExpanded: () => void;
+  onSetWorkspaceEnabled: (workspaceId: string, enabled: boolean) => void;
+  mutatingOverrideKey: string | null;
+}) {
+  const disabledWorkspaceIds: string[] = [];
+  for (const ws of workspaces) {
+    if (toolkitOverrides.get(ws.id)?.state === "disabled") {
+      disabledWorkspaceIds.push(ws.id);
+    }
+  }
+  const disabledNames = disabledWorkspaceIds
+    .map((id) => workspaces.find((w) => w.id === id)?.name)
+    .filter((n): n is string => Boolean(n));
+  const summary =
+    disabledNames.length === 0
+      ? "Active in all workspaces"
+      : disabledNames.length === workspaces.length
+        ? "Disabled in all workspaces"
+        : `Disabled in: ${disabledNames.join(", ")}`;
+  const toolCount = capabilities.length;
+  return (
+    <div className="mt-1 border-border border-t pt-2">
+      <button
+        aria-expanded={expanded}
+        className="flex w-full items-center justify-between gap-3 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+        onClick={onToggleExpanded}
+        type="button"
+      >
+        <span className="truncate text-left">
+          {summary}
+          {toolCount > 0
+            ? ` · ${toolCount} agent ${toolCount === 1 ? "tool" : "tools"}`
+            : ""}
+        </span>
+        <span className="shrink-0">{expanded ? "Hide" : "Manage"}</span>
+      </button>
+      {expanded ? (
+        <div className="mt-3 grid gap-3">
+          {workspaces.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">
+              No workspaces yet. Create one to scope this integration.
+            </p>
+          ) : (
+            <ul className="grid gap-2">
+              {workspaces.map((ws) => {
+                const override = toolkitOverrides.get(ws.id);
+                const enabled = override?.state !== "disabled";
+                const key = `${ws.id}:${toolkitSlug}`;
+                const mutating = mutatingOverrideKey === key;
+                return (
+                  <li
+                    className="flex items-center justify-between gap-3 rounded-md bg-muted/40 px-2.5 py-1.5"
+                    key={ws.id}
+                  >
+                    <span className="truncate text-xs text-foreground">
+                      {ws.name || ws.id}
+                    </span>
+                    <label className="flex shrink-0 cursor-pointer items-center gap-2 text-[10px] text-muted-foreground">
+                      {mutating ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : null}
+                      <input
+                        checked={enabled}
+                        className="size-3.5 cursor-pointer accent-foreground"
+                        disabled={mutating}
+                        onChange={(e) =>
+                          onSetWorkspaceEnabled(ws.id, e.currentTarget.checked)
+                        }
+                        type="checkbox"
+                      />
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          {capabilities.length > 0 ? (
+            <div>
+              <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                Agent can
+              </div>
+              <ul className="mt-1.5 space-y-1">
+                {capabilities.map((cap) => (
                   <li className="text-[11px]" key={cap.tool_slug}>
                     <div className="flex items-center gap-1.5">
                       <span className="font-medium text-foreground">{cap.name}</span>
@@ -1568,11 +1811,12 @@ function ConnectedProviderCard({
                   </li>
                 ))}
               </ul>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
+
 

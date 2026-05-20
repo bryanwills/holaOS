@@ -1,18 +1,16 @@
 import { AppIcon } from "@/components/marketplace/AppIcon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
-  DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import {
-  Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
+  SuspendingDropdownMenu as DropdownMenu,
+  SuspendingPopover as Popover,
+} from "./overlay-presence";
 import { StatusDot } from "@/components/ui/status-dot";
 import { WorkspaceIcon } from "@/components/ui/workspace-icon";
 import { WorkspaceIconPicker } from "@/components/ui/workspace-icon-picker";
@@ -33,7 +31,6 @@ import {
   Loader2,
   MoreHorizontal,
   Package,
-  Plug,
   Plus,
   RotateCw,
   Search,
@@ -67,7 +64,6 @@ import {
   settingsOpenAtom,
   settingsSectionAtom,
   sidebarCollapsedAtom,
-  workspaceIntegrationsOpenAtom,
 } from "./state/ui";
 import { useTaskProposals } from "./useTaskProposals";
 import {
@@ -111,13 +107,11 @@ function SidebarExpanded() {
   const setSettingsOpen = useSetAtom(settingsOpenAtom);
   const setSearchOpen = useSetAtom(searchOpenAtom);
   const setSettingsSection = useSetAtom(settingsSectionAtom);
-  const setWorkspaceIntegrationsOpen = useSetAtom(workspaceIntegrationsOpenAtom);
 
   const artifactsOpen = useAtomValue(artifactsOpenAtom);
   const inboxOpen = useAtomValue(inboxOpenAtom);
   const automationsOpen = useAtomValue(automationsOpenAtom);
   const settingsOpen = useAtomValue(settingsOpenAtom);
-  const workspaceIntegrationsOpen = useAtomValue(workspaceIntegrationsOpenAtom);
 
   const skills = useWorkspaceSkills(selectedWorkspaceId || null);
   const cronjobs = useWorkspaceCronjobs(selectedWorkspaceId || null);
@@ -226,13 +220,6 @@ function SidebarExpanded() {
         <div className="mt-auto" />
 
         <SidebarGroup>
-          <NavItem
-            active={workspaceIntegrationsOpen}
-            icon={<Plug />}
-            onClick={() => setWorkspaceIntegrationsOpen(true)}
-          >
-            Integrations
-          </NavItem>
           <NavItem
             icon={<Settings />}
             active={settingsOpen}

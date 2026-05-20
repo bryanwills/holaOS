@@ -1,5 +1,6 @@
 import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
+import { overlayOpenCountAtom } from "../overlay-presence";
 import { activeInternalTabIdAtom } from "./internalTabs";
 
 /** Is the sidebar collapsed (icon-only / hidden)? Persists across sessions. */
@@ -38,9 +39,6 @@ export const settingsOpenAtom = atom(false);
 /** Is the Marketplace overlay open? */
 export const marketplaceOpenAtom = atom(false);
 
-/** Is the Workspace integrations overlay open? */
-export const workspaceIntegrationsOpenAtom = atom(false);
-
 /** Is the Apps expandable group in the sidebar expanded? Persists. */
 export const appsExpandedAtom = atomWithStorage(
   "holaboss-new-shell-apps-expanded-v1",
@@ -67,6 +65,6 @@ export const browserViewSuspendedAtom = atom(
     get(sessionsOpenAtom) ||
     get(settingsOpenAtom) ||
     get(marketplaceOpenAtom) ||
-    get(workspaceIntegrationsOpenAtom) ||
-    get(activeInternalTabIdAtom) !== null,
+    get(activeInternalTabIdAtom) !== null ||
+    get(overlayOpenCountAtom) > 0,
 );
