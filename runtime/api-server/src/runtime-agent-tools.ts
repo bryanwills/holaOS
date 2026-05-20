@@ -51,6 +51,7 @@ import {
 import type { TerminalSessionManagerLike } from "./terminal-session-manager.js";
 import type { QueueWorkerLike } from "./queue-worker.js";
 import type { ComposioMcpManager } from "./composio-mcp-manager.js";
+import { getStoreCatalogEntry } from "./integration-store-catalog.js";
 import { invokeWorkspaceSkill, resolveWorkspaceSkills } from "./workspace-skills.js";
 import {
   listWorkspaceApplicationPorts,
@@ -5397,6 +5398,44 @@ export class RuntimeAgentToolsService {
         }
       }
     }
+  }
+
+  proposeIntegrationConnect(params: {
+    workspaceId: string;
+    toolkitSlug: string;
+    reason?: string;
+  }): JsonObject {
+    this.requireWorkspace(params.workspaceId);
+    const slug = params.toolkitSlug.trim().toLowerCase();
+    if (!slug) {
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "toolkit_slug_required",
+        "toolkit_slug is required",
+      );
+    }
+    const entry = getStoreCatalogEntry(slug);
+    if (!entry) {
+      throw new RuntimeAgentToolsServiceError(
+        404,
+        "toolkit_not_in_store_catalog",
+        `Toolkit '${slug}' is not in the integration store catalog. Use one of the supported slugs.`,
+      );
+    }
+    const reason =
+      typeof params.reason === "string" && params.reason.trim().length > 0
+        ? params.reason.trim()
+        : null;
+    // The chat UI parses `proposed_integration` and renders a Connect
+    // card; agent should NOT write its own connect copy in the reply.
+    return {
+      proposed_integration: {
+        toolkit_slug: slug,
+        tier: entry.tier,
+        category: entry.category,
+        ...(reason ? { reason } : {}),
+      },
+    };
   }
 
   // Introspects the workspace's shared SQLite (data.db) and returns the

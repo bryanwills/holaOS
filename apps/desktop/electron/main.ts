@@ -11080,6 +11080,14 @@ async function composioDeleteUpstream(
   }
 }
 
+async function composioMcpEnsureRunning(workspaceId: string): Promise<unknown> {
+  return requestRuntimeJson<unknown>({
+    method: "POST",
+    path: "/api/v1/composio-mcp/ensure-running",
+    payload: { workspace_id: workspaceId },
+  });
+}
+
 /**
  * Re-run identity enrichment for an existing connection. Reads the
  * connection's `account_external_id`, hits Composio whoami, runs the
@@ -23246,6 +23254,11 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, connectedAccountId: string) =>
       composioDeleteUpstream(connectedAccountId),
+  );
+  handleTrustedIpc(
+    "workspace:composioMcpEnsureRunning",
+    ["main"],
+    async (_event, workspaceId: string) => composioMcpEnsureRunning(workspaceId),
   );
   handleTrustedIpc(
     "workspace:composioRefreshConnection",

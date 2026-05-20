@@ -26,6 +26,8 @@ const RUNTIME_TOOLS_WORKSPACE_APPS_PATH = "/api/v1/capabilities/runtime-tools/wo
 const RUNTIME_TOOLS_WORKSPACE_APPS_PORTS_PATH = "/api/v1/capabilities/runtime-tools/workspace-apps/ports";
 const RUNTIME_TOOLS_WORKSPACE_DATA_TABLES_PATH = "/api/v1/capabilities/runtime-tools/workspace-data/tables";
 const RUNTIME_TOOLS_WORKSPACE_DATA_QUERY_PATH = "/api/v1/capabilities/runtime-tools/workspace-data/query";
+const RUNTIME_TOOLS_WORKSPACE_INTEGRATIONS_PROPOSE_CONNECT_PATH =
+  "/api/v1/capabilities/runtime-tools/workspace-integrations/propose-connect";
 const DEFAULT_RUNTIME_TOOL_TIMEOUT_MS = 30000;
 const IMAGE_GENERATE_RUNTIME_TOOL_TIMEOUT_MS = 180000;
 const DOWNLOAD_URL_RUNTIME_TOOL_TIMEOUT_MS = 120000;
@@ -498,6 +500,16 @@ function createWorkspaceDataQueryBody(toolParams: unknown): Record<string, unkno
   };
 }
 
+function createWorkspaceIntegrationsProposeConnectBody(
+  toolParams: unknown,
+): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    toolkit_slug: String(params.toolkit_slug ?? ""),
+    ...(typeof params.reason === "string" ? { reason: params.reason } : {}),
+  };
+}
+
 export function runtimeToolHeaders(params: {
   workspaceId?: string | null;
   sessionId?: string | null;
@@ -802,6 +814,12 @@ function requestPlan(
         method: "POST",
         requestPath: RUNTIME_TOOLS_WORKSPACE_DATA_QUERY_PATH,
         body: createWorkspaceDataQueryBody(toolParams),
+      };
+    case "workspace_integrations_propose_connect":
+      return {
+        method: "POST",
+        requestPath: RUNTIME_TOOLS_WORKSPACE_INTEGRATIONS_PROPOSE_CONNECT_PATH,
+        body: createWorkspaceIntegrationsProposeConnectBody(toolParams),
       };
   }
   throw new Error(`Unsupported runtime tool: ${toolId}`);

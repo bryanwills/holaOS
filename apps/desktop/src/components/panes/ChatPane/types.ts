@@ -26,6 +26,11 @@ export interface ChatMessage {
   outputs?: WorkspaceOutputRecordPayload[];
   memoryProposals?: MemoryUpdateProposalRecordPayload[];
   pendingIntegrations?: ChatPendingIntegration[];
+  // Proposals emitted by `workspace_integrations_propose_connect`. Same
+  // visual treatment as pendingIntegrations but no app_id (the agent is
+  // asking to add to the account-level integration pool so it can call
+  // the toolkit's tools directly — no app wrapping).
+  proposedIntegrations?: ChatProposedIntegration[];
 }
 
 export interface ChatPendingIntegration {
@@ -36,6 +41,13 @@ export interface ChatPendingIntegration {
   // Hono via composioConnect. Validated at parse time in
   // parsePendingIntegrationsList.
   whoami?: PendingIntegrationWhoami | null;
+}
+
+export interface ChatProposedIntegration {
+  toolkit_slug: string;
+  tier?: "hero" | "supported";
+  category?: string;
+  reason?: string | null;
 }
 
 export type QueuedSessionInputStatus = "queued" | "sending";

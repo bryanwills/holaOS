@@ -130,6 +130,7 @@ import {
   type ChatTraceStep,
   type ChatExecutionTimelineItem,
   type ChatPendingIntegration,
+  type ChatProposedIntegration,
   type PendingLocalAttachmentFile,
   type PendingExplorerAttachmentFile,
   type PendingAttachment,
@@ -737,6 +738,9 @@ export function chatMessagesFromSessionState(params: {
           if (restoredAssistantState.pendingIntegrations) {
             nextMessage.pendingIntegrations = restoredAssistantState.pendingIntegrations;
           }
+          if (restoredAssistantState.proposedIntegrations) {
+            nextMessage.proposedIntegrations = restoredAssistantState.proposedIntegrations;
+          }
         }
       }
 
@@ -782,6 +786,7 @@ export function chatMessagesFromSessionState(params: {
           memoryProposals:
             turnMemoryProposals.length > 0 ? turnMemoryProposals : undefined,
           pendingIntegrations: restoredAssistantState.pendingIntegrations,
+          proposedIntegrations: restoredAssistantState.proposedIntegrations,
         };
         if (
           hasRenderableAssistantTurn(syntheticAssistantMessage, {
@@ -2327,6 +2332,41 @@ const PENDING_INTEGRATION_TOOL_NAMES = new Set([
   "holaboss_get_subagent",
 ]);
 
+function parseProposedIntegration(value: unknown): ChatProposedIntegration | null {
+  if (!isRecord(value)) return null;
+  const slug =
+    typeof value.toolkit_slug === "string" ? value.toolkit_slug.trim() : "";
+  if (!slug) return null;
+  const tier = value.tier === "hero" || value.tier === "supported" ? value.tier : undefined;
+  const category = typeof value.category === "string" ? value.category : undefined;
+  const reason = typeof value.reason === "string" ? value.reason : null;
+  return { toolkit_slug: slug, tier, category, reason };
+}
+
+function proposedIntegrationsFromToolResult(
+  payload: Record<string, unknown>,
+): ChatProposedIntegration[] {
+  const toolName =
+    typeof payload.tool_name === "string" ? payload.tool_name.trim() : "";
+  if (toolName !== "workspace_integrations_propose_connect") return [];
+  const phase =
+    typeof payload.phase === "string" ? payload.phase.trim().toLowerCase() : "";
+  if (phase !== "completed" || payload.error === true) return [];
+  const result = isRecord(payload.result) ? payload.result : null;
+  if (!result) return [];
+  const direct = parseProposedIntegration(result.proposed_integration);
+  if (direct) return [direct];
+  if (isRecord(result.details)) {
+    const detail = parseProposedIntegration(result.details.proposed_integration);
+    if (detail) return [detail];
+    if (isRecord(result.details.raw)) {
+      const raw = parseProposedIntegration(result.details.raw.proposed_integration);
+      if (raw) return [raw];
+    }
+  }
+  return [];
+}
+
 function pendingIntegrationsFromToolResult(
   payload: Record<string, unknown>,
 ): ChatPendingIntegration[] {
@@ -2414,6 +2454,7 @@ function assistantHistoryStateFromOutputEvents(
   let failureText = "";
   let terminalCreatedAt = "";
   const pendingIntegrations: ChatPendingIntegration[] = [];
+  const proposedIntegrations: ChatProposedIntegration[] = [];
 
   const flushExecutionSegment = () => {
     if (executionItems.length === 0) {
@@ -2510,6 +2551,12 @@ function assistantHistoryStateFromOutputEvents(
           pendingIntegrations.push(integration);
         }
       }
+      for (const proposal of proposedIntegrationsFromToolResult(eventPayload)) {
+        const key = proposal.toolkit_slug.trim().toLowerCase();
+        if (!proposedIntegrations.some((existing) => existing.toolkit_slug.trim().toLowerCase() === key)) {
+          proposedIntegrations.push(proposal);
+        }
+      }
     }
 
     if (event.event_type === "subagent_lifecycle_update") {
@@ -2574,6 +2621,7 @@ function assistantHistoryStateFromOutputEvents(
     failureText: failureText || undefined,
     terminalCreatedAt: terminalCreatedAt || undefined,
     pendingIntegrations: pendingIntegrations.length > 0 ? pendingIntegrations : undefined,
+    proposedIntegrations: proposedIntegrations.length > 0 ? proposedIntegrations : undefined,
   };
 }
 
@@ -6167,6 +6215,33 @@ export function ChatPane({
     }
   }
 
+  async function handleAfterIntegrationProposalConnected(toolkitSlug: string) {
+    const sessionId = activeSessionIdRef.current || activeSessionId;
+    if (!selectedWorkspaceId || !sessionId) return;
+    // Refresh the composio-mcp host so the toolkit's `<toolkit>_*` tools
+    // become callable on the next turn. Best-effort; runtime also calls
+    // this on the next ensure-running.
+    try {
+      await window.electronAPI.workspace.composioMcpEnsureRunning(selectedWorkspaceId);
+    } catch {
+      /* non-fatal */
+    }
+    try {
+      await window.electronAPI.workspace.queueSessionInput({
+        workspace_id: selectedWorkspaceId,
+        session_id: sessionId,
+        text: `[system] ${toolkitSlug} is now connected. You can call its tools.`,
+        image_urls: null,
+        attachments: [],
+        priority: 0,
+        model: resolvedChatModel || null,
+        thinking_value: effectiveThinkingValue,
+      });
+    } catch {
+      /* non-fatal */
+    }
+  }
+
   async function pauseCurrentRun() {
     const sessionId = activeSessionIdRef.current || activeSessionId;
     if (!selectedWorkspaceId || !sessionId || isPausePending) {
@@ -7789,6 +7864,9 @@ export function ChatPane({
                         : null
                     }
                     onAfterIntegrationBind={handleAfterIntegrationBind}
+                    onAfterIntegrationProposalConnected={
+                      handleAfterIntegrationProposalConnected
+                    }
                   />
                 </div>
               ) : (

@@ -1607,6 +1607,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
         "workspace:composioDeleteUpstream",
         connectedAccountId,
       ) as Promise<{ deleted: boolean; missing: boolean }>,
+    composioMcpEnsureRunning: (workspaceId: string) =>
+      ipcRenderer.invoke(
+        "workspace:composioMcpEnsureRunning",
+        workspaceId,
+      ) as Promise<unknown>,
     resolveTemplateIntegrations: (payload: HolabossCreateWorkspacePayload) =>
       ipcRenderer.invoke("workspace:resolveTemplateIntegrations", payload) as Promise<ResolveTemplateIntegrationsResult>,
     generateTemplateContent: (params: {

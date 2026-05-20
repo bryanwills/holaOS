@@ -15,6 +15,10 @@ import {
   AssistantTurnIntegrationConnects,
   type AssistantTurnPendingIntegration,
 } from "./IntegrationConnectCard";
+import {
+  AssistantTurnIntegrationProposals,
+  type AssistantTurnProposedIntegration,
+} from "./IntegrationProposalCard";
 import { TraceStepGroup } from "./TraceStepGroup";
 import { LiveStatusLine } from "./status";
 
@@ -52,6 +56,7 @@ export const AssistantTurn = memo(AssistantTurnComponent, (prev, next) =>
   prev.memoryProposals === next.memoryProposals &&
   prev.outputs === next.outputs &&
   prev.pendingIntegrations === next.pendingIntegrations &&
+  prev.proposedIntegrations === next.proposedIntegrations &&
   prev.memoryProposalAction === next.memoryProposalAction &&
   prev.editingMemoryProposalId === next.editingMemoryProposalId &&
   prev.memoryProposalDrafts === next.memoryProposalDrafts &&
@@ -74,7 +79,9 @@ function AssistantTurnComponent({
   memoryProposals,
   outputs,
   pendingIntegrations = [],
+  proposedIntegrations = [],
   onAfterIntegrationBind,
+  onAfterIntegrationProposalConnected,
   memoryProposalAction,
   editingMemoryProposalId,
   memoryProposalDrafts,
@@ -107,7 +114,9 @@ function AssistantTurnComponent({
   memoryProposals: MemoryUpdateProposalRecordPayload[];
   outputs: WorkspaceOutputRecordPayload[];
   pendingIntegrations?: AssistantTurnPendingIntegration[];
+  proposedIntegrations?: AssistantTurnProposedIntegration[];
   onAfterIntegrationBind?: () => void;
+  onAfterIntegrationProposalConnected?: (toolkitSlug: string) => void;
   memoryProposalAction: {
     proposalId: string;
     action: "accept" | "dismiss";
@@ -333,6 +342,14 @@ function AssistantTurnComponent({
           <AssistantTurnIntegrationConnects
             pendingIntegrations={pendingIntegrations}
             onAfterBind={onAfterIntegrationBind}
+          />
+        ) : null}
+
+        {proposedIntegrations.length > 0 ? (
+          <AssistantTurnIntegrationProposals
+            onAfterConnect={onAfterIntegrationProposalConnected}
+            proposals={proposedIntegrations}
+            workspaceId={workspaceId}
           />
         ) : null}
       </article>

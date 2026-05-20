@@ -1974,6 +1974,7 @@ interface RuntimeNotificationListOptionsPayload {
         deleted: boolean;
         missing: boolean;
       }>;
+      composioMcpEnsureRunning: (workspaceId: string) => Promise<unknown>;
       resolveTemplateIntegrations: (payload: HolabossCreateWorkspacePayload) => Promise<ResolveTemplateIntegrationsResult>;
       generateTemplateContent(params: {
         contentType: "onboarding" | "readme";

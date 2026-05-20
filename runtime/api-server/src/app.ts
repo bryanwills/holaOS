@@ -6074,6 +6074,35 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     },
   );
 
+  app.post(
+    "/api/v1/capabilities/runtime-tools/workspace-integrations/propose-connect",
+    async (request, reply) => {
+      const body = isRecord(request.body) ? request.body : {};
+      try {
+        return runtimeAgentToolsService.proposeIntegrationConnect({
+          workspaceId: requiredCapabilityWorkspaceId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }),
+          toolkitSlug: requiredString(body.toolkit_slug, "toolkit_slug"),
+          reason:
+            typeof body.reason === "string" ? body.reason : undefined,
+        });
+      } catch (error) {
+        if (error instanceof RuntimeAgentToolsServiceError) {
+          return sendError(reply, error.statusCode, error.message);
+        }
+        return sendError(
+          reply,
+          400,
+          error instanceof Error
+            ? error.message
+            : "workspace_integrations_propose_connect failed",
+        );
+      }
+    },
+  );
+
   app.post("/api/v1/lifecycle/shutdown", async (request, reply) => {
     void request;
     try {
