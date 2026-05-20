@@ -1,16 +1,18 @@
 import { AppIcon } from "@/components/marketplace/AppIcon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
+  DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import {
+  Popover,
   PopoverContent,
   PopoverTrigger,
-  SuspendingDropdownMenu as DropdownMenu,
-  SuspendingPopover as Popover,
-} from "./overlay-presence";
+} from "@/components/ui/popover";
 import { StatusDot } from "@/components/ui/status-dot";
 import { WorkspaceIcon } from "@/components/ui/workspace-icon";
 import { WorkspaceIconPicker } from "@/components/ui/workspace-icon-picker";
@@ -1150,7 +1152,16 @@ function RecentFileRow({ entry }: { entry: RecentFile }) {
   );
 }
 
+// Horizontal inset of the WorkspaceSwitcher's trigger inside the
+// sidebar (the `pl-20` reserves space for the macOS traffic lights).
+// Used to pull the popover leftward so it aligns with the sidebar's
+// inner edge instead of starting from the trigger button — keeping
+// the popover entirely within the sidebar so it never overflows onto
+// the BrowserView.
+const WORKSPACE_POPOVER_LEFT_INSET = 72;
+
 function WorkspaceSwitcher() {
+  const sidebarWidth = useAtomValue(sidebarWidthAtom);
   const { selectedWorkspaceId, setSelectedWorkspaceId } =
     useWorkspaceSelection();
   const {
@@ -1217,9 +1228,11 @@ function WorkspaceSwitcher() {
         />
         <PopoverContent
           align="start"
+          alignOffset={-WORKSPACE_POPOVER_LEFT_INSET}
           sideOffset={6}
-          className="w-[300px] gap-0 p-2"
+          className="gap-0 p-2"
           style={{
+            width: `${sidebarWidth - 16}px`,
             animationDuration: "var(--duration-base)",
             animationTimingFunction: "var(--ease-out-expo)",
           }}
