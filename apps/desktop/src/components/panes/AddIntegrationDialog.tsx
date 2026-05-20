@@ -111,19 +111,20 @@ export function AddIntegrationDialog({
                   placeholder="Search integrations…"
                   value={query}
                 />
-                {query ? (
-                  <InputGroupAddon align="inline-end">
-                    <InputGroupButton
-                      aria-label="Clear search"
-                      onClick={() => setQuery("")}
-                      size="icon-xs"
-                      type="button"
-                      variant="ghost"
-                    >
-                      <X />
-                    </InputGroupButton>
-                  </InputGroupAddon>
-                ) : null}
+                <InputGroupAddon align="inline-end">
+                  <DialogPrimitive.Close
+                    render={
+                      <InputGroupButton
+                        aria-label="Close"
+                        size="icon-xs"
+                        type="button"
+                        variant="ghost"
+                      >
+                        <X />
+                      </InputGroupButton>
+                    }
+                  />
+                </InputGroupAddon>
               </InputGroup>
             </header>
 
