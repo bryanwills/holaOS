@@ -1505,6 +1505,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
         changed: boolean;
         reason?: "no_external_id" | "account_missing" | "no_new_identity";
       }>,
+    composioDeleteUpstream: (connectedAccountId: string) =>
+      ipcRenderer.invoke(
+        "workspace:composioDeleteUpstream",
+        connectedAccountId,
+      ) as Promise<{ deleted: boolean; missing: boolean }>,
     resolveTemplateIntegrations: (payload: HolabossCreateWorkspacePayload) =>
       ipcRenderer.invoke("workspace:resolveTemplateIntegrations", payload) as Promise<ResolveTemplateIntegrationsResult>,
     generateTemplateContent: (params: {

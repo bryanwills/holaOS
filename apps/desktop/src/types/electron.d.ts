@@ -1877,6 +1877,10 @@ interface RuntimeNotificationListOptionsPayload {
         changed: boolean;
         reason?: "no_external_id" | "account_missing" | "no_new_identity";
       }>;
+      composioDeleteUpstream: (connectedAccountId: string) => Promise<{
+        deleted: boolean;
+        missing: boolean;
+      }>;
       resolveTemplateIntegrations: (payload: HolabossCreateWorkspacePayload) => Promise<ResolveTemplateIntegrationsResult>;
       generateTemplateContent(params: {
         contentType: "onboarding" | "readme";

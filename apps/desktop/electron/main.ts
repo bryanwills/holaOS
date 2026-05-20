@@ -10218,7 +10218,7 @@ async function startOAuthFlow(
 
 async function composioFetch<T>(
   path: string,
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "DELETE",
   payload?: unknown,
 ): Promise<T> {
   if (!AUTH_BASE_URL) {
@@ -10471,6 +10471,18 @@ const PROVIDER_PROXY_WHOAMI: Record<string, ProxyWhoamiConfig> = {
       };
     },
   },
+  gmail: {
+    url: "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+    method: "GET",
+    extract: (raw) => {
+      const u = raw as Record<string, unknown> | null;
+      if (!u) return {};
+      return {
+        email: pickString(u.emailAddress),
+        displayName: pickString(u.emailAddress),
+      };
+    },
+  },
   // Slack's Web API uses POST for everything (the body can be empty). auth.test
   // returns { ok, user, user_id, team, team_id, url } — handle is `user`, team
   // becomes a useful display name suffix. No email or avatar from this endpoint
@@ -10533,9 +10545,14 @@ async function tryProxyWhoami(
     }
     return extracted;
   } catch (err) {
-    // Proxy call failed (Hono missing endpoint, provider 4xx, expired
-    // scope, etc.). Surface to stderr so dev can diagnose; caller still
-    // gets the unenriched status and the UI shows "no change".
+    // Upstream account deleted: re-throw so the IPC layer's existing
+    // tombstone catch fires. Hono's /account/:id is KV-cached for 5min,
+    // so a deleted ca can still look ACTIVE up there even while the
+    // proxy path 606s — without this re-throw, the metadata snapshot
+    // never learns the row is dead.
+    if (isComposioAccountMissingError(err)) {
+      throw err;
+    }
     console.warn(
       `[integrations] proxy whoami failed for provider=${normalized}:`,
       err instanceof Error ? err.message : String(err),
@@ -10561,6 +10578,11 @@ async function composioAccountStatusEnriched(
   // Skip the proxy round-trip when the generic whoami already covered
   // the basics — this is the common case for GitHub / Gmail / Reddit.
   if (generic.handle || generic.email) return status;
+  // Skip proxy whoami unless Composio reports ACTIVE. INITIATED means
+  // OAuth is still in progress; EXPIRED means the token's dead. In
+  // either case the proxy call would 4xx and the row's identity stays
+  // null until the next legitimate state.
+  if ((status.status ?? "").toLowerCase() !== "active") return status;
   const proxy = await tryProxyWhoami(connectedAccountId, providerId);
   if (
     !proxy.handle &&
@@ -10797,6 +10819,32 @@ async function composioFinalize(payload: {
     account_handle: enrichedHandle,
     account_email: enrichedEmail,
   });
+}
+
+async function composioDeleteUpstream(
+  connectedAccountId: string,
+): Promise<{ deleted: boolean; missing: boolean }> {
+  const trimmed = typeof connectedAccountId === "string" ? connectedAccountId.trim() : "";
+  if (!trimmed) {
+    return { deleted: false, missing: false };
+  }
+  try {
+    await composioFetch<{ deleted?: boolean }>(
+      `/api/composio/connections/${encodeURIComponent(trimmed)}`,
+      "DELETE",
+    );
+    return { deleted: true, missing: false };
+  } catch (err) {
+    if (isComposioAccountMissingError(err)) {
+      return { deleted: false, missing: true };
+    }
+    // Composio's DELETE returns the upstream's body on non-2xx — 404 there
+    // surfaces as "Composio API error (404)" via composioFetch.
+    if (err instanceof Error && /\(404\)/.test(err.message)) {
+      return { deleted: false, missing: true };
+    }
+    throw err;
+  }
 }
 
 /**
@@ -22918,6 +22966,12 @@ app.whenReady().then(async () => {
         account_label?: string;
       },
     ) => composioFinalize(payload),
+  );
+  handleTrustedIpc(
+    "workspace:composioDeleteUpstream",
+    ["main"],
+    async (_event, connectedAccountId: string) =>
+      composioDeleteUpstream(connectedAccountId),
   );
   handleTrustedIpc(
     "workspace:composioRefreshConnection",

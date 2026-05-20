@@ -347,6 +347,47 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connections, accountMetadata]);
 
+  // Zombie sweep: when enrichment returns a tombstone (status: "missing")
+  // for a row, the upstream Composio account is gone. Delete the local
+  // row so the user isn't stuck with a "Gmail (Managed)" entry that can't
+  // be refreshed, won't dedupe, and survives a normal Disconnect on
+  // pre-rename builds.
+  const zombieSweepInFlightRef = useRef(false);
+  useEffect(() => {
+    if (zombieSweepInFlightRef.current) return;
+    if (connections.length === 0) return;
+    const zombies = connections.filter(
+      (c) => accountMetadata.get(c.connection_id)?.status === "missing",
+    );
+    if (zombies.length === 0) return;
+    zombieSweepInFlightRef.current = true;
+    let cancelled = false;
+    void (async () => {
+      try {
+        for (const zombie of zombies) {
+          if (cancelled) return;
+          try {
+            await window.electronAPI.workspace.deleteIntegrationConnection(
+              zombie.connection_id,
+            );
+          } catch {
+            // Per-row failure is fine — next mount will retry.
+          }
+        }
+        if (!cancelled) {
+          invalidateIntegrationAccountCache(zombies.map((z) => z.connection_id));
+          await loadData();
+        }
+      } finally {
+        zombieSweepInFlightRef.current = false;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connections, accountMetadata]);
+
 
   // Map providerId → all active connections. A user can have multiple accounts
   // per provider (e.g., personal + work Twitter); each connection is its own
@@ -450,25 +491,18 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
         authSessionState.data?.user?.id?.trim() ||
         "local";
 
-      // Snapshot existing connection ids BEFORE initiating connect. The
-      // id Composio returns from /link is, in practice, not queryable
-      // via /connected_accounts/{id} until well after OAuth completes
-      // — so instead of polling that id, we poll the user's connections
-      // list and look for any *new* id that wasn't there before.
-      let beforeIds = new Set<string>();
-      try {
-        const before =
-          await window.electronAPI.workspace.composioListConnections();
-        beforeIds = new Set(before.connections.map((c) => c.id));
-      } catch {
-        // If snapshot fails, continue with empty set; any new id matching
-        // the toolkit is still detectable.
-      }
-
       const link = await window.electronAPI.workspace.composioConnect({
         provider: integration.providerId,
         owner_user_id: userId,
       });
+
+      const connectedAccountId = link.connected_account_id;
+      if (!connectedAccountId) {
+        setStatusMessage(
+          `${integration.name} did not return a connected account id. Please try again.`,
+        );
+        return;
+      }
 
       await window.electronAPI.ui.openExternalUrl(link.redirect_url);
 
@@ -476,10 +510,13 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
       const MAX_CONSECUTIVE_ERRORS = 20;
       for (let attempt = 0; attempt < 100; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 3000));
-        let current;
+        let accountStatus;
         try {
-          current =
-            await window.electronAPI.workspace.composioListConnections();
+          accountStatus =
+            await window.electronAPI.workspace.composioAccountStatus(
+              connectedAccountId,
+              integration.providerId,
+            );
           consecutiveErrors = 0;
         } catch (pollError) {
           consecutiveErrors += 1;
@@ -489,50 +526,30 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
           continue;
         }
 
-        const newConnection = current.connections.find(
-          (c) =>
-            !beforeIds.has(c.id) &&
-            c.toolkitSlug.toLowerCase() ===
-              integration.providerId.toLowerCase(),
-        );
-        if (newConnection) {
-          // Composio creates the row at /connect time in INITIATED state —
-          // its presence does NOT mean the user finished OAuth. Query the
-          // account's real status before finalizing.
-          let accountStatus;
-          try {
-            accountStatus =
-              await window.electronAPI.workspace.composioAccountStatus(
-                newConnection.id,
-                integration.providerId,
-              );
-          } catch {
-            continue;
-          }
-          const status = (accountStatus.status ?? "").toUpperCase();
-          if (
-            status === "FAILED" ||
-            status === "EXPIRED" ||
-            status === "INACTIVE"
-          ) {
-            setStatusMessage(
-              `Authorization for ${integration.name} ${status.toLowerCase()}. Please try again.`,
-            );
-            return;
-          }
-          if (status !== "ACTIVE") {
-            continue;
-          }
-          await window.electronAPI.workspace.composioFinalize({
-            connected_account_id: newConnection.id,
-            provider: integration.providerId,
-            owner_user_id: userId,
-            account_label: `${integration.name} (Managed)`,
-          });
-          setStatusMessage("");
-          void loadData();
+        const status = (accountStatus.status ?? "").toUpperCase();
+        if (
+          status === "FAILED" ||
+          status === "EXPIRED" ||
+          status === "INACTIVE" ||
+          status === "MISSING"
+        ) {
+          setStatusMessage(
+            `Authorization for ${integration.name} ${status.toLowerCase()}. Please try again.`,
+          );
           return;
         }
+        if (status !== "ACTIVE") {
+          continue;
+        }
+        await window.electronAPI.workspace.composioFinalize({
+          connected_account_id: connectedAccountId,
+          provider: integration.providerId,
+          owner_user_id: userId,
+          account_label: `${integration.name} (Managed)`,
+        });
+        setStatusMessage("");
+        void loadData();
+        return;
       }
 
       setStatusMessage("Connection timed out.");
@@ -547,6 +564,24 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     setDisconnectingConnectionId(connectionId);
     setStatusMessage("");
     try {
+      const target = connections.find(
+        (c) => c.connection_id === connectionId,
+      );
+      const externalId = target?.account_external_id?.trim();
+      // Revoke upstream first so the user's intent ("disconnect Gmail")
+      // actually severs the Composio connected_account — otherwise a stale
+      // upstream row keeps the OAuth grant alive and clutters the picker.
+      // Composio 404 ⇒ already gone; treat as success and proceed locally.
+      if (externalId) {
+        try {
+          await window.electronAPI.workspace.composioDeleteUpstream(
+            externalId,
+          );
+        } catch (upstreamError) {
+          setStatusMessage(normalizeErrorMessage(upstreamError));
+          return;
+        }
+      }
       await window.electronAPI.workspace.deleteIntegrationConnection(
         connectionId,
       );
