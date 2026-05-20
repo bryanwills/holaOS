@@ -92,7 +92,17 @@ export function AddIntegrationDialog({
             style={{ willChange: "transform" }}
           >
             <header className="shrink-0 border-border border-b p-3">
-              <InputGroup className="border-0">
+              <InputGroup
+                className={cn(
+                  "border-0",
+                  // The dialog header already shows a hairline border-b
+                  // as the visual divider; the group's focus-within ring
+                  // would be a second indicator stacked on top. Drop it
+                  // so the search row reads as one quiet row (cmd-K
+                  // style) instead of a ringed control inside a card.
+                  "has-[[data-slot=input-group-control]:focus-visible]:border-transparent has-[[data-slot=input-group-control]:focus-visible]:ring-0",
+                )}
+              >
                 <InputGroupAddon align="inline-start">
                   <Search />
                 </InputGroupAddon>
