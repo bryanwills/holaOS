@@ -4,8 +4,24 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { ComposioMcpManager } from "./composio-mcp-manager.js";
-import { ComposioService } from "./composio-service.js";
+import { applyOverrides, ComposioMcpManager } from "./composio-mcp-manager.js";
+import { ComposioService, type ComposioConnectionSummary } from "./composio-service.js";
+
+function summary(
+  id: string,
+  toolkit: string,
+  status = "ACTIVE",
+): ComposioConnectionSummary {
+  return {
+    id,
+    status,
+    toolkitSlug: toolkit,
+    toolkitName: toolkit,
+    toolkitLogo: null,
+    userId: "u1",
+    createdAt: "2026-05-19T00:00:00Z",
+  };
+}
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -290,3 +306,140 @@ test("stopAll closes every cached host and clears the cache", async () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('applyOverrides default: keeps first ACTIVE per toolkit when no overrides', () => {
+  const result = applyOverrides(
+    [summary('ca_g1', 'gmail'), summary('ca_g2', 'gmail'), summary('ca_s1', 'slack')],
+    [],
+  );
+  assert.deepEqual(result.map((c) => c.id), ['ca_g1', 'ca_s1']);
+});
+
+test('applyOverrides disabled: drops every connection for the disabled toolkit', () => {
+  const result = applyOverrides(
+    [summary('ca_g1', 'gmail'), summary('ca_g2', 'gmail'), summary('ca_s1', 'slack')],
+    [
+      {
+        workspaceId: 'ws1',
+        toolkitSlug: 'gmail',
+        state: 'disabled',
+        pinnedConnectionId: null,
+        createdAt: '',
+        updatedAt: '',
+      },
+    ],
+  );
+  assert.deepEqual(result.map((c) => c.id), ['ca_s1']);
+});
+
+test('applyOverrides pinned: keeps only the pinned ca_id for the toolkit', () => {
+  const result = applyOverrides(
+    [summary('ca_g1', 'gmail'), summary('ca_g2', 'gmail'), summary('ca_s1', 'slack')],
+    [
+      {
+        workspaceId: 'ws1',
+        toolkitSlug: 'gmail',
+        state: 'pinned',
+        pinnedConnectionId: 'ca_g2',
+        createdAt: '',
+        updatedAt: '',
+      },
+    ],
+  );
+  assert.deepEqual(result.map((c) => c.id), ['ca_g2', 'ca_s1']);
+});
+
+test('applyOverrides pinned: drops the toolkit entirely when pinned ca_id is no longer ACTIVE', () => {
+  const result = applyOverrides(
+    [summary('ca_g1', 'gmail'), summary('ca_s1', 'slack')],
+    [
+      {
+        workspaceId: 'ws1',
+        toolkitSlug: 'gmail',
+        state: 'pinned',
+        pinnedConnectionId: 'ca_ghost',
+        createdAt: '',
+        updatedAt: '',
+      },
+    ],
+  );
+  assert.deepEqual(result.map((c) => c.id), ['ca_s1']);
+});
+
+test('restart tears the host down and bootstraps a fresh one', async () => {
+  const root = createTempRoot();
+  try {
+    makeWorkspace(root, 'ws1');
+    const { fetch: fetchImpl } = mockFetch({
+      connections: () =>
+        jsonResponse({
+          connections: [{ id: 'ca_gmail', status: 'ACTIVE', toolkitSlug: 'gmail' }],
+        }),
+    });
+    const composio = new ComposioService({
+      honoBaseUrl: 'https://app.holaboss.test',
+      authCookie: 'hb_session=abc',
+      fetchImpl,
+    });
+    const manager = new ComposioMcpManager({
+      composio,
+      workspaceRoot: root,
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+    });
+    try {
+      const a = await manager.ensureRunning('ws1');
+      const b = await manager.restart('ws1');
+      assert.equal(a.status, 'started');
+      assert.equal(b.status, 'started');
+      assert.notEqual(a.url, b.url, 'restart should swap the host onto a new free port');
+      assert.equal(manager.inspectRunning().length, 1);
+    } finally {
+      await manager.stopAll();
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('ensureRunning consults the store and disables a toolkit when the override says so', async () => {
+  const root = createTempRoot();
+  try {
+    makeWorkspace(root, 'ws1');
+    const { fetch: fetchImpl } = mockFetch({
+      connections: () =>
+        jsonResponse({
+          connections: [
+            { id: 'ca_gmail', status: 'ACTIVE', toolkitSlug: 'gmail' },
+          ],
+        }),
+    });
+    const composio = new ComposioService({
+      honoBaseUrl: 'https://app.holaboss.test',
+      authCookie: 'hb_session=abc',
+      fetchImpl,
+    });
+    const manager = new ComposioMcpManager({
+      composio,
+      workspaceRoot: root,
+      store: {
+        listWorkspaceIntegrationOverrides: () => [
+          {
+            workspaceId: 'ws1',
+            toolkitSlug: 'gmail',
+            state: 'disabled',
+            pinnedConnectionId: null,
+            createdAt: '',
+            updatedAt: '',
+          },
+        ],
+      },
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+    });
+    const result = await manager.ensureRunning('ws1');
+    assert.equal(result.status, 'skipped');
+    assert.equal(result.reason, 'all_toolkits_disabled_in_workspace');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+

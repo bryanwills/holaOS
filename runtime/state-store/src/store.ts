@@ -194,6 +194,17 @@ export interface IntegrationBindingRecord {
   updatedAt: string;
 }
 
+export type WorkspaceIntegrationOverrideState = "disabled" | "pinned";
+
+export interface WorkspaceIntegrationOverrideRecord {
+  workspaceId: string;
+  toolkitSlug: string;
+  state: WorkspaceIntegrationOverrideState;
+  pinnedConnectionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SessionInputRecord {
   inputId: string;
   sessionId: string;
@@ -3484,6 +3495,85 @@ export class RuntimeStateStore {
   deleteIntegrationBinding(bindingId: string): boolean {
     const result = this.controlPlaneDb().prepare("DELETE FROM integration_bindings WHERE binding_id = ?").run(bindingId);
     return result.changes > 0;
+  }
+
+  listWorkspaceIntegrationOverrides(params: { workspaceId: string }): WorkspaceIntegrationOverrideRecord[] {
+    const rows = this.controlPlaneDb()
+      .prepare<[string], Record<string, unknown>>(
+        "SELECT * FROM workspace_integration_overrides WHERE workspace_id = ? ORDER BY toolkit_slug ASC",
+      )
+      .all(params.workspaceId);
+    return rows.map((row) => this.workspaceIntegrationOverrideRowToRecord(row));
+  }
+
+  getWorkspaceIntegrationOverride(params: {
+    workspaceId: string;
+    toolkitSlug: string;
+  }): WorkspaceIntegrationOverrideRecord | null {
+    const row = this.controlPlaneDb()
+      .prepare<[string, string], Record<string, unknown>>(
+        "SELECT * FROM workspace_integration_overrides WHERE workspace_id = ? AND toolkit_slug = ? LIMIT 1",
+      )
+      .get(params.workspaceId, params.toolkitSlug);
+    return row ? this.workspaceIntegrationOverrideRowToRecord(row) : null;
+  }
+
+  upsertWorkspaceIntegrationOverride(params: {
+    workspaceId: string;
+    toolkitSlug: string;
+    state: WorkspaceIntegrationOverrideState;
+    pinnedConnectionId?: string | null;
+  }): WorkspaceIntegrationOverrideRecord {
+    const now = utcNowIso();
+    const pinnedConnectionId =
+      params.state === "pinned" ? (params.pinnedConnectionId ?? null) : null;
+    this.controlPlaneDb()
+      .prepare(
+        `INSERT INTO workspace_integration_overrides (workspace_id, toolkit_slug, state, pinned_connection_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (workspace_id, toolkit_slug) DO UPDATE SET
+           state = excluded.state,
+           pinned_connection_id = excluded.pinned_connection_id,
+           updated_at = excluded.updated_at`,
+      )
+      .run(params.workspaceId, params.toolkitSlug, params.state, pinnedConnectionId, now, now);
+    const record = this.getWorkspaceIntegrationOverride({
+      workspaceId: params.workspaceId,
+      toolkitSlug: params.toolkitSlug,
+    });
+    if (!record) {
+      throw new Error("workspace_integration_overrides upsert returned no row");
+    }
+    return record;
+  }
+
+  deleteWorkspaceIntegrationOverride(params: {
+    workspaceId: string;
+    toolkitSlug: string;
+  }): boolean {
+    const result = this.controlPlaneDb()
+      .prepare(
+        "DELETE FROM workspace_integration_overrides WHERE workspace_id = ? AND toolkit_slug = ?",
+      )
+      .run(params.workspaceId, params.toolkitSlug);
+    return result.changes > 0;
+  }
+
+  private workspaceIntegrationOverrideRowToRecord(
+    row: Record<string, unknown>,
+  ): WorkspaceIntegrationOverrideRecord {
+    const state = row.state as string;
+    return {
+      workspaceId: String(row.workspace_id ?? ""),
+      toolkitSlug: String(row.toolkit_slug ?? ""),
+      state: state === "pinned" ? "pinned" : "disabled",
+      pinnedConnectionId:
+        typeof row.pinned_connection_id === "string" && row.pinned_connection_id.length > 0
+          ? row.pinned_connection_id
+          : null,
+      createdAt: String(row.created_at ?? ""),
+      updatedAt: String(row.updated_at ?? ""),
+    };
   }
 
   upsertOAuthAppConfig(params: {
@@ -7855,6 +7945,23 @@ export class RuntimeStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_integration_bindings_workspace_updated
           ON integration_bindings (workspace_id, is_default DESC, updated_at DESC, created_at DESC);
+
+      -- Workspace-scoped opt-out / pin override for Composio toolkits.
+      -- No row: workspace inherits the account active pool.
+      -- state=disabled: toolkit hidden from this workspace agent.
+      -- state=pinned: only pinned_connection_id is used in this workspace.
+      CREATE TABLE IF NOT EXISTS workspace_integration_overrides (
+          workspace_id TEXT NOT NULL,
+          toolkit_slug TEXT NOT NULL,
+          state TEXT NOT NULL,
+          pinned_connection_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, toolkit_slug)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_workspace_integration_overrides_workspace
+          ON workspace_integration_overrides (workspace_id);
 
       CREATE TABLE IF NOT EXISTS app_catalog (
           app_id TEXT NOT NULL,

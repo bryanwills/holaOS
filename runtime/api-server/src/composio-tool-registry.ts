@@ -178,6 +178,38 @@ export function listSupportedToolkitSlugs(): string[] {
   return Object.keys(TOOLKIT_CATALOG);
 }
 
+export interface ToolkitCapabilityEntry {
+  name: string;
+  description: string;
+  tool_slug: string;
+  read_only: boolean;
+}
+
+/**
+ * Public summary of the per-toolkit tool catalog, for surfacing in the
+ * IntegrationsPane "what can the agent do with this?" accordion.
+ * Returns an empty array for toolkits not in TOOLKIT_CATALOG so the UI
+ * can still render the row in a degraded "not yet supported" state.
+ */
+export function listToolkitCapabilities(toolkitSlug: string): ToolkitCapabilityEntry[] {
+  const entry = TOOLKIT_CATALOG[toolkitSlug];
+  if (!entry) return [];
+  return entry.tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    tool_slug: tool.tool_slug,
+    read_only: Boolean((tool.annotations as { readOnlyHint?: boolean } | undefined)?.readOnlyHint),
+  }));
+}
+
+export function listAllToolkitCapabilities(): Record<string, ToolkitCapabilityEntry[]> {
+  const result: Record<string, ToolkitCapabilityEntry[]> = {};
+  for (const slug of Object.keys(TOOLKIT_CATALOG)) {
+    result[slug] = listToolkitCapabilities(slug);
+  }
+  return result;
+}
+
 export function buildToolkitCatalog(
   toolkitSlug: string,
   connectedAccountId: string,

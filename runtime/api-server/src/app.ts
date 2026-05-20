@@ -107,6 +107,8 @@ import { BrokerError, IntegrationBrokerService } from "./integration-broker.js";
 import { OAuthService } from "./oauth-service.js";
 import { ComposioService } from "./composio-service.js";
 import { ComposioMcpManager } from "./composio-mcp-manager.js";
+import { listAllToolkitCapabilities } from "./composio-tool-registry.js";
+import { WorkspaceIntegrationsService } from "./workspace-integrations.js";
 import {
   RuntimeAgentToolsService,
   RuntimeAgentToolsServiceError,
@@ -2755,15 +2757,18 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       })
       : options.terminalSessionManager;
   const integrationService = new RuntimeIntegrationService(store);
+  // workspaceIntegrationsService initialized after composioService below.
   const honoBaseUrl = process.env.HOLABOSS_AUTH_BASE_URL ?? "";
   const authCookie = process.env.HOLABOSS_AUTH_COOKIE ?? "";
   const composioService = honoBaseUrl && authCookie
     ? new ComposioService({ honoBaseUrl, authCookie })
     : null;
+  const workspaceIntegrationsService = new WorkspaceIntegrationsService(store, composioService);
   const composioMcpManager = composioService
     ? new ComposioMcpManager({
         composio: composioService,
         workspaceRoot: store.workspaceRoot,
+        store,
         logger: {
           info: (msg, meta) => app.log.info(meta ?? {}, String(msg)),
           warn: (msg, meta) => app.log.warn(meta ?? {}, String(msg)),
@@ -4007,6 +4012,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
   app.get("/api/v1/integrations/catalog", async () => {
     return integrationService.getCatalog();
+  });
+
+  app.get("/api/v1/integrations/composio-capabilities", async () => {
+    return { toolkits: listAllToolkitCapabilities() };
   });
 
   app.get("/api/v1/integrations/connections", async (request, reply) => {
@@ -5608,6 +5617,83 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
           reply,
           400,
           error instanceof Error ? error.message : "composio_mcp_ensure_running failed",
+        );
+      }
+    },
+  );
+
+  // Workspace-scoped integration controls: list every account integration
+  // alongside whether it's enabled / disabled / pinned in this workspace,
+  // and let the desktop UI flip the override.
+  app.get("/api/v1/workspaces/:workspaceId/integrations", async (request, reply) => {
+    const params = request.params as { workspaceId: string };
+    const workspaceId = requiredString(params.workspaceId, "workspaceId");
+    try {
+      return await workspaceIntegrationsService.list(workspaceId);
+    } catch (error) {
+      return sendError(
+        reply,
+        500,
+        error instanceof Error ? error.message : "workspace integrations list failed",
+      );
+    }
+  });
+
+  app.put(
+    "/api/v1/workspaces/:workspaceId/integrations/:toolkitSlug",
+    async (request, reply) => {
+      const params = request.params as { workspaceId: string; toolkitSlug: string };
+      const workspaceId = requiredString(params.workspaceId, "workspaceId");
+      const toolkitSlug = requiredString(params.toolkitSlug, "toolkitSlug");
+      if (!isRecord(request.body)) {
+        return sendError(reply, 400, "request body must be an object");
+      }
+      const rawState = request.body.state;
+      if (rawState !== "disabled" && rawState !== "pinned") {
+        return sendError(reply, 400, "state must be 'disabled' or 'pinned'");
+      }
+      const pinnedConnectionId =
+        typeof request.body.pinned_connection_id === "string"
+          ? request.body.pinned_connection_id
+          : null;
+      try {
+        const record = workspaceIntegrationsService.setOverride({
+          workspaceId,
+          toolkitSlug,
+          state: rawState,
+          pinnedConnectionId,
+        });
+        if (composioMcpManager) {
+          await composioMcpManager.restart(workspaceId).catch(() => undefined);
+        }
+        return record;
+      } catch (error) {
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "set integration override failed",
+        );
+      }
+    },
+  );
+
+  app.delete(
+    "/api/v1/workspaces/:workspaceId/integrations/:toolkitSlug",
+    async (request, reply) => {
+      const params = request.params as { workspaceId: string; toolkitSlug: string };
+      const workspaceId = requiredString(params.workspaceId, "workspaceId");
+      const toolkitSlug = requiredString(params.toolkitSlug, "toolkitSlug");
+      try {
+        const result = workspaceIntegrationsService.clearOverride({ workspaceId, toolkitSlug });
+        if (composioMcpManager) {
+          await composioMcpManager.restart(workspaceId).catch(() => undefined);
+        }
+        return result;
+      } catch (error) {
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "clear integration override failed",
         );
       }
     },
