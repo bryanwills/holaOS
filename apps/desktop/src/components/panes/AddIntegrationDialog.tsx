@@ -95,11 +95,9 @@ export function AddIntegrationDialog({
               <InputGroup
                 className={cn(
                   "border-0",
-                  // The dialog header already shows a hairline border-b
-                  // as the visual divider; the group's focus-within ring
-                  // would be a second indicator stacked on top. Drop it
-                  // so the search row reads as one quiet row (cmd-K
-                  // style) instead of a ringed control inside a card.
+                  // Strip the InputGroup container's focus-within ring too;
+                  // the dialog header already has a border-b divider, no
+                  // need for a second indicator inside it.
                   "has-[[data-slot=input-group-control]:focus-visible]:border-transparent has-[[data-slot=input-group-control]:focus-visible]:ring-0",
                 )}
               >
@@ -108,24 +106,24 @@ export function AddIntegrationDialog({
                 </InputGroupAddon>
                 <InputGroupInput
                   autoFocus
+                  data-no-focus-ring
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search integrations…"
                   value={query}
                 />
-                <InputGroupAddon align="inline-end">
-                  <DialogPrimitive.Close
-                    render={
-                      <InputGroupButton
-                        aria-label="Close"
-                        size="icon-xs"
-                        type="button"
-                        variant="ghost"
-                      >
-                        <X />
-                      </InputGroupButton>
-                    }
-                  />
-                </InputGroupAddon>
+                {query ? (
+                  <InputGroupAddon align="inline-end">
+                    <InputGroupButton
+                      aria-label="Clear search"
+                      onClick={() => setQuery("")}
+                      size="icon-xs"
+                      type="button"
+                      variant="ghost"
+                    >
+                      <X />
+                    </InputGroupButton>
+                  </InputGroupAddon>
+                ) : null}
               </InputGroup>
             </header>
 
