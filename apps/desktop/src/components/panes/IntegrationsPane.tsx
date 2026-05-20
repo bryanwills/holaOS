@@ -5,10 +5,10 @@ import {
   LogIn,
   Plus,
   RefreshCw,
-  Search,
   ShieldAlert,
   Unplug,
 } from "lucide-react";
+import { AddIntegrationDialog } from "@/components/panes/AddIntegrationDialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   SettingsCard,
@@ -16,14 +16,6 @@ import {
 } from "@/components/settings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
 import { accountDisplayLabel } from "@/lib/integrationDisplay";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
@@ -165,8 +157,6 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     IntegrationConnectionPayload[]
   >([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [query, setQuery] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("all");
   const [connectingProviderId, setConnectingProviderId] = useState<
     string | null
   >(null);
@@ -177,6 +167,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     string | null
   >(null);
   const [statusMessage, setStatusMessage] = useState("");
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [workspaceUsageByConnection, setWorkspaceUsageByConnection] = useState<
     Map<string, ConnectionWorkspaceUsageEntry["workspaces"]>
   >(new Map());
@@ -477,18 +468,6 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     [connectionsByProviderId],
   );
 
-  const categories = useMemo(() => {
-    const items = new Set<string>();
-    for (const integration of integrations) {
-      for (const category of integration.categories) {
-        if (category) {
-          items.add(category);
-        }
-      }
-    }
-    return Array.from(items).sort();
-  }, [integrations]);
-
   const connectedIntegrations = useMemo(
     () =>
       integrations.filter((integration) =>
@@ -497,48 +476,26 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     [connectedProviderIds, integrations],
   );
 
-  const filteredIntegrations = useMemo(() => {
-    // Hide every toolkit that's not in our curated store catalog (PM
-    // brief scopes the store to tech + marketing only). Falls back to
-    // showing everything if the catalog hasn't loaded yet so the user
-    // never sees a permanently empty list during a transient load fail.
-    let items = integrations.filter(
-      (integration) => !connectedProviderIds.has(integration.providerId),
-    );
-    if (storeCatalog.size > 0) {
-      items = items.filter((integration) => storeCatalog.has(integration.providerId));
-    }
-    if (query.trim()) {
-      const normalizedQuery = query.trim().toLowerCase();
-      items = items.filter((integration) =>
-        [
-          integration.providerId,
-          integration.name,
-          integration.description,
-        ].some((value) => value.toLowerCase().includes(normalizedQuery)),
-      );
-    }
-    if (categoryFilter !== "all") {
-      items = items.filter((integration) =>
-        integration.categories.includes(categoryFilter),
-      );
-    }
-    return items;
-  }, [categoryFilter, connectedProviderIds, integrations, query, storeCatalog]);
+  const dialogIntegrations = useMemo(
+    () =>
+      integrations
+        .filter(
+          (integration) =>
+            storeCatalog.size === 0 || storeCatalog.has(integration.providerId),
+        )
+        .map((integration) => ({
+          slug: integration.slug,
+          providerId: integration.providerId,
+          name: integration.name,
+          description: integration.description,
+          logo: integration.logo,
+          categories: integration.categories,
+          supportsManaged: integration.supportsManaged,
+          tier: storeCatalog.get(integration.providerId)?.tier,
+        })),
+    [integrations, storeCatalog],
+  );
 
-  const groupedIntegrations = useMemo(() => {
-    const groups: Record<string, IntegrationCard[]> = {};
-    for (const integration of filteredIntegrations) {
-      const category = integration.categories[0] || "other";
-      if (!groups[category]) {
-        groups[category] = [];
-      }
-      groups[category].push(integration);
-    }
-    return Object.entries(groups).sort(([left], [right]) =>
-      left.localeCompare(right),
-    );
-  }, [filteredIntegrations]);
 
   async function handleConnect(integration: IntegrationCard) {
     if (!isSignedIn) {
@@ -898,40 +855,23 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
         </div>
       ) : null}
 
-      {/* Search + Filter */}
-      <div className="mt-5 flex items-center gap-3">
-        <div className="relative flex-1">
-          <Search
-            size={14}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-          />
-          <Input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search integrations..."
-            className="h-9 pl-8"
-          />
-        </div>
-        <select
-          value={categoryFilter}
-          onChange={(event) => setCategoryFilter(event.target.value)}
-          className="h-9 rounded-lg border border-input bg-transparent px-3 text-sm text-foreground outline-none"
-        >
-          <option value="all">All</option>
-          {categories.map((category) => (
-            <option key={category} value={category}>
-              {category.charAt(0).toUpperCase() + category.slice(1)}
-            </option>
-          ))}
-        </select>
-      </div>
-
       {/* Connected — one card per provider, multiple account rows inside */}
       {connectedIntegrations.length > 0 ? (
-        <div className="mt-6">
-          <h2 className="text-xs font-medium uppercase text-muted-foreground">
-            Connected
-          </h2>
+        <div className="mt-5">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs font-medium uppercase text-muted-foreground">
+              Your integrations
+            </h2>
+            <Button
+              onClick={() => setAddDialogOpen(true)}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <Plus className="mr-1.5 size-3.5" />
+              Add integration
+            </Button>
+          </div>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             {connectedIntegrations.map((integration) => (
               <ConnectedProviderCard
@@ -988,47 +928,52 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
         <p className="mt-4 text-sm text-muted-foreground">{statusMessage}</p>
       ) : null}
 
-      {/* Available — grouped by category */}
-      {groupedIntegrations.map(([category, items]) => (
-        <div key={category} className="mt-6">
-          <h2 className="text-xs font-medium uppercase text-muted-foreground">
-            {category.charAt(0).toUpperCase() + category.slice(1)}
-          </h2>
-          <div className="mt-3 divide-y divide-border border-y border-border">
-            {items.map((integration) => (
-              <IntegrationRow
-                key={integration.slug}
-                integration={integration}
-                connected={false}
-                canConnect={isSignedIn && integration.supportsManaged}
-                connectDisabledReason={
-                  integration.supportsManaged
-                    ? "Sign in first to connect managed integrations."
-                    : "Managed sign-in is not supported for this provider."
-                }
-                onConnect={() => void handleConnect(integration)}
-                onDisconnect={() => {}}
-                connecting={connectingProviderId === integration.providerId}
-                disconnecting={false}
-                actionMode={
-                  !integration.supportsManaged
-                    ? "unavailable"
-                    : isSignedIn
-                      ? "connect"
-                      : "disabled"
-                }
-              />
-            ))}
-          </div>
+      {connectedIntegrations.length === 0 ? (
+        <div className="mt-8 flex flex-col items-center gap-3 rounded-xl border border-border bg-card px-6 py-10 text-center">
+          <p className="text-sm text-foreground">No integrations yet.</p>
+          <p className="max-w-xs text-xs leading-5 text-muted-foreground">
+            Connect Gmail, Slack, Linear, and others so the agent can use them
+            in your workspaces.
+          </p>
+          <Button
+            disabled={!isSignedIn}
+            onClick={() => setAddDialogOpen(true)}
+            size="sm"
+            type="button"
+            variant="default"
+          >
+            <Plus className="mr-1.5 size-3.5" />
+            Add integration
+          </Button>
         </div>
-      ))}
-
-      {filteredIntegrations.length === 0 &&
-      connectedIntegrations.length === 0 ? (
-        <p className="mt-12 text-center text-sm text-muted-foreground">
-          No integrations found.
-        </p>
       ) : null}
+
+      <AddIntegrationDialog
+        canConnect={isSignedIn}
+        connectDisabledReason={
+          isSignedIn
+            ? "Managed sign-in is not supported for this provider."
+            : "Sign in first to connect integrations."
+        }
+        connectedProviderIds={connectedProviderIds}
+        connectingProviderId={connectingProviderId}
+        integrations={dialogIntegrations}
+        onConnect={(integration) => {
+          setAddDialogOpen(false);
+          void handleConnect({
+            slug: integration.slug,
+            providerId: integration.providerId,
+            name: integration.name,
+            description: integration.description,
+            logo: integration.logo,
+            authSchemes: [],
+            categories: integration.categories,
+            supportsManaged: integration.supportsManaged,
+          });
+        }}
+        onOpenChange={setAddDialogOpen}
+        open={addDialogOpen}
+      />
 
       <ConfirmDialog
         confirmLabel="Disconnect"
@@ -1087,67 +1032,27 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
           </SettingsCard>
         ) : null}
 
-        {/* Search + filter toolbar */}
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1">
-            <Search
-              size={14}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-            />
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search integrations..."
-              className="h-9 pl-8"
-            />
-          </div>
-          <Select
-            value={categoryFilter}
-            onValueChange={(value) => setCategoryFilter(value ?? "all")}
-          >
-            <SelectTrigger
-              size="sm"
-              className="w-auto min-w-[96px] justify-end gap-1.5 border-transparent bg-transparent px-2 text-xs font-medium hover:bg-accent dark:bg-transparent dark:hover:bg-accent"
-            >
-              <SelectValue>
-                {(value: string) =>
-                  value === "all"
-                    ? "All"
-                    : value.charAt(0).toUpperCase() + value.slice(1)
-                }
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent
-              align="end"
-              alignItemWithTrigger={false}
-              className="min-w-[140px] gap-0 rounded-lg p-1 shadow-xs ring-0"
-            >
-              <SelectItem
-                value="all"
-                className="rounded-md px-2.5 py-1.5 text-xs"
-              >
-                All
-              </SelectItem>
-              {categories.map((category) => (
-                <SelectItem
-                  key={category}
-                  value={category}
-                  className="rounded-md px-2.5 py-1.5 text-xs"
-                >
-                  {category.charAt(0).toUpperCase() + category.slice(1)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
         {statusMessage ? (
-          <p className="-mt-4 text-sm text-muted-foreground">{statusMessage}</p>
+          <p className="text-sm text-muted-foreground">{statusMessage}</p>
         ) : null}
 
         {/* Connected section — one card per provider, multiple account rows */}
         {connectedIntegrations.length > 0 ? (
-          <SettingsSection title="Connected">
+          <SettingsSection
+            action={
+              <Button
+                disabled={!isSignedIn}
+                onClick={() => setAddDialogOpen(true)}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                <Plus className="mr-1.5 size-3.5" />
+                Add integration
+              </Button>
+            }
+            title="Your integrations"
+          >
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {connectedIntegrations.map((integration) => (
                 <ConnectedProviderCard
@@ -1202,46 +1107,24 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
           </SettingsSection>
         ) : null}
 
-        {/* Available — grouped by category */}
-        {groupedIntegrations.map(([category, items]) => (
-          <SettingsSection
-            key={category}
-            title={category.charAt(0).toUpperCase() + category.slice(1)}
-          >
-            <div className="divide-y divide-border">
-              {items.map((integration) => (
-                <IntegrationEmbeddedCard
-                  key={integration.slug}
-                  integration={integration}
-                  connected={false}
-                  canConnect={isSignedIn && integration.supportsManaged}
-                  connectDisabledReason={
-                    integration.supportsManaged
-                      ? "Sign in first to connect managed integrations."
-                      : "Managed sign-in is not supported for this provider."
-                  }
-                  onConnect={() => void handleConnect(integration)}
-                  onDisconnect={() => {}}
-                  connecting={connectingProviderId === integration.providerId}
-                  disconnecting={false}
-                  actionMode={
-                    !integration.supportsManaged
-                      ? "unavailable"
-                      : isSignedIn
-                        ? "connect"
-                        : "disabled"
-                  }
-                />
-              ))}
-            </div>
-          </SettingsSection>
-        ))}
-
-        {filteredIntegrations.length === 0 &&
-        connectedIntegrations.length === 0 ? (
-          <p className="text-center text-sm text-muted-foreground">
-            No integrations found.
-          </p>
+        {connectedIntegrations.length === 0 ? (
+          <div className="flex flex-col items-center gap-3 rounded-xl border border-border bg-card px-6 py-10 text-center">
+            <p className="text-sm text-foreground">No integrations yet.</p>
+            <p className="max-w-xs text-xs leading-5 text-muted-foreground">
+              Connect Gmail, Slack, Linear, and others so the agent can use
+              them in your workspaces.
+            </p>
+            <Button
+              disabled={!isSignedIn}
+              onClick={() => setAddDialogOpen(true)}
+              size="sm"
+              type="button"
+              variant="default"
+            >
+              <Plus className="mr-1.5 size-3.5" />
+              Add integration
+            </Button>
+          </div>
         ) : null}
       </div>
     );
@@ -1264,221 +1147,6 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
   );
 }
 
-function IntegrationRow({
-  integration,
-  connected,
-  canConnect,
-  connectDisabledReason,
-  onConnect,
-  onDisconnect,
-  connecting,
-  disconnecting,
-  actionMode,
-}: {
-  integration: IntegrationCard;
-  connected: boolean;
-  canConnect: boolean;
-  connectDisabledReason: string;
-  onConnect: () => void;
-  onDisconnect: () => void;
-  connecting: boolean;
-  disconnecting: boolean;
-  actionMode: "connected" | "connect" | "disabled" | "unavailable";
-}) {
-  const muted = actionMode === "disabled";
-  return (
-    <div
-      className={`group flex items-center gap-3 px-3 py-2.5 transition-colors ${
-        muted ? "opacity-50" : "hover:bg-fg-2"
-      }`}
-    >
-      <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-background">
-        {integration.logo ? (
-          <img
-            src={integration.logo}
-            alt=""
-            className="size-full object-cover"
-          />
-        ) : (
-          <span className="text-sm font-semibold text-muted-foreground">
-            {integration.name.charAt(0)}
-          </span>
-        )}
-      </div>
-
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-foreground">
-          {integration.name}
-        </div>
-        <div className="truncate text-sm text-muted-foreground">
-          {integration.description}
-        </div>
-      </div>
-
-      {connected ? (
-        <div className="flex items-center gap-1.5">
-          <Badge variant="outline" className="border-primary text-primary">
-            <Check size={10} />
-          </Badge>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            disabled={disconnecting}
-            onClick={onDisconnect}
-            className="text-muted-foreground hover:text-destructive"
-            aria-label={`Disconnect ${integration.name}`}
-          >
-            {disconnecting ? (
-              <Loader2 size={13} className="animate-spin" />
-            ) : (
-              <Unplug size={13} />
-            )}
-          </Button>
-        </div>
-      ) : actionMode === "unavailable" ? (
-        <Badge variant="secondary" title={connectDisabledReason}>
-          Unavailable
-        </Badge>
-      ) : (
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          disabled={connecting || !canConnect}
-          onClick={onConnect}
-          title={
-            canConnect ? `Connect ${integration.name}` : connectDisabledReason
-          }
-        >
-          {connecting ? (
-            <Loader2 size={13} className="animate-spin" />
-          ) : !canConnect ? (
-            <LogIn size={14} />
-          ) : (
-            <Plus size={14} />
-          )}
-        </Button>
-      )}
-    </div>
-  );
-}
-
-function IntegrationEmbeddedCard({
-  integration,
-  connected,
-  canConnect,
-  connectDisabledReason,
-  onConnect,
-  onDisconnect,
-  connecting,
-  disconnecting,
-  actionMode,
-}: {
-  integration: IntegrationCard;
-  connected: boolean;
-  canConnect: boolean;
-  connectDisabledReason: string;
-  onConnect: () => void;
-  onDisconnect: () => void;
-  connecting: boolean;
-  disconnecting: boolean;
-  actionMode: "connected" | "connect" | "disabled" | "unavailable";
-}) {
-  const muted = actionMode === "disabled";
-  return (
-    <div
-      className={`group flex min-w-0 gap-3 px-3 py-2.5 transition-colors ${muted ? "opacity-60" : "hover:bg-fg-2"}`}
-    >
-      <div
-        className={
-          integration.logo
-            ? "flex size-9 shrink-0 items-center justify-center"
-            : "flex size-9 shrink-0 items-center justify-center rounded-md bg-muted ring-1 ring-border"
-        }
-      >
-        {integration.logo ? (
-          <img
-            src={integration.logo}
-            alt=""
-            className="size-full object-contain"
-          />
-        ) : (
-          <span className="text-sm font-semibold text-muted-foreground">
-            {integration.name.charAt(0)}
-          </span>
-        )}
-      </div>
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-            {integration.name}
-          </div>
-          <div className="-mr-1 -mt-1 shrink-0">
-            {connected ? (
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                disabled={disconnecting}
-                onClick={onDisconnect}
-                className="text-muted-foreground hover:text-destructive"
-                aria-label={`Disconnect ${integration.name}`}
-              >
-                {disconnecting ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <Unplug className="size-3.5" />
-                )}
-              </Button>
-            ) : actionMode === "unavailable" ? (
-              <Badge
-                variant="outline"
-                className="border-border bg-background/60 text-[11px] text-muted-foreground"
-                title={connectDisabledReason}
-              >
-                Unavailable
-              </Badge>
-            ) : (
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                disabled={connecting || !canConnect}
-                onClick={onConnect}
-                title={
-                  canConnect
-                    ? `Connect ${integration.name}`
-                    : connectDisabledReason
-                }
-                aria-label={`Connect ${integration.name}`}
-              >
-                {connecting ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <Plus className="size-3.5" />
-                )}
-              </Button>
-            )}
-          </div>
-        </div>
-
-        <div className="mt-0.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
-          {integration.description}
-        </div>
-
-        {connected ? (
-          <div className="mt-auto flex pt-2">
-            <Badge
-              variant="outline"
-              className="border-success/40 bg-success/10 text-[11px] text-success"
-            >
-              <Check className="size-3" />
-              Connected
-            </Badge>
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
 
 interface WorkspaceOverrideDescriptor {
   workspace_id: string;
