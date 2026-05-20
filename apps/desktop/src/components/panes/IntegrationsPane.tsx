@@ -1115,6 +1115,54 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
             </Button>
           </div>
         ) : null}
+
+        <AddIntegrationDialog
+          canConnect={isSignedIn}
+          connectDisabledReason={
+            isSignedIn
+              ? "Managed sign-in is not supported for this provider."
+              : "Sign in first to connect integrations."
+          }
+          connectedProviderIds={connectedProviderIds}
+          connectingProviderId={connectingProviderId}
+          integrations={dialogIntegrations}
+          onConnect={(integration) => {
+            setAddDialogOpen(false);
+            void handleConnect({
+              slug: integration.slug,
+              providerId: integration.providerId,
+              name: integration.name,
+              description: integration.description,
+              logo: integration.logo,
+              authSchemes: [],
+              categories: integration.categories,
+              supportsManaged: integration.supportsManaged,
+            });
+          }}
+          onOpenChange={setAddDialogOpen}
+          open={addDialogOpen}
+        />
+
+        <ConfirmDialog
+          confirmLabel="Disconnect"
+          description={
+            pendingDisconnect
+              ? `${pendingDisconnect.label} is bound in ${pendingDisconnect.workspaceCount} workspace${pendingDisconnect.workspaceCount === 1 ? "" : "s"}. Disconnecting drops every binding and revokes the Composio account. Apps in those workspaces will lose access until you reconnect.`
+              : ""
+          }
+          destructive
+          onConfirm={() => {
+            if (pendingDisconnect) {
+              void performDisconnect(pendingDisconnect.connectionId);
+              setPendingDisconnect(null);
+            }
+          }}
+          onOpenChange={(open) => {
+            if (!open) setPendingDisconnect(null);
+          }}
+          open={Boolean(pendingDisconnect)}
+          title="Disconnect this account?"
+        />
       </div>
     );
   }
@@ -1126,9 +1174,6 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
           <h1 className="text-xl font-semibold tracking-tight text-foreground">
             Integrations
           </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Connect your accounts to use them in workspaces.
-          </p>
           {integrationContent}
         </div>
       </div>
