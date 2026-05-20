@@ -11,6 +11,7 @@ import {
   buildToolkitCatalogAsync,
   type BootstrapComposioMcpResult,
 } from "./composio-tool-registry.js";
+import { isInStoreCatalog } from "./integration-store-catalog.js";
 import {
   ComposioService,
   type ComposioConnectionSummary,
@@ -96,7 +97,9 @@ export class ComposioMcpManager {
       return { status: "skipped", reason: "list_connections_failed" };
     }
 
-    const active = connections.filter((conn) => conn.status === "ACTIVE");
+    const active = connections.filter(
+      (conn) => conn.status === "ACTIVE" && isInStoreCatalog(conn.toolkitSlug),
+    );
     if (active.length === 0) {
       return { status: "skipped", reason: "no_active_connection" };
     }

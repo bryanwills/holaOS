@@ -108,6 +108,7 @@ import { OAuthService } from "./oauth-service.js";
 import { ComposioService } from "./composio-service.js";
 import { ComposioMcpManager } from "./composio-mcp-manager.js";
 import { listAllToolkitCapabilities } from "./composio-tool-registry.js";
+import { listStoreCatalog } from "./integration-store-catalog.js";
 import { WorkspaceIntegrationsService } from "./workspace-integrations.js";
 import {
   RuntimeAgentToolsService,
@@ -4016,6 +4017,14 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
   app.get("/api/v1/integrations/composio-capabilities", async () => {
     return { toolkits: listAllToolkitCapabilities() };
+  });
+
+  // GET /integrations/store-catalog — the curated subset of Composio
+  // toolkits we surface in Settings → Integrations. See PM brief
+  // `docs/pm/integration-store-user-flow.md` for the scoping decision
+  // (tech + marketing only; tier hero / supported).
+  app.get("/api/v1/integrations/store-catalog", async () => {
+    return { entries: listStoreCatalog() };
   });
 
   app.get("/api/v1/integrations/connections", async (request, reply) => {

@@ -5,6 +5,7 @@ import type {
 } from "@holaboss/runtime-state-store";
 
 import { hasHeroEntry } from "./composio-tool-registry.js";
+import { isInStoreCatalog } from "./integration-store-catalog.js";
 import type { ComposioConnectionSummary, ComposioService } from "./composio-service.js";
 
 export type WorkspaceIntegrationEffectiveState =
@@ -80,7 +81,11 @@ export class WorkspaceIntegrationsService {
       const conns = grouped.get(slug) ?? [];
       const override = overrideByToolkit.get(slug) ?? null;
       const tier = hasHeroEntry(slug) ? "hero" : "auto";
-      const supported = conns.length > 0;
+      // Out-of-scope toolkits (somehow connected outside the curated
+      // store) get supported=false so the agent ignores them and the UI
+      // hides them. The user can still see + remove them from the
+      // account-level IntegrationsPane.
+      const supported = conns.length > 0 && isInStoreCatalog(slug);
       const sample = conns[0] ?? null;
 
       let effectiveState: WorkspaceIntegrationEffectiveState = "auto";

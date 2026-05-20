@@ -1006,6 +1006,16 @@ interface ComposioToolkitCapabilitiesPayload {
   toolkits: Record<string, ComposioToolkitCapability[]>;
 }
 
+interface IntegrationStoreCatalogEntry {
+  slug: string;
+  tier: "hero" | "supported";
+  category: string;
+}
+
+interface IntegrationStoreCatalogPayload {
+  entries: IntegrationStoreCatalogEntry[];
+}
+
 interface WorkspaceIntegrationConnectionPayload {
   connected_account_id: string;
   status: string;
@@ -1506,6 +1516,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:listConnectionWorkspaceUsage") as Promise<ConnectionWorkspaceUsagePayload>,
     listComposioToolkitCapabilities: () =>
       ipcRenderer.invoke("workspace:listComposioToolkitCapabilities") as Promise<ComposioToolkitCapabilitiesPayload>,
+    listIntegrationStoreCatalog: () =>
+      ipcRenderer.invoke("workspace:listIntegrationStoreCatalog") as Promise<IntegrationStoreCatalogPayload>,
     listWorkspaceIntegrations: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listWorkspaceIntegrations", workspaceId) as Promise<WorkspaceIntegrationsListResponsePayload>,
     setWorkspaceIntegrationOverride: (

@@ -1434,6 +1434,16 @@ interface RuntimeNotificationListOptionsPayload {
     toolkits: Record<string, ComposioToolkitCapability[]>;
   }
 
+  interface IntegrationStoreCatalogEntry {
+    slug: string;
+    tier: "hero" | "supported";
+    category: string;
+  }
+
+  interface IntegrationStoreCatalogPayload {
+    entries: IntegrationStoreCatalogEntry[];
+  }
+
   interface WorkspaceIntegrationConnectionPayload {
     connected_account_id: string;
     status: string;
@@ -1898,6 +1908,7 @@ interface RuntimeNotificationListOptionsPayload {
       deleteIntegrationBinding: (bindingId: string, workspaceId: string) => Promise<{ deleted: boolean }>;
       listConnectionWorkspaceUsage: () => Promise<ConnectionWorkspaceUsagePayload>;
       listComposioToolkitCapabilities: () => Promise<ComposioToolkitCapabilitiesPayload>;
+      listIntegrationStoreCatalog: () => Promise<IntegrationStoreCatalogPayload>;
       listWorkspaceIntegrations: (workspaceId: string) => Promise<WorkspaceIntegrationsListResponsePayload>;
       setWorkspaceIntegrationOverride: (
         workspaceId: string,

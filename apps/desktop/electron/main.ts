@@ -10252,6 +10252,17 @@ async function listConnectionWorkspaceUsage(): Promise<{
   return localIntegrationMetadataStore.listConnectionWorkspaceUsage();
 }
 
+async function listIntegrationStoreCatalog(): Promise<{
+  entries: Array<{ slug: string; tier: "hero" | "supported"; category: string }>;
+}> {
+  return requestRuntimeJson<{
+    entries: Array<{ slug: string; tier: "hero" | "supported"; category: string }>;
+  }>({
+    method: "GET",
+    path: "/api/v1/integrations/store-catalog",
+  });
+}
+
 async function listComposioToolkitCapabilities(): Promise<{
   toolkits: Record<
     string,
@@ -22953,6 +22964,11 @@ app.whenReady().then(async () => {
     "workspace:listComposioToolkitCapabilities",
     ["main"],
     async () => listComposioToolkitCapabilities(),
+  );
+  handleTrustedIpc(
+    "workspace:listIntegrationStoreCatalog",
+    ["main"],
+    async () => listIntegrationStoreCatalog(),
   );
   handleTrustedIpc(
     "workspace:listWorkspaceIntegrations",

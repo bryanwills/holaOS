@@ -182,25 +182,37 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
   const [capabilitiesByToolkit, setCapabilitiesByToolkit] = useState<
     Record<string, ComposioToolkitCapability[]>
   >({});
+  const [storeCatalog, setStoreCatalog] = useState<
+    Map<string, IntegrationStoreCatalogEntry>
+  >(new Map());
   const accountMetadata = useIntegrationAccountMetadata(connections);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [catalogResult, connectionResult, toolkitResult, usageResult, capabilitiesResult] =
-        await Promise.all([
-          window.electronAPI.workspace.listIntegrationCatalog(),
-          window.electronAPI.workspace.listIntegrationConnections(),
-          window.electronAPI.workspace
-            .composioListToolkits()
-            .catch(() => ({ toolkits: [] as ComposioToolkit[] })),
-          window.electronAPI.workspace
-            .listConnectionWorkspaceUsage()
-            .catch(() => ({ usage: [] as ConnectionWorkspaceUsageEntry[] })),
-          window.electronAPI.workspace
-            .listComposioToolkitCapabilities()
-            .catch(() => ({ toolkits: {} as Record<string, ComposioToolkitCapability[]> })),
-        ]);
+      const [
+        catalogResult,
+        connectionResult,
+        toolkitResult,
+        usageResult,
+        capabilitiesResult,
+        storeCatalogResult,
+      ] = await Promise.all([
+        window.electronAPI.workspace.listIntegrationCatalog(),
+        window.electronAPI.workspace.listIntegrationConnections(),
+        window.electronAPI.workspace
+          .composioListToolkits()
+          .catch(() => ({ toolkits: [] as ComposioToolkit[] })),
+        window.electronAPI.workspace
+          .listConnectionWorkspaceUsage()
+          .catch(() => ({ usage: [] as ConnectionWorkspaceUsageEntry[] })),
+        window.electronAPI.workspace
+          .listComposioToolkitCapabilities()
+          .catch(() => ({ toolkits: {} as Record<string, ComposioToolkitCapability[]> })),
+        window.electronAPI.workspace
+          .listIntegrationStoreCatalog()
+          .catch(() => ({ entries: [] as IntegrationStoreCatalogEntry[] })),
+      ]);
       setIntegrations(
         mergeIntegrationCards(catalogResult.providers, toolkitResult.toolkits),
       );
@@ -211,6 +223,11 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
       }
       setWorkspaceUsageByConnection(usageMap);
       setCapabilitiesByToolkit(capabilitiesResult.toolkits ?? {});
+      const storeMap = new Map<string, IntegrationStoreCatalogEntry>();
+      for (const entry of storeCatalogResult.entries) {
+        storeMap.set(entry.slug.trim().toLowerCase(), entry);
+      }
+      setStoreCatalog(storeMap);
     } catch (error) {
       setIntegrations([]);
       setConnections([]);
@@ -454,9 +471,16 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
   );
 
   const filteredIntegrations = useMemo(() => {
+    // Hide every toolkit that's not in our curated store catalog (PM
+    // brief scopes the store to tech + marketing only). Falls back to
+    // showing everything if the catalog hasn't loaded yet so the user
+    // never sees a permanently empty list during a transient load fail.
     let items = integrations.filter(
       (integration) => !connectedProviderIds.has(integration.providerId),
     );
+    if (storeCatalog.size > 0) {
+      items = items.filter((integration) => storeCatalog.has(integration.providerId));
+    }
     if (query.trim()) {
       const normalizedQuery = query.trim().toLowerCase();
       items = items.filter((integration) =>
@@ -473,7 +497,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
       );
     }
     return items;
-  }, [categoryFilter, connectedProviderIds, integrations, query]);
+  }, [categoryFilter, connectedProviderIds, integrations, query, storeCatalog]);
 
   const groupedIntegrations = useMemo(() => {
     const groups: Record<string, IntegrationCard[]> = {};
