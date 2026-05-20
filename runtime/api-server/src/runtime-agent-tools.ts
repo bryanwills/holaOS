@@ -50,6 +50,7 @@ import {
 } from "./session-todo.js";
 import type { TerminalSessionManagerLike } from "./terminal-session-manager.js";
 import type { QueueWorkerLike } from "./queue-worker.js";
+import type { ComposioMcpManager } from "./composio-mcp-manager.js";
 import { invokeWorkspaceSkill, resolveWorkspaceSkills } from "./workspace-skills.js";
 import {
   listWorkspaceApplicationPorts,
@@ -2410,6 +2411,7 @@ export class RuntimeAgentToolsService {
       terminalSessionManager?: TerminalSessionManagerLike | null;
       queueWorker?: QueueWorkerLike | null;
       appLifecycle?: RuntimeAgentToolAppLifecycleCallbacks | null;
+      composioMcpManager?: ComposioMcpManager | null;
     },
   ) {}
 
@@ -4882,6 +4884,17 @@ export class RuntimeAgentToolsService {
         "workspace_app_ensure_running_unavailable",
         "managed app startup is not available in this runtime",
       );
+    }
+
+    // PR 1: opportunistically bootstrap the composio-mcp host alongside
+    // app startup. Failures here never fail the call — composio direct
+    // tools are additive; without them the agent still has app tools.
+    if (this.options.composioMcpManager) {
+      try {
+        await this.options.composioMcpManager.ensureRunning(params.workspaceId);
+      } catch {
+        // manager already logs; nothing else to do
+      }
     }
 
     const mcpServersAfter = readWorkspaceMcpRegistryServerNames(workspaceDir);

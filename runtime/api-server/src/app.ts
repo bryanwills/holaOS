@@ -106,6 +106,7 @@ import {
 import { BrokerError, IntegrationBrokerService } from "./integration-broker.js";
 import { OAuthService } from "./oauth-service.js";
 import { ComposioService } from "./composio-service.js";
+import { ComposioMcpManager } from "./composio-mcp-manager.js";
 import {
   RuntimeAgentToolsService,
   RuntimeAgentToolsServiceError,
@@ -2759,6 +2760,17 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const composioService = honoBaseUrl && authCookie
     ? new ComposioService({ honoBaseUrl, authCookie })
     : null;
+  const composioMcpManager = composioService
+    ? new ComposioMcpManager({
+        composio: composioService,
+        workspaceRoot: store.workspaceRoot,
+        logger: {
+          info: (msg, meta) => app.log.info(meta ?? {}, String(msg)),
+          warn: (msg, meta) => app.log.warn(meta ?? {}, String(msg)),
+          error: (msg, meta) => app.log.error(meta ?? {}, String(msg)),
+        },
+      })
+    : null;
   const brokerService = new IntegrationBrokerService(store, composioService);
   const oauthService = new OAuthService(store);
   const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
@@ -2777,6 +2789,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     workspaceRoot: store.workspaceRoot,
     terminalSessionManager,
     queueWorker,
+    composioMcpManager,
     appLifecycle: {
       ensureAppRunning: async (workspaceId: string, appId: string) => {
         await ensureAppRunning(workspaceId, appId);
@@ -3536,6 +3549,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     await cronWorker?.close();
     await queueWorker?.close();
     await durableMemoryWorker?.close();
+    await composioMcpManager?.stopAll();
     if (ownsStore) {
       store.close();
     }
@@ -5566,6 +5580,39 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     },
   );
 
+  // PR 1: bootstrap (or reuse) the composio-mcp host for a workspace, so the
+  // agent can call Composio tools directly without a wrapper app. Hooked
+  // into ensureWorkspaceAppsRunning below, but also exposed explicitly for
+  // manual desktop testing.
+  app.post(
+    "/api/v1/composio-mcp/ensure-running",
+    async (request, reply) => {
+      if (!composioMcpManager) {
+        return sendError(
+          reply,
+          503,
+          "composio-mcp manager not configured (missing HOLABOSS_AUTH_BASE_URL or HOLABOSS_AUTH_COOKIE)",
+        );
+      }
+      if (!isRecord(request.body)) {
+        return sendError(reply, 400, "request body must be an object");
+      }
+      try {
+        const workspaceId = requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        });
+        return await composioMcpManager.ensureRunning(workspaceId);
+      } catch (error) {
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "composio_mcp_ensure_running failed",
+        );
+      }
+    },
+  );
+
   app.post(
     "/api/v1/capabilities/runtime-tools/workspace-apps/:appId/build",
     async (request, reply) => {
@@ -7135,7 +7182,18 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 404, "workspace not found");
     }
     try {
-      return await ensureAllAppsRunning(workspaceId);
+      const result = await ensureAllAppsRunning(workspaceId);
+      // PR 1: same opportunistic composio-mcp bootstrap that the agent
+      // capability path does. Best-effort — desktop's workspace open flow
+      // never fails because Composio is down.
+      if (composioMcpManager) {
+        try {
+          await composioMcpManager.ensureRunning(workspaceId);
+        } catch {
+          // manager already logs
+        }
+      }
+      return result;
     } catch (error) {
       return sendError(reply, 500, error instanceof Error ? error.message : "failed to ensure apps running");
     }
