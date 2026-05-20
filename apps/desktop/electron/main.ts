@@ -10625,6 +10625,114 @@ const PROVIDER_PROXY_WHOAMI: Record<string, ProxyWhoamiConfig> = {
       };
     },
   },
+
+  // Google's OIDC userinfo endpoint works for any Google OAuth token
+  // with the openid/email/profile scopes — covers Calendar + Drive +
+  // Tasks + Sheets connections from one shared shape.
+  googlecalendar: {
+    url: "https://www.googleapis.com/oauth2/v3/userinfo",
+    method: "GET",
+    extract: (raw) => {
+      const u = raw as Record<string, unknown> | null;
+      if (!u) return {};
+      return {
+        email: pickString(u.email),
+        displayName: pickString(u.name),
+        avatarUrl: pickString(u.picture),
+      };
+    },
+  },
+  googledrive: {
+    url: "https://www.googleapis.com/oauth2/v3/userinfo",
+    method: "GET",
+    extract: (raw) => {
+      const u = raw as Record<string, unknown> | null;
+      if (!u) return {};
+      return {
+        email: pickString(u.email),
+        displayName: pickString(u.name),
+        avatarUrl: pickString(u.picture),
+      };
+    },
+  },
+
+  // Notion's `users.me` returns `{ type: "bot", bot: { owner: { user: {...} } }, ... }`
+  // for integration tokens and `{ type: "person", person: { email } }` for
+  // OAuth-as-user. Try both shapes.
+  notion: {
+    url: "https://api.notion.com/v1/users/me",
+    method: "GET",
+    extract: (raw) => {
+      const u = raw as Record<string, unknown> | null;
+      if (!u) return {};
+      const person = (u.person ?? null) as Record<string, unknown> | null;
+      const bot = (u.bot ?? null) as Record<string, unknown> | null;
+      const botOwnerUser = (bot?.owner as Record<string, unknown> | undefined)
+        ?.user as Record<string, unknown> | undefined;
+      const botPerson = (botOwnerUser?.person ?? null) as
+        | Record<string, unknown>
+        | null;
+      return {
+        email: pickString(person?.email) ?? pickString(botPerson?.email),
+        displayName:
+          pickString(u.name) ?? pickString(botOwnerUser?.name),
+        avatarUrl: pickString(u.avatar_url),
+      };
+    },
+  },
+
+  // Linear is GraphQL-only. The viewer query is the canonical identity
+  // probe; Composio's proxy forwards arbitrary POST bodies.
+  linear: {
+    url: "https://api.linear.app/graphql",
+    method: "POST",
+    body: { query: "{ viewer { id name email displayName avatarUrl } }" },
+    extract: (raw) => {
+      const root = raw as { data?: { viewer?: Record<string, unknown> } } | null;
+      const v = root?.data?.viewer ?? null;
+      if (!v) return {};
+      return {
+        email: pickString(v.email),
+        displayName: pickString(v.displayName) ?? pickString(v.name),
+        avatarUrl: pickString(v.avatarUrl),
+      };
+    },
+  },
+
+  // Figma's REST API has a clean /v1/me.
+  figma: {
+    url: "https://api.figma.com/v1/me",
+    method: "GET",
+    extract: (raw) => {
+      const u = raw as Record<string, unknown> | null;
+      if (!u) return {};
+      return {
+        handle: pickString(u.handle),
+        email: pickString(u.email),
+        displayName: pickString(u.handle),
+        avatarUrl: pickString(u.img_url),
+      };
+    },
+  },
+
+  // HubSpot — no clean per-user /me endpoint for OAuth tokens. The
+  // closest is /oauth/v1/access-tokens/<token> but that needs the raw
+  // token (which Composio doesn't surface to us) and returns hub-level
+  // metadata, not user identity. Skip; row keeps the persisted label.
+
+  // Stripe — accounts are organisational, not per-user. /v1/account
+  // returns business_profile + email, but for the connected_account's
+  // shop owner, not a generic user. Skip for now; if users complain
+  // about "Stripe (Managed)" we wire it later.
+
+  // Shopify — every shop has its own *.myshopify.com subdomain.
+  // /admin/api/2024-01/shop.json works but the URL needs the shop slug,
+  // which is on the Composio connection metadata, not on a generic /me.
+  // Composio proxy's `endpoint` is an absolute URL — we'd need a
+  // per-connection URL builder. Skip until we have multi-shop demand.
+
+  // Mailchimp — same shape as Shopify. Every workspace has its own
+  // datacenter prefix (us1, us2, …) in the base URL. Skip until needed.
 };
 
 async function tryProxyWhoami(
@@ -10634,7 +10742,11 @@ async function tryProxyWhoami(
   const normalized = providerId.toLowerCase();
   const config = PROVIDER_PROXY_WHOAMI[normalized];
   if (!config) {
-    console.warn(
+    // Expected for any toolkit outside the curated Hero pool — the UI
+    // falls back to the persisted account_label ("Notion (Managed)"
+    // etc.). Drop to debug so this stops looking like a real warning
+    // every time the enrichment hook fires for a long-tail toolkit.
+    console.debug(
       `[integrations] no proxy whoami config for provider=${normalized}; skipping fallback`,
     );
     return {};
