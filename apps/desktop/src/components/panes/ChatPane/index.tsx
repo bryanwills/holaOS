@@ -2364,6 +2364,29 @@ function proposedIntegrationsFromToolResult(
       if (raw) return [raw];
     }
   }
+  // Capability client only sets `details.raw` when the payload was
+  // compacted; for small payloads the original JSON lives inside
+  // `content[0].text` instead. Walk every text part.
+  if (Array.isArray(result.content)) {
+    for (const part of result.content) {
+      if (
+        isRecord(part) &&
+        part.type === "text" &&
+        typeof part.text === "string" &&
+        part.text.includes("proposed_integration")
+      ) {
+        try {
+          const parsed = JSON.parse(part.text) as unknown;
+          if (isRecord(parsed)) {
+            const fromText = parseProposedIntegration(parsed.proposed_integration);
+            if (fromText) return [fromText];
+          }
+        } catch {
+          /* text wasn't JSON; ignore */
+        }
+      }
+    }
+  }
   return [];
 }
 
