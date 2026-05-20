@@ -80,12 +80,10 @@ const RAW_ENTRIES: StoreCatalogEntry[] = [
   { slug: "vercel", tier: "supported", category: "ci_cloud" },
   { slug: "cloudflare", tier: "supported", category: "ci_cloud" },
   { slug: "fly", tier: "supported", category: "ci_cloud" },
-  { slug: "netlify", tier: "supported", category: "ci_cloud" },
   { slug: "render", tier: "supported", category: "ci_cloud" },
   { slug: "discord", tier: "supported", category: "comm" },
   { slug: "microsoft_teams", tier: "supported", category: "comm" },
   { slug: "zoom", tier: "supported", category: "comm" },
-  { slug: "telegram", tier: "supported", category: "comm" },
   { slug: "intercom", tier: "supported", category: "comm" },
   { slug: "supabase", tier: "supported", category: "db" },
   { slug: "airtable", tier: "supported", category: "db" },
@@ -93,22 +91,15 @@ const RAW_ENTRIES: StoreCatalogEntry[] = [
   { slug: "sentry", tier: "supported", category: "observability" },
   { slug: "datadog", tier: "supported", category: "observability" },
   { slug: "pagerduty", tier: "supported", category: "observability" },
-  { slug: "opsgenie", tier: "supported", category: "observability" },
-  { slug: "huggingface", tier: "supported", category: "ai_data" },
+  { slug: "hugging_face", tier: "supported", category: "ai_data" },
   { slug: "pinecone", tier: "supported", category: "ai_data" },
 
   // ───── Supported: marketing ────────────────────────────────────
-  { slug: "instagram", tier: "supported", category: "social" },
-  { slug: "tiktok", tier: "supported", category: "social" },
   { slug: "youtube", tier: "supported", category: "social" },
-  { slug: "pinterest", tier: "supported", category: "social" },
-  { slug: "threads", tier: "supported", category: "social" },
-  { slug: "bluesky", tier: "supported", category: "social" },
   { slug: "facebook", tier: "supported", category: "social" },
 
-  { slug: "resend", tier: "supported", category: "email" },
   { slug: "klaviyo", tier: "supported", category: "email" },
-  { slug: "convertkit", tier: "supported", category: "email" },
+  { slug: "kit", tier: "supported", category: "email" },
   { slug: "sendgrid", tier: "supported", category: "email" },
   { slug: "outlook", tier: "supported", category: "email" },
 
@@ -116,7 +107,6 @@ const RAW_ENTRIES: StoreCatalogEntry[] = [
   { slug: "mixpanel", tier: "supported", category: "analytics" },
   { slug: "amplitude", tier: "supported", category: "analytics" },
   { slug: "posthog", tier: "supported", category: "analytics" },
-  { slug: "segment", tier: "supported", category: "analytics" },
 
   { slug: "salesforce", tier: "supported", category: "crm" },
   { slug: "pipedrive", tier: "supported", category: "crm" },
@@ -125,37 +115,27 @@ const RAW_ENTRIES: StoreCatalogEntry[] = [
   { slug: "freshdesk", tier: "supported", category: "crm" },
   { slug: "zoho", tier: "supported", category: "crm" },
 
-  { slug: "google_ads", tier: "supported", category: "ads" },
-  { slug: "meta_ads", tier: "supported", category: "ads" },
+  { slug: "googleads", tier: "supported", category: "ads" },
+  { slug: "metaads", tier: "supported", category: "ads" },
   { slug: "linkedin_ads", tier: "supported", category: "ads" },
 
   { slug: "ahrefs", tier: "supported", category: "seo" },
   { slug: "semrush", tier: "supported", category: "seo" },
 
   { slug: "webflow", tier: "supported", category: "cms" },
-  { slug: "ghost", tier: "supported", category: "cms" },
   { slug: "contentful", tier: "supported", category: "cms" },
-  { slug: "sanity", tier: "supported", category: "cms" },
-  { slug: "wordpress", tier: "supported", category: "cms" },
-  { slug: "framer", tier: "supported", category: "cms" },
 
   { slug: "canva", tier: "supported", category: "design" },
 
-  { slug: "typeform", tier: "supported", category: "forms" },
   { slug: "tally", tier: "supported", category: "forms" },
   { slug: "googleforms", tier: "supported", category: "forms" },
 
   { slug: "calendly", tier: "supported", category: "calendar" },
-  { slug: "cal_com", tier: "supported", category: "calendar" },
-
-  { slug: "loom", tier: "supported", category: "video" },
-  { slug: "vimeo", tier: "supported", category: "video" },
+  { slug: "cal", tier: "supported", category: "calendar" },
 
   { slug: "googletasks", tier: "supported", category: "productivity" },
-  { slug: "evernote", tier: "supported", category: "productivity" },
-  { slug: "obsidian", tier: "supported", category: "productivity" },
   { slug: "dropbox", tier: "supported", category: "productivity" },
-  { slug: "onedrive", tier: "supported", category: "productivity" },
+  { slug: "one_drive", tier: "supported", category: "productivity" },
   { slug: "box", tier: "supported", category: "productivity" },
 ];
 
