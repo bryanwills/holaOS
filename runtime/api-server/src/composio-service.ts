@@ -52,6 +52,17 @@ export class ComposioToolExecutionError extends Error {
   }
 }
 
+export interface ComposioToolDescriptor {
+  slug: string;
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  scopes: string[];
+  tags: string[];
+  read_only: boolean;
+  deprecated: boolean;
+}
+
 export interface ComposioConnectionSummary {
   id: string;
   status: string;
@@ -200,5 +211,52 @@ export class ComposioService {
       userId: entry.userId ?? "",
       createdAt: entry.createdAt ?? "",
     }));
+  }
+
+  /**
+   * Fetch a toolkit's full tool catalog from Composio (cached 24h on the
+   * Hono side). Used when we haven't hand-written entries for a toolkit
+   * in TOOLKIT_CATALOG — the runtime falls back to this and applies a
+   * verb-pattern heuristic to pick a top-N subset to expose to the agent.
+   */
+  async listToolkitTools(toolkitSlug: string): Promise<ComposioToolDescriptor[]> {
+    const response = await this.fetchImpl(
+      `${this.honoBaseUrl}/api/composio/tools?toolkit_slug=${encodeURIComponent(toolkitSlug)}`,
+      {
+        method: "GET",
+        headers: {
+          Cookie: this.authCookie,
+          Accept: "application/json",
+        },
+      },
+    );
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Composio listToolkitTools via Hono failed: ${response.status} ${text.slice(0, 300)}`);
+    }
+    const payload = (await response.json()) as {
+      tools?: Array<{
+        slug?: string;
+        name?: string;
+        description?: string;
+        input_parameters?: Record<string, unknown>;
+        scopes?: string[];
+        tags?: string[];
+        is_deprecated?: boolean;
+      }>;
+    };
+    return (payload.tools ?? []).map((tool) => {
+      const tags = Array.isArray(tool.tags) ? tool.tags.filter((t): t is string => typeof t === "string") : [];
+      return {
+        slug: tool.slug ?? "",
+        name: tool.name ?? tool.slug ?? "",
+        description: tool.description ?? "",
+        input_schema: (tool.input_parameters ?? { type: "object", properties: {} }) as Record<string, unknown>,
+        scopes: Array.isArray(tool.scopes) ? tool.scopes.filter((s): s is string => typeof s === "string") : [],
+        tags,
+        read_only: tags.includes("readOnlyHint"),
+        deprecated: Boolean(tool.is_deprecated),
+      };
+    }).filter((tool) => tool.slug.length > 0 && !tool.deprecated);
   }
 }

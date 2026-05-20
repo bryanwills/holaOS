@@ -8,8 +8,7 @@ import type {
 
 import {
   bootstrapComposioMcpForWorkspace,
-  buildToolkitCatalog,
-  listSupportedToolkitSlugs,
+  buildToolkitCatalogAsync,
   type BootstrapComposioMcpResult,
 } from "./composio-tool-registry.js";
 import {
@@ -97,20 +96,24 @@ export class ComposioMcpManager {
       return { status: "skipped", reason: "list_connections_failed" };
     }
 
-    const supportedSlugs = new Set(listSupportedToolkitSlugs());
-    const activeSupported = connections.filter(
-      (conn) => conn.status === "ACTIVE" && supportedSlugs.has(conn.toolkitSlug),
-    );
-    if (activeSupported.length === 0) {
-      return { status: "skipped", reason: "no_supported_active_connection" };
+    const active = connections.filter((conn) => conn.status === "ACTIVE");
+    if (active.length === 0) {
+      return { status: "skipped", reason: "no_active_connection" };
     }
 
     const overrides = this.readOverrides(workspaceId);
-    const selected = applyOverrides(activeSupported, overrides);
+    const selected = applyOverrides(active, overrides);
     if (selected.length === 0) {
       return { status: "skipped", reason: "all_toolkits_disabled_in_workspace" };
     }
-    const catalog = selected.flatMap((conn) => buildToolkitCatalog(conn.toolkitSlug, conn.id));
+    const fetchTools = (slug: string) => this.composio.listToolkitTools(slug);
+    const catalogPerConn = await Promise.all(
+      selected.map((conn) => buildToolkitCatalogAsync(conn.toolkitSlug, conn.id, fetchTools)),
+    );
+    const catalog = catalogPerConn.flat();
+    if (catalog.length === 0) {
+      return { status: "skipped", reason: "no_tools_resolved" };
+    }
     const pick = selected[0]!;
 
     let result: BootstrapComposioMcpResult;

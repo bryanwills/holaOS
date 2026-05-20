@@ -229,8 +229,7 @@ export function WorkspaceIntegrationsPane({ workspaceId }: WorkspaceIntegrations
   }
 
   const integrations = data?.integrations ?? [];
-  const supported = integrations.filter((i) => i.supported);
-  const unsupported = integrations.filter((i) => !i.supported);
+  const usable = integrations.filter((i) => i.supported);
 
   return (
     <div className="grid gap-4">
@@ -242,7 +241,7 @@ export function WorkspaceIntegrationsPane({ workspaceId }: WorkspaceIntegrations
         </div>
       ) : null}
 
-      {supported.length === 0 ? (
+      {usable.length === 0 ? (
         <div className="flex items-start gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm">
           <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
           <div>
@@ -257,7 +256,7 @@ export function WorkspaceIntegrationsPane({ workspaceId }: WorkspaceIntegrations
         </div>
       ) : (
         <div className="grid gap-3">
-          {supported.map((integration) => {
+          {usable.map((integration) => {
             const toolkitInfo = toolkitsBySlug.get(integration.toolkit_slug);
             const logo =
               toolkitInfo?.logo ??
@@ -301,8 +300,18 @@ export function WorkspaceIntegrationsPane({ workspaceId }: WorkspaceIntegrations
                   <div className="flex min-w-0 items-center gap-3">
                     <ToolkitLogo logo={logo} name={displayName} />
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-foreground">
-                        {displayName}
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-sm font-medium text-foreground">
+                          {displayName}
+                        </span>
+                        {integration.tier === "auto" ? (
+                          <span
+                            className="shrink-0 rounded-full bg-muted px-1.5 py-px text-[9px] font-medium uppercase tracking-wide text-muted-foreground"
+                            title="Tool set auto-discovered from Composio. Coverage may vary until curated."
+                          >
+                            Auto
+                          </span>
+                        ) : null}
                       </div>
                       <div className="mt-0.5 truncate text-xs text-muted-foreground">
                         {describeState(integration, dedupeEntries, accountMetadata)}
@@ -391,22 +400,6 @@ export function WorkspaceIntegrationsPane({ workspaceId }: WorkspaceIntegrations
         </div>
       )}
 
-      {unsupported.length > 0 ? (
-        <div className="mt-2 rounded-md bg-muted/50 px-3 py-2 text-[11px] leading-5 text-muted-foreground">
-          <span className="font-medium text-foreground/80">
-            Coming soon to the agent:
-          </span>{" "}
-          {unsupported
-            .map(
-              (i) =>
-                toolkitsBySlug.get(i.toolkit_slug)?.name ||
-                i.toolkit_name ||
-                i.toolkit_slug,
-            )
-            .join(", ")}
-          .
-        </div>
-      ) : null}
     </div>
   );
 }

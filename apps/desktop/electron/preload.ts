@@ -1018,6 +1018,7 @@ interface WorkspaceIntegrationPayload {
   toolkit_name: string;
   toolkit_logo: string | null;
   supported: boolean;
+  tier: "hero" | "auto";
   effective_state: "auto" | "disabled" | "pinned";
   effective_connection_id: string | null;
   pinned_connection_id: string | null;

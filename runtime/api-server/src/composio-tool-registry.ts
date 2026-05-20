@@ -174,8 +174,111 @@ const TOOLKIT_CATALOG: Record<string, { tools: ToolkitToolDefinition[] }> = {
   },
 };
 
+/** Hero toolkits — manually curated entries get priority. */
+export function listHeroToolkitSlugs(): string[] {
+  return Object.keys(TOOLKIT_CATALOG);
+}
+
+/** @deprecated — use hasHeroEntry / listHeroToolkitSlugs. Kept so the old
+ *  manager / mcp call sites that filtered to hero-only keep working. */
 export function listSupportedToolkitSlugs(): string[] {
   return Object.keys(TOOLKIT_CATALOG);
+}
+
+export function hasHeroEntry(toolkitSlug: string): boolean {
+  return Boolean(TOOLKIT_CATALOG[toolkitSlug]);
+}
+
+// Pick top-N tools from a Composio toolkit when we don't have a Hero entry.
+// Prefer verbs that read/list state (safer for agents); deprioritize raw
+// "create/update" verbs unless nothing else is available.
+//
+// Pattern order = ranking priority.
+const HEURISTIC_VERB_PATTERNS: RegExp[] = [
+  /_FETCH_/i,
+  /_LIST_/i,
+  /_GET_/i,
+  /_SEARCH_/i,
+  /_READ_/i,
+  /_RETRIEVE_/i,
+  /_PROFILE/i,
+  /_CREATE_/i,
+  /_UPDATE_/i,
+];
+
+const DEFAULT_HEURISTIC_TOP_N = 6;
+
+function rankTool(slug: string): number {
+  for (let i = 0; i < HEURISTIC_VERB_PATTERNS.length; i += 1) {
+    if (HEURISTIC_VERB_PATTERNS[i]!.test(slug)) return i;
+  }
+  return HEURISTIC_VERB_PATTERNS.length;
+}
+
+export function toolkitNameFromSlug(slug: string): string {
+  if (!slug) return "";
+  return slug
+    .split(/[_-]/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+/**
+ * Build the MCP tool entries for `toolkitSlug` × `connectedAccountId`.
+ * Falls back to a Composio-tool-catalog-driven heuristic when we don't
+ * have a Hero entry, so every active connection has _something_ usable
+ * by the agent. Caller must provide a tool fetcher (closure over
+ * ComposioService) when dynamic discovery is needed.
+ */
+export async function buildToolkitCatalogAsync(
+  toolkitSlug: string,
+  connectedAccountId: string,
+  fetchTools: (toolkitSlug: string) => Promise<
+    Array<{
+      slug: string;
+      name: string;
+      description: string;
+      input_schema: Record<string, unknown>;
+      read_only: boolean;
+    }>
+  >,
+  options: { topN?: number } = {},
+): Promise<ComposioMcpToolEntry[]> {
+  const hero = TOOLKIT_CATALOG[toolkitSlug];
+  if (hero) {
+    return hero.tools.map((tool) => ({
+      ...tool,
+      toolkit_slug: toolkitSlug,
+      connected_account_id: connectedAccountId,
+    }));
+  }
+  let upstream: Awaited<ReturnType<typeof fetchTools>>;
+  try {
+    upstream = await fetchTools(toolkitSlug);
+  } catch {
+    return [];
+  }
+  const topN = options.topN ?? DEFAULT_HEURISTIC_TOP_N;
+  const ranked = upstream
+    .slice()
+    .sort((a, b) => {
+      const ra = rankTool(a.slug);
+      const rb = rankTool(b.slug);
+      if (ra !== rb) return ra - rb;
+      return a.slug.localeCompare(b.slug);
+    })
+    .slice(0, topN);
+
+  return ranked.map((tool) => ({
+    name: `${toolkitSlug}_${tool.slug.replace(new RegExp(`^${toolkitSlug.toUpperCase()}_`), "").toLowerCase()}`,
+    description: tool.description,
+    toolkit_slug: toolkitSlug,
+    tool_slug: tool.slug,
+    connected_account_id: connectedAccountId,
+    input_schema: tool.input_schema,
+    annotations: tool.read_only ? { readOnlyHint: true } : undefined,
+  }));
 }
 
 export interface ToolkitCapabilityEntry {
@@ -185,12 +288,6 @@ export interface ToolkitCapabilityEntry {
   read_only: boolean;
 }
 
-/**
- * Public summary of the per-toolkit tool catalog, for surfacing in the
- * IntegrationsPane "what can the agent do with this?" accordion.
- * Returns an empty array for toolkits not in TOOLKIT_CATALOG so the UI
- * can still render the row in a degraded "not yet supported" state.
- */
 export function listToolkitCapabilities(toolkitSlug: string): ToolkitCapabilityEntry[] {
   const entry = TOOLKIT_CATALOG[toolkitSlug];
   if (!entry) return [];

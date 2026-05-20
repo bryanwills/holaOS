@@ -4,7 +4,7 @@ import type {
   WorkspaceIntegrationOverrideState,
 } from "@holaboss/runtime-state-store";
 
-import { listSupportedToolkitSlugs } from "./composio-tool-registry.js";
+import { hasHeroEntry } from "./composio-tool-registry.js";
 import type { ComposioConnectionSummary, ComposioService } from "./composio-service.js";
 
 export type WorkspaceIntegrationEffectiveState =
@@ -23,7 +23,10 @@ export interface WorkspaceIntegrationView {
   toolkit_slug: string;
   toolkit_name: string;
   toolkit_logo: string | null;
+  /** True if the agent can use this toolkit (always true for ACTIVE connections; reserved for future "agent-incompatible" flags). */
   supported: boolean;
+  /** "hero" = hand-curated tool set; "auto" = discovered from Composio. */
+  tier: "hero" | "auto";
   effective_state: WorkspaceIntegrationEffectiveState;
   effective_connection_id: string | null;
   pinned_connection_id: string | null;
@@ -57,8 +60,6 @@ export class WorkspaceIntegrationsService {
         connections = [];
       }
     }
-    const supportedSlugs = new Set(listSupportedToolkitSlugs());
-
     const grouped = new Map<string, ComposioConnectionSummary[]>();
     for (const conn of connections) {
       if (conn.status !== "ACTIVE") continue;
@@ -78,7 +79,8 @@ export class WorkspaceIntegrationsService {
     for (const slug of toolkitSlugs) {
       const conns = grouped.get(slug) ?? [];
       const override = overrideByToolkit.get(slug) ?? null;
-      const supported = supportedSlugs.has(slug);
+      const tier = hasHeroEntry(slug) ? "hero" : "auto";
+      const supported = conns.length > 0;
       const sample = conns[0] ?? null;
 
       let effectiveState: WorkspaceIntegrationEffectiveState = "auto";
@@ -100,6 +102,7 @@ export class WorkspaceIntegrationsService {
         toolkit_name: sample?.toolkitName || slug,
         toolkit_logo: sample?.toolkitLogo ?? null,
         supported,
+        tier,
         effective_state: effectiveState,
         effective_connection_id: effectiveConnectionId,
         pinned_connection_id: override?.pinnedConnectionId ?? null,
@@ -113,7 +116,7 @@ export class WorkspaceIntegrationsService {
     }
 
     views.sort((a, b) => {
-      if (a.supported !== b.supported) return a.supported ? -1 : 1;
+      if (a.tier !== b.tier) return a.tier === "hero" ? -1 : 1;
       return a.toolkit_slug.localeCompare(b.toolkit_slug);
     });
 

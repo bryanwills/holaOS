@@ -93,11 +93,23 @@ test("ensureRunning bootstraps a host for the first ACTIVE Hero toolkit and writ
       assert.equal(result.status, "started");
       assert.equal(result.toolkit_slug, "gmail");
       assert.equal(result.connected_account_id, "ca_gmail_active");
-      assert.deepEqual(result.tool_names, ["gmail_get_profile"]);
+      assert.ok(
+        (result.tool_names ?? []).includes("gmail_get_profile"),
+        "hero gmail tool should be present",
+      );
       assert.match(result.url ?? "", /^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
 
-      assert.equal(calls.length, 1);
-      assert.equal(calls[0]?.url, "https://app.holaboss.test/api/composio/connections");
+      // 1 for /connections + 1 for /tools?toolkit_slug=slack (slack is
+      // auto-discovered, gmail uses its hero entry and skips the fetch).
+      const urls = calls.map((c) => c.url);
+      assert.ok(
+        urls.includes("https://app.holaboss.test/api/composio/connections"),
+        "connections endpoint should be hit",
+      );
+      assert.ok(
+        urls.some((u) => u.includes("/api/composio/tools?toolkit_slug=slack")),
+        "tools endpoint should be hit for non-hero toolkit",
+      );
 
       const running = manager.inspectRunning();
       assert.equal(running.length, 1);
@@ -153,7 +165,7 @@ test("ensureRunning returns 'reused' on the second call and does not boot a seco
   }
 });
 
-test("ensureRunning short-circuits with skipped: no_supported_active_connection when user has no Hero connections", async () => {
+test("ensureRunning short-circuits with skipped: no_active_connection when only EXPIRED accounts exist", async () => {
   const root = createTempRoot();
   try {
     makeWorkspace(root, "ws1");
@@ -161,7 +173,6 @@ test("ensureRunning short-circuits with skipped: no_supported_active_connection 
       connections: () =>
         jsonResponse({
           connections: [
-            { id: "ca_x", status: "ACTIVE", toolkitSlug: "obscure_toolkit", userId: "u1" },
             { id: "ca_y", status: "EXPIRED", toolkitSlug: "gmail", userId: "u1" },
           ],
         }),
@@ -178,8 +189,58 @@ test("ensureRunning short-circuits with skipped: no_supported_active_connection 
     });
     const result = await manager.ensureRunning("ws1");
     assert.equal(result.status, "skipped");
-    assert.equal(result.reason, "no_supported_active_connection");
+    assert.equal(result.reason, "no_active_connection");
     assert.equal(manager.inspectRunning().length, 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("ensureRunning falls back to dynamic Composio tool discovery for non-Hero toolkits", async () => {
+  const root = createTempRoot();
+  try {
+    makeWorkspace(root, "ws1");
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = typeof input === "string" ? input : (input as URL | Request).toString();
+      if (url.endsWith("/api/composio/connections")) {
+        return jsonResponse({
+          connections: [
+            { id: "ca_asana", status: "ACTIVE", toolkitSlug: "asana", userId: "u1" },
+          ],
+        });
+      }
+      if (url.includes("/api/composio/tools?toolkit_slug=asana")) {
+        return jsonResponse({
+          tools: [
+            { slug: "ASANA_LIST_TASKS", name: "List tasks", description: "List Asana tasks.", input_parameters: { type: "object", properties: {} }, tags: ["readOnlyHint"], is_deprecated: false },
+            { slug: "ASANA_GET_USER", name: "Get user", description: "Get the auth'd user.", input_parameters: { type: "object", properties: {} }, tags: ["readOnlyHint"], is_deprecated: false },
+            { slug: "ASANA_CREATE_TASK", name: "Create task", description: "Create a task.", input_parameters: { type: "object", properties: {} }, tags: [], is_deprecated: false },
+          ],
+        });
+      }
+      return new Response("not mocked", { status: 599 });
+    };
+    const composio = new ComposioService({
+      honoBaseUrl: "https://app.holaboss.test",
+      authCookie: "hb_session=abc",
+      fetchImpl,
+    });
+    const manager = new ComposioMcpManager({
+      composio,
+      workspaceRoot: root,
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+    });
+    try {
+      const result = await manager.ensureRunning("ws1");
+      assert.equal(result.status, "started");
+      assert.equal(result.toolkit_slug, "asana");
+      assert.ok(
+        (result.tool_names ?? []).length > 0,
+        "auto-discovered tool names should be present",
+      );
+    } finally {
+      await manager.stopAll();
+    }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
