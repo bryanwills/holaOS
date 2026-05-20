@@ -2,6 +2,7 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { Loader2, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 export interface AddIntegrationDialogIntegration {
@@ -86,13 +87,13 @@ export function AddIntegrationDialog({
             style={{ willChange: "transform" }}
           >
             <header className="flex shrink-0 items-center gap-2 border-border border-b px-4 py-3">
-              <Search className="size-3.5 text-muted-foreground" />
-              <input
+              <Search className="size-3.5 shrink-0 text-muted-foreground" />
+              <Input
                 autoFocus
-                className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                className="h-7 flex-1 border-0 bg-transparent px-0 text-sm shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search integrations…"
-                type="search"
+                type="text"
                 value={query}
               />
               <DialogPrimitive.Close
