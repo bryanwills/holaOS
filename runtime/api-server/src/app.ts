@@ -93,6 +93,7 @@ import {
   RuntimeConfigServiceError,
   type RuntimeConfigServiceLike
 } from "./runtime-config.js";
+import { ensureCodexTokensFresh } from "./codex-token-refresh.js";
 import {
   DesktopBrowserToolService,
   DesktopBrowserToolServiceError,
@@ -5043,7 +5044,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       });
       return await maybeShapeCapabilityToolResult({
         headers: request.headers as Record<string, unknown>,
-        toolId: "holaboss_scratchpad_read",
+        toolId: "scratchpad_read",
         payload: result,
         workspaceId,
         sessionId,
@@ -5108,7 +5109,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       });
       return await maybeShapeCapabilityToolResult({
         headers: request.headers as Record<string, unknown>,
-        toolId: "holaboss_update_workspace_instructions",
+        toolId: "update_workspace_instructions",
         payload: result,
         workspaceId,
         sessionId,
@@ -6045,6 +6046,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!isRecord(request.body)) {
       return sendError(reply, 400, "request body must be an object");
     }
+    await ensureCodexTokensFresh().catch(() => undefined);
     try {
       return await runnerExecutor.run(requiredDict(request.body, "body"));
     } catch (error) {
@@ -6059,6 +6061,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!isRecord(request.body)) {
       return sendError(reply, 400, "request body must be an object");
     }
+    await ensureCodexTokensFresh().catch(() => undefined);
     try {
       const stream = await runnerExecutor.stream(requiredDict(request.body, "body"));
       reply.header("Cache-Control", "no-cache");
@@ -7057,13 +7060,66 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       const appId = typeof entry.app_id === "string" ? entry.app_id : "";
       const build = appId ? store.getAppBuild({ workspaceId, appId }) : null;
       const status = appId ? resolvedAppBuildStatus({ store, workspaceId, appId, entry }) : "unknown";
+      // Pull the display name straight from yaml so the desktop's app
+      // catalog doesn't have to maintain a per-app hardcoded table.
+      let displayName: string | null = null;
+      const configPath = typeof entry.config_path === "string" ? entry.config_path : "";
+      if (appId && configPath) {
+        try {
+          const manifestPath = path.join(workspaceDir, configPath);
+          if (fs.existsSync(manifestPath)) {
+            const yamlDoc = yaml.load(fs.readFileSync(manifestPath, "utf8"));
+            if (isRecord(yamlDoc) && typeof yamlDoc.name === "string") {
+              const trimmed = yamlDoc.name.trim();
+              if (trimmed) displayName = trimmed;
+            }
+          }
+        } catch {
+          displayName = null;
+        }
+      }
+      // Parse the app's yaml so the desktop can render a per-app Connect /
+      // Bind control without having to hardcode an appId→provider map.
+      // Failures (yaml unreadable, port allocation issue) leave
+      // `integrations` empty rather than poisoning the list response.
+      let integrations: Array<{
+        key: string;
+        provider: string;
+        capability: string | null;
+        required: boolean;
+        whoami?: unknown;
+      }> = [];
+      if (appId) {
+        try {
+          const resolved = resolveWorkspaceAppRuntime(workspaceDir, appId, {
+            store,
+            workspaceId,
+            allocatePorts: false,
+          });
+          integrations =
+            resolved.resolvedApp.integrations?.map((integration) => ({
+              key: integration.key,
+              provider: integration.provider,
+              capability: integration.capability,
+              required: integration.required,
+              // Forward whoami so the App Surface's Connect button can pass
+              // it to Hono `/composio/connect` the same way the chat
+              // Connect card does (Stage 4 whoami passthrough).
+              ...(integration.whoami ? { whoami: integration.whoami } : {}),
+            })) ?? [];
+        } catch {
+          integrations = [];
+        }
+      }
       return {
         app_id: appId,
+        name: displayName,
         config_path: typeof entry.config_path === "string" ? entry.config_path : "",
         lifecycle: isRecord(entry.lifecycle) ? entry.lifecycle : null,
         build_status: status,
         ready: status === "running",
-        error: build?.status === "failed" ? (build.error ?? "unknown error") : null
+        error: build?.status === "failed" ? (build.error ?? "unknown error") : null,
+        integrations
       };
     });
     return {
@@ -7556,6 +7612,18 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
     const workspaceDir = store.workspaceDir(workspaceId);
 
+    // Snapshot the app's currently-allocated ports BEFORE we touch any state,
+    // so we can force-kill any orphan process holding them as a safety net —
+    // matches the workspace-delete path. Without this, a silently-failed
+    // stopApp leaves a zombie process bound to the port, the state row gets
+    // released, and the next install can hand the port to a different app
+    // (state says appA@P, OS says appB@P) — exactly the misalignment that
+    // makes the desktop iframe render the wrong app's UI.
+    const allocatedPorts: number[] = [
+      store.getAppPort({ workspaceId, appId: `${appId}__http` })?.port,
+      store.getAppPort({ workspaceId, appId: `${appId}__mcp` })?.port
+    ].filter((p): p is number => typeof p === "number" && p > 0);
+
     try {
       const resolvedApp = resolveWorkspaceAppRuntime(workspaceDir, appId, {
         store,
@@ -7576,6 +7644,18 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     removeWorkspaceMcpRegistryEntry(workspaceDir, appId);
     releaseWorkspaceAppPorts({ store, workspaceId, appId });
     store.deleteAppBuild({ workspaceId, appId });
+
+    if (allocatedPorts.length > 0) {
+      try {
+        await killPortListeners(allocatedPorts);
+      } catch {
+        app.log.debug(
+          { workspaceId, appId, ports: allocatedPorts },
+          "best-effort port kill during app uninstall"
+        );
+      }
+    }
+
     return {
       app_id: appId,
       status: "uninstalled",

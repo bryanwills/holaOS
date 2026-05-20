@@ -100,14 +100,6 @@ const WORKSPACE_MCP_READY_TIMEOUT_S = 10;
 const RECALL_SCOPE_ENTRY_LIMIT = 200;
 const MAIN_SESSION_DEFAULT_TOOLS = [
   "read",
-  "grep",
-  "glob",
-  "list",
-  "question",
-  "skill",
-];
-const SUBAGENT_DEFAULT_TOOLS = [
-  "read",
   "edit",
   "bash",
   "grep",
@@ -118,30 +110,39 @@ const SUBAGENT_DEFAULT_TOOLS = [
   "todoread",
   "skill",
 ];
+const ONBOARDING_DEFAULT_TOOLS = [
+  "read",
+  "grep",
+  "glob",
+  "list",
+  "question",
+  "skill",
+];
+const SUBAGENT_DEFAULT_TOOLS = [...MAIN_SESSION_DEFAULT_TOOLS];
 const SUBAGENT_ORCHESTRATION_RUNTIME_TOOL_IDS = new Set([
-  "holaboss_delegate_task",
-  "holaboss_get_subagent",
-  "holaboss_list_background_tasks",
-  "holaboss_cancel_subagent",
-  "holaboss_resume_subagent",
-  "holaboss_continue_subagent",
+  "delegate_task",
+  "get_subagent",
+  "list_background_tasks",
+  "cancel_subagent",
+  "resume_subagent",
+  "continue_subagent",
 ]);
 const MAIN_SESSION_ONLY_RUNTIME_TOOL_IDS = new Set([
-  "holaboss_update_workspace_instructions",
+  "update_workspace_instructions",
 ]);
 const MAIN_SESSION_RUNTIME_TOOL_IDS = new Set([
-  "holaboss_delegate_task",
-  "holaboss_get_subagent",
-  "holaboss_list_background_tasks",
-  "holaboss_cancel_subagent",
-  "holaboss_resume_subagent",
-  "holaboss_continue_subagent",
-  "holaboss_update_workspace_instructions",
-  "holaboss_cronjobs_list",
-  "holaboss_cronjobs_create",
-  "holaboss_cronjobs_get",
-  "holaboss_cronjobs_update",
-  "holaboss_cronjobs_delete",
+  "delegate_task",
+  "get_subagent",
+  "list_background_tasks",
+  "cancel_subagent",
+  "resume_subagent",
+  "continue_subagent",
+  "update_workspace_instructions",
+  "cronjobs_list",
+  "cronjobs_create",
+  "cronjobs_get",
+  "cronjobs_update",
+  "cronjobs_delete",
 ]);
 const ONBOARDING_SESSION_RUNTIME_TOOL_IDS = new Set([
   ...Array.from(MAIN_SESSION_RUNTIME_TOOL_IDS).filter(
@@ -149,8 +150,8 @@ const ONBOARDING_SESSION_RUNTIME_TOOL_IDS = new Set([
       !SUBAGENT_ORCHESTRATION_RUNTIME_TOOL_IDS.has(toolId) &&
       !MAIN_SESSION_ONLY_RUNTIME_TOOL_IDS.has(toolId),
   ),
-  "holaboss_onboarding_status",
-  "holaboss_onboarding_complete",
+  "onboarding_status",
+  "onboarding_complete",
 ]);
 const BROWSER_RETRY_REQUEST_PATTERN = /\b(?:try again|retry|do it again|again)\b/i;
 const BROWSER_ACTION_REQUEST_PATTERN =
@@ -786,7 +787,7 @@ function loadRecentRuntimeContext(params: {
   if (!isFrontSessionKind(params.sessionKind)) {
     return null;
   }
-  if (!params.runtimeToolIds.includes("holaboss_delegate_task")) {
+  if (!params.runtimeToolIds.includes("delegate_task")) {
     return null;
   }
 
@@ -804,7 +805,7 @@ function loadRecentRuntimeContext(params: {
       lines: [
         "The user is asking for a report-style deliverable. Keep chat as the coordination surface, not the deliverable surface.",
         "Do not paste a long report, memo, brief, recap, or document body into the conversation.",
-        "Use `holaboss_delegate_task` to produce the report artifact, then keep the main-session reply to a brief acknowledgement or short handoff.",
+        "Use `delegate_task` to produce the report artifact, then keep the main-session reply to a brief acknowledgement or short handoff.",
         "Only provide the full content inline if the user explicitly asks for it in chat and it will remain short.",
       ],
     };
@@ -863,8 +864,8 @@ function loadRecentRuntimeContext(params: {
   }
 
   const lines = [
-    "This main-session run is a coordinator pass for browser work, not the place to repeat a browser-control limitation.",
-    "If the user's request is to operate the current browser/tab/page and direct browser tools are unavailable here, route it through `holaboss_delegate_task` instead of answering with a manual browser workaround.",
+    "This main-session run does not currently have direct browser tools. Do not repeat a browser-control limitation as if it were the final answer.",
+    "If the user's request is to operate the current browser/tab/page and direct browser tools are unavailable here, route it through `delegate_task` instead of answering with a manual browser workaround.",
     "Only surface a browser limitation if delegated subagents also cannot perform the requested browser action.",
   ];
   if (staleBrowserRefusal) {
@@ -1030,12 +1031,12 @@ function isDelegatingFrontSessionKind(value: string | null | undefined): boolean
   return normalized === "main_session";
 }
 
-function allowedRuntimeToolIdsForFrontSession(
+function defaultToolsForSessionKind(
   sessionKind: string | null | undefined,
-): Set<string> {
+): string[] {
   return normalizedSessionKindValue(sessionKind) === "onboarding"
-    ? ONBOARDING_SESSION_RUNTIME_TOOL_IDS
-    : MAIN_SESSION_RUNTIME_TOOL_IDS;
+    ? [...ONBOARDING_DEFAULT_TOOLS]
+    : [...MAIN_SESSION_DEFAULT_TOOLS];
 }
 
 function projectBrowserToolIdsForSession(params: {
@@ -1043,7 +1044,7 @@ function projectBrowserToolIdsForSession(params: {
   browserToolIds: string[];
 }): string[] {
   const normalized = normalizedSessionKindValue(params.sessionKind);
-  if (normalized === "subagent") {
+  if (normalized === "main_session" || normalized === "subagent") {
     return [...params.browserToolIds];
   }
   return [];
@@ -1053,9 +1054,13 @@ function projectRuntimeToolIdsForSession(params: {
   sessionKind: string | null | undefined;
   runtimeToolIds: string[];
 }): string[] {
-  if (isFrontSessionKind(params.sessionKind)) {
-    const allowed = allowedRuntimeToolIdsForFrontSession(params.sessionKind);
+  const normalized = normalizedSessionKindValue(params.sessionKind);
+  if (normalized === "onboarding") {
+    const allowed = ONBOARDING_SESSION_RUNTIME_TOOL_IDS;
     return params.runtimeToolIds.filter((toolId) => allowed.has(toolId));
+  }
+  if (normalized === "main_session") {
+    return [...params.runtimeToolIds];
   }
   return params.runtimeToolIds.filter(
     (toolId) =>
@@ -1069,9 +1074,15 @@ function projectExtraToolIdsForSession(params: {
   sessionKind: string | null | undefined;
   extraToolIds: string[];
 }): string[] {
-  if (isFrontSessionKind(params.sessionKind)) {
-    const allowed = allowedRuntimeToolIdsForFrontSession(params.sessionKind);
+  const normalized = normalizedSessionKindValue(params.sessionKind);
+  if (normalized === "onboarding") {
+    const allowed = ONBOARDING_SESSION_RUNTIME_TOOL_IDS;
     return params.extraToolIds.filter((toolId) => allowed.has(toolId));
+  }
+  if (normalized === "main_session") {
+    return Array.from(
+      new Set([...defaultExtraTools(params.harnessId), ...params.extraToolIds]),
+    );
   }
   return Array.from(
     new Set([
@@ -1089,20 +1100,20 @@ function projectResolvedMcpToolRefsForSession(params: {
   sessionKind: string | null | undefined;
   resolvedMcpToolRefs: CompiledWorkspaceRuntimePlan["resolved_mcp_tool_refs"];
 }): CompiledWorkspaceRuntimePlan["resolved_mcp_tool_refs"] {
-  if (!isFrontSessionKind(params.sessionKind)) {
-    return params.resolvedMcpToolRefs;
+  if (normalizedSessionKindValue(params.sessionKind) === "onboarding") {
+    return [];
   }
-  return [];
+  return params.resolvedMcpToolRefs;
 }
 
 function projectResolvedMcpServerIdsForSession(params: {
   sessionKind: string | null | undefined;
   resolvedMcpServerIds: string[];
 }): string[] {
-  if (!isFrontSessionKind(params.sessionKind)) {
-    return params.resolvedMcpServerIds;
+  if (normalizedSessionKindValue(params.sessionKind) === "onboarding") {
+    return [];
   }
-  return [];
+  return params.resolvedMcpServerIds;
 }
 
 function explicitHolabossUserId(request: TsRunnerRequest): string | undefined {
@@ -1408,7 +1419,7 @@ function buildAgentRuntimeConfigRequest(params: {
     workspace_skill_ids: [...params.workspaceSkillIds],
     workspace_command_ids: [...params.workspaceCommandIds],
     default_tools: frontSession
-      ? [...MAIN_SESSION_DEFAULT_TOOLS]
+      ? defaultToolsForSessionKind(normalizedSessionKind)
       : [...SUBAGENT_DEFAULT_TOOLS],
     extra_tools: extraTools,
     ...(delegatedCapabilitySnapshotEligible
@@ -1657,6 +1668,24 @@ export function resolvedApplicationMcpHeaders(
   };
 }
 
+function writeEncodedRequestToChildStdin(
+  stdin: NodeJS.WritableStream | null | undefined,
+  encodedRequest: string,
+  onError: (error: unknown) => void,
+): void {
+  if (!stdin) {
+    return;
+  }
+  const handleError = (error: unknown) => {
+    stdin.removeListener("error", handleError);
+    onError(error);
+  };
+  stdin.once("error", handleError);
+  stdin.end(encodedRequest, "utf8", () => {
+    stdin.removeListener("error", handleError);
+  });
+}
+
 async function defaultRunHarnessHost(params: {
   harness: string;
   requestPayload: Record<string, unknown>;
@@ -1687,17 +1716,13 @@ async function defaultRunHarnessHost(params: {
   try {
     child = spawn(
       runtimeNodeBin(),
-      [
-        ...argsPrefix,
-        entryPath,
-        harnessCommand,
-        "--request-base64",
-        requestBase64,
-      ],
+      [...argsPrefix, entryPath, harnessCommand, "--request-stdin"],
       {
         cwd: runtimeRootDir(),
         env: buildRunnerEnv(),
-        stdio: ["ignore", "pipe", "pipe"],
+        // Send request payloads over stdin so Windows command-line limits do not
+        // cap harness launches for larger chat contexts.
+        stdio: ["pipe", "pipe", "pipe"],
       },
     );
   } catch (error) {
@@ -1710,6 +1735,13 @@ async function defaultRunHarnessHost(params: {
       spawnError: errorMessage(error),
     };
   }
+
+  let stdinError = "";
+  writeEncodedRequestToChildStdin(child.stdin, requestBase64, (error) => {
+    if (!stdinError) {
+      stdinError = errorMessage(error);
+    }
+  });
 
   let stderr = "";
   child.stderr?.setEncoding("utf8");
@@ -1747,10 +1779,13 @@ async function defaultRunHarnessHost(params: {
     child.once("error", reject);
     child.once("close", (code) => resolve(code ?? 0));
   });
+  const normalizedStderr = [stderr.trim(), stdinError]
+    .filter((value) => value.length > 0)
+    .join("\n");
 
   return {
     exitCode,
-    stderr: stderr.trim(),
+    stderr: normalizedStderr,
     sawEvent,
     terminalEmitted,
     lastSequence,

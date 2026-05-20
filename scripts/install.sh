@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-REPO_URL="https://github.com/holaboss-ai/holaboss-ai.git"
+REPO_URL="https://github.com/holaboss-ai/holaOS.git"
 DEFAULT_INSTALL_DIR="${HOLABOSS_INSTALL_DIR:-$HOME/holaboss-ai}"
 HOLABOSS_HOME="${HOLABOSS_HOME:-$HOME/.holaboss}"
 MANAGED_NODE_DIR="${HOLABOSS_HOME}/node"
@@ -368,11 +368,11 @@ bootstrap_repo() {
   log_info "Installing desktop dependencies"
   npm run desktop:install
 
-  if [[ ! -f desktop/.env ]]; then
-    log_info "Creating desktop/.env from desktop/.env.example"
-    cp desktop/.env.example desktop/.env
+  if [[ ! -f apps/desktop/.env ]]; then
+    log_info "Creating apps/desktop/.env from apps/desktop/.env.example"
+    cp apps/desktop/.env.example apps/desktop/.env
   else
-    log_info "desktop/.env already exists; leaving it unchanged"
+    log_info "apps/desktop/.env already exists; leaving it unchanged"
   fi
 
   log_info "Preparing the local runtime bundle"

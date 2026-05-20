@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   invokeWorkspaceSkill,
@@ -304,4 +305,41 @@ test("resolveWorkspaceSkills captures declared granted tools and commands and in
   assert.match(invoked.text, /Only use the docs path\./);
   assert.deepEqual(invoked.granted_tools, ["bash", "deploy"]);
   assert.deepEqual(invoked.granted_commands, ["deploy-docs"]);
+});
+
+test("embedded app-builder-sdk skill only references bundled local assets", () => {
+  const sourceDir = path.dirname(fileURLToPath(import.meta.url));
+  const skillDir = path.resolve(
+    sourceDir,
+    "../../harnesses/src/embedded-skills/app-builder-sdk",
+  );
+  const skillBody = fs.readFileSync(path.join(skillDir, "SKILL.md"), "utf8");
+
+  assert.doesNotMatch(skillBody, /docs\/pm\/app-vibe-coding\.md/);
+  assert.doesNotMatch(skillBody, /experiments\/app-builder-sdk\//);
+  assert.doesNotMatch(skillBody, /holaOS\/desktop\//);
+  // Snapshot lives as a single canonical sdk-package/ tree; no flat sdk/
+  // duplicates and no nested sdk-package/reference/ duplicates.
+  assert.doesNotMatch(skillBody, /`sdk\/[^`]+`/);
+  assert.doesNotMatch(skillBody, /`sdk-package\/reference\//);
+
+  for (const relativePath of [
+    "sdk-package/README.txt",
+    "sdk-package/package.json",
+    "sdk-package/src/index.ts",
+    "sdk-package/src/types.ts",
+    "sdk-package/src/app.ts",
+    "reference/pinterest-publishing/app.ts",
+    "reference/slack-messaging/server.ts",
+    "reference/slack-messaging/app.runtime.yaml",
+    "ui-reference/components.json",
+    "ui-reference/tokens.css",
+    "ui-reference/themes/holaos.css",
+  ]) {
+    assert.equal(
+      fs.existsSync(path.join(skillDir, relativePath)),
+      true,
+      `expected embedded skill asset to exist: ${relativePath}`,
+    );
+  }
 });

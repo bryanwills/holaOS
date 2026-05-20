@@ -1,70 +1,70 @@
 export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
   {
-    id: "holaboss_onboarding_status",
+    id: "onboarding_status",
     description: "Read the local onboarding status for the current workspace.",
     policy: "inspect"
   },
   {
-    id: "holaboss_onboarding_complete",
+    id: "onboarding_complete",
     description: "Mark local workspace onboarding complete with a summary.",
     policy: "mutate"
   },
   {
-    id: "holaboss_cronjobs_list",
+    id: "cronjobs_list",
     description: "List local cronjobs for the current workspace.",
     policy: "inspect"
   },
   {
-    id: "holaboss_cronjobs_create",
+    id: "cronjobs_create",
     description: "Create a local cronjob for the current workspace.",
     policy: "mutate"
   },
   {
-    id: "holaboss_cronjobs_get",
+    id: "cronjobs_get",
     description: "Read one local cronjob by id.",
     policy: "inspect"
   },
   {
-    id: "holaboss_cronjobs_update",
+    id: "cronjobs_update",
     description: "Update one local cronjob by id.",
     policy: "mutate"
   },
   {
-    id: "holaboss_cronjobs_delete",
+    id: "cronjobs_delete",
     description: "Delete one local cronjob by id.",
     policy: "mutate"
   },
   {
-    id: "holaboss_delegate_task",
+    id: "delegate_task",
     description:
       "Delegate one or more background tasks to hidden subagents for the current workspace session while keeping the main conversation free.",
     policy: "coordinate"
   },
   {
-    id: "holaboss_get_subagent",
+    id: "get_subagent",
     description:
       "Read one delegated background task by subagent id and return its latest structured state.",
     policy: "inspect"
   },
   {
-    id: "holaboss_list_background_tasks",
+    id: "list_background_tasks",
     description:
       "List delegated background tasks for the current workspace session using persisted task state instead of a blocking wait.",
     policy: "inspect"
   },
   {
-    id: "holaboss_cancel_subagent",
+    id: "cancel_subagent",
     description: "Cancel one delegated background task by subagent id when it is still queued or waiting on user input.",
     policy: "mutate"
   },
   {
-    id: "holaboss_resume_subagent",
+    id: "resume_subagent",
     description:
       "Resume a delegated background task that is waiting on user input by sending the user's answer back into the paused subagent run.",
     policy: "mutate"
   },
   {
-    id: "holaboss_continue_subagent",
+    id: "continue_subagent",
     description:
       "Continue a completed delegated background task by sending a new instruction into the same child session.",
     policy: "mutate"
@@ -105,21 +105,21 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
     policy: "coordinate"
   },
   {
-    id: "holaboss_scratchpad_read",
+    id: "scratchpad_read",
     description:
       "Read the current session scratchpad stored in the workspace-local runtime folder for working notes and compacted current state.",
     policy: "inspect"
   },
   {
-    id: "holaboss_scratchpad_write",
+    id: "scratchpad_write",
     description:
       "Append to, replace, or clear the current session scratchpad stored in the workspace-local runtime folder for working notes, evidence, and compacted current state.",
     policy: "mutate"
   },
   {
-    id: "holaboss_update_workspace_instructions",
+    id: "update_workspace_instructions",
     description:
-      "Read or update the root AGENTS.md file to record durable workspace instructions, verified knowledge, commands, procedures, conventions, decisions, and constraints while preserving user-authored content outside the managed section.",
+      "Read or update the root AGENTS.md file to record durable workspace instructions, verified knowledge, commands, procedures, conventions, decisions, and constraints while preserving user-authored content outside the managed section. Valid `op` values are `read_current`, `append_rule`, `remove_rule`, and `replace_managed_section`; use `read_current` for reads, not `read`.",
     policy: "mutate"
   },
   {

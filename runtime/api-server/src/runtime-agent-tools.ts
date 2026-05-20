@@ -103,6 +103,12 @@ function pendingIntegrationsFromAppManifests(params: {
         app_id: appId,
         provider_id: integration.provider,
         credential_source: integration.credentialSource,
+        // Forward the per-yaml whoami config (if any) so the chat UI can
+        // pass it to Hono's /composio/connect — removes the need for the
+        // central PROVIDER_WHOAMI constant in the Hono worker.
+        ...(integration.whoami
+          ? { whoami: integration.whoami as unknown as JsonValue }
+          : {}),
       });
     }
   }
@@ -940,82 +946,82 @@ function runtimeToolBaseDefinition(id: string) {
 
 export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
   {
-    id: runtimeToolBaseDefinition("holaboss_onboarding_status").id,
+    id: runtimeToolBaseDefinition("onboarding_status").id,
     method: "GET",
     path: "/api/v1/capabilities/runtime-tools/onboarding/status",
-    description: runtimeToolBaseDefinition("holaboss_onboarding_status").description
+    description: runtimeToolBaseDefinition("onboarding_status").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_onboarding_complete").id,
+    id: runtimeToolBaseDefinition("onboarding_complete").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/onboarding/complete",
-    description: runtimeToolBaseDefinition("holaboss_onboarding_complete").description
+    description: runtimeToolBaseDefinition("onboarding_complete").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_cronjobs_list").id,
+    id: runtimeToolBaseDefinition("cronjobs_list").id,
     method: "GET",
     path: "/api/v1/capabilities/runtime-tools/cronjobs",
-    description: runtimeToolBaseDefinition("holaboss_cronjobs_list").description
+    description: runtimeToolBaseDefinition("cronjobs_list").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_cronjobs_create").id,
+    id: runtimeToolBaseDefinition("cronjobs_create").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/cronjobs",
-    description: runtimeToolBaseDefinition("holaboss_cronjobs_create").description
+    description: runtimeToolBaseDefinition("cronjobs_create").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_cronjobs_get").id,
+    id: runtimeToolBaseDefinition("cronjobs_get").id,
     method: "GET",
     path: "/api/v1/capabilities/runtime-tools/cronjobs/:jobId",
-    description: runtimeToolBaseDefinition("holaboss_cronjobs_get").description
+    description: runtimeToolBaseDefinition("cronjobs_get").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_cronjobs_update").id,
+    id: runtimeToolBaseDefinition("cronjobs_update").id,
     method: "PATCH",
     path: "/api/v1/capabilities/runtime-tools/cronjobs/:jobId",
-    description: runtimeToolBaseDefinition("holaboss_cronjobs_update").description
+    description: runtimeToolBaseDefinition("cronjobs_update").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_cronjobs_delete").id,
+    id: runtimeToolBaseDefinition("cronjobs_delete").id,
     method: "DELETE",
     path: "/api/v1/capabilities/runtime-tools/cronjobs/:jobId",
-    description: runtimeToolBaseDefinition("holaboss_cronjobs_delete").description
+    description: runtimeToolBaseDefinition("cronjobs_delete").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_delegate_task").id,
+    id: runtimeToolBaseDefinition("delegate_task").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/subagents",
-    description: runtimeToolBaseDefinition("holaboss_delegate_task").description
+    description: runtimeToolBaseDefinition("delegate_task").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_get_subagent").id,
+    id: runtimeToolBaseDefinition("get_subagent").id,
     method: "GET",
     path: "/api/v1/capabilities/runtime-tools/subagents/:subagentId",
-    description: runtimeToolBaseDefinition("holaboss_get_subagent").description
+    description: runtimeToolBaseDefinition("get_subagent").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_list_background_tasks").id,
+    id: runtimeToolBaseDefinition("list_background_tasks").id,
     method: "GET",
     path: "/api/v1/capabilities/runtime-tools/background-tasks",
-    description: runtimeToolBaseDefinition("holaboss_list_background_tasks").description
+    description: runtimeToolBaseDefinition("list_background_tasks").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_cancel_subagent").id,
+    id: runtimeToolBaseDefinition("cancel_subagent").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/subagents/:subagentId/cancel",
-    description: runtimeToolBaseDefinition("holaboss_cancel_subagent").description
+    description: runtimeToolBaseDefinition("cancel_subagent").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_resume_subagent").id,
+    id: runtimeToolBaseDefinition("resume_subagent").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/subagents/:subagentId/resume",
-    description: runtimeToolBaseDefinition("holaboss_resume_subagent").description
+    description: runtimeToolBaseDefinition("resume_subagent").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_continue_subagent").id,
+    id: runtimeToolBaseDefinition("continue_subagent").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/subagents/:subagentId/continue",
-    description: runtimeToolBaseDefinition("holaboss_continue_subagent").description
+    description: runtimeToolBaseDefinition("continue_subagent").description
   },
   {
     id: runtimeToolBaseDefinition("image_generate").id,
@@ -1054,22 +1060,22 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     description: runtimeToolBaseDefinition("todowrite").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_scratchpad_read").id,
+    id: runtimeToolBaseDefinition("scratchpad_read").id,
     method: "GET",
     path: "/api/v1/capabilities/runtime-tools/scratchpad",
-    description: runtimeToolBaseDefinition("holaboss_scratchpad_read").description
+    description: runtimeToolBaseDefinition("scratchpad_read").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_scratchpad_write").id,
+    id: runtimeToolBaseDefinition("scratchpad_write").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/scratchpad",
-    description: runtimeToolBaseDefinition("holaboss_scratchpad_write").description
+    description: runtimeToolBaseDefinition("scratchpad_write").description
   },
   {
-    id: runtimeToolBaseDefinition("holaboss_update_workspace_instructions").id,
+    id: runtimeToolBaseDefinition("update_workspace_instructions").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/workspace-instructions",
-    description: runtimeToolBaseDefinition("holaboss_update_workspace_instructions").description
+    description: runtimeToolBaseDefinition("update_workspace_instructions").description
   },
   {
     id: runtimeToolBaseDefinition("skill").id,
@@ -3064,7 +3070,7 @@ export class RuntimeAgentToolsService {
       sessionId: requestedSessionId || null,
       inputId: normalizedString(params.inputId) || null,
       states: synced,
-      toolId: "holaboss_list_background_tasks",
+      toolId: "list_background_tasks",
     });
     return {
       tasks: synced.map((state) => subagentRunPayload(state)),
@@ -3088,7 +3094,7 @@ export class RuntimeAgentToolsService {
       sessionId: requestedSessionId || null,
       inputId: normalizedString(params.inputId) || null,
       states: [state],
-      toolId: "holaboss_get_subagent",
+      toolId: "get_subagent",
     });
     if (!this.isVisibleBackgroundTask(state.run)) {
       throw new RuntimeAgentToolsServiceError(404, "subagent_not_found", "subagent not found");
@@ -4073,7 +4079,7 @@ export class RuntimeAgentToolsService {
     sessionId?: string | null;
     inputId?: string | null;
     states: SyncedSubagentRunState[];
-    toolId: "holaboss_get_subagent" | "holaboss_list_background_tasks";
+    toolId: "get_subagent" | "list_background_tasks";
   }): void {
     const sessionId = normalizedString(params.sessionId);
     const inputId = normalizedString(params.inputId);
@@ -4189,6 +4195,29 @@ export class RuntimeAgentToolsService {
   private listRegisteredWorkspaceAppEntries(workspaceId: string): Array<Record<string, unknown>> {
     this.requireWorkspace(workspaceId);
     return listWorkspaceApplications(path.join(this.options.workspaceRoot, workspaceId));
+  }
+
+  // Each completion-type workspace_apps_* tool calls this so the chat UI can
+  // surface a Connect button whenever the agent finishes a build flow. Pass
+  // an explicit appIds list when only one app changed; pass empty for "all
+  // registered apps".
+  private pendingIntegrationsForApps(
+    workspaceId: string,
+    appIds: string[] = [],
+  ): JsonObject[] {
+    const resolvedIds =
+      appIds.length > 0
+        ? appIds
+        : this.listRegisteredWorkspaceAppEntries(workspaceId)
+            .map((entry) => (typeof entry.app_id === "string" ? entry.app_id : ""))
+            .filter((id) => id.length > 0);
+    if (resolvedIds.length === 0) {
+      return [];
+    }
+    return pendingIntegrationsFromAppManifests({
+      workspaceDir: path.join(this.options.workspaceRoot, workspaceId),
+      appIds: resolvedIds,
+    });
   }
 
   private requireRegisteredWorkspaceApp(params: {
@@ -4559,6 +4588,7 @@ export class RuntimeAgentToolsService {
       await fs.writeFile(fullPath, file.content, "utf8");
     }
 
+    const pendingIntegrations = this.pendingIntegrationsForApps(params.workspaceId, [appId]);
     return {
       workspace_id: params.workspaceId,
       app_id: appId,
@@ -4566,6 +4596,9 @@ export class RuntimeAgentToolsService {
       manifest_path: `apps/${appId}/app.runtime.yaml`,
       created_files: files.map((file) => `apps/${appId}/${file.relativePath.replace(/\\/g, "/")}`),
       overwritten: overwrite,
+      ...(pendingIntegrations.length > 0
+        ? { pending_integrations: pendingIntegrations }
+        : {}),
     };
   }
 
@@ -4634,6 +4667,7 @@ export class RuntimeAgentToolsService {
       return applications;
     });
 
+    const pendingIntegrations = this.pendingIntegrationsForApps(params.workspaceId, [appId]);
     return {
       workspace_id: params.workspaceId,
       app_id: appId,
@@ -4641,6 +4675,9 @@ export class RuntimeAgentToolsService {
       lifecycle: Object.keys(lifecycle).length > 0 ? lifecycle : null,
       changed,
       registered: true,
+      ...(pendingIntegrations.length > 0
+        ? { pending_integrations: pendingIntegrations }
+        : {}),
     };
   }
 
@@ -4681,6 +4718,7 @@ export class RuntimeAgentToolsService {
         ? packageJson.scripts.build.trim()
         : "";
     const appDirRelative = path.relative(workspaceDir, resolved.appDir).replace(/\\/g, "/");
+    const pendingIntegrationsSkip = this.pendingIntegrationsForApps(params.workspaceId, [appId]);
     if (!buildScript) {
       return {
         workspace_id: params.workspaceId,
@@ -4692,6 +4730,9 @@ export class RuntimeAgentToolsService {
         skipped: true,
         reason: "no_build_script",
         ok: true,
+        ...(pendingIntegrationsSkip.length > 0
+          ? { pending_integrations: pendingIntegrationsSkip }
+          : {}),
       };
     }
 
@@ -4719,6 +4760,9 @@ export class RuntimeAgentToolsService {
       ok: !result.timedOut && (result.exitCode ?? 1) === 0,
       stdout: result.stdout,
       stderr: result.stderr,
+      ...(pendingIntegrationsSkip.length > 0
+        ? { pending_integrations: pendingIntegrationsSkip }
+        : {}),
     };
   }
 
@@ -4731,10 +4775,17 @@ export class RuntimeAgentToolsService {
         workspaceId: params.workspaceId,
         appId,
       });
-      return this.workspaceAppStatusEntry({
+      const statusEntry = this.workspaceAppStatusEntry({
         workspaceId: params.workspaceId,
         entry,
       });
+      const pendingIntegrations = this.pendingIntegrationsForApps(params.workspaceId, [appId]);
+      return {
+        ...statusEntry,
+        ...(pendingIntegrations.length > 0
+          ? { pending_integrations: pendingIntegrations }
+          : {}),
+      };
     }
 
     const apps = this.listRegisteredWorkspaceAppEntries(params.workspaceId)
@@ -4745,10 +4796,14 @@ export class RuntimeAgentToolsService {
           entry,
         }),
       );
+    const pendingIntegrations = this.pendingIntegrationsForApps(params.workspaceId);
     return {
       workspace_id: params.workspaceId,
       apps,
       count: apps.length,
+      ...(pendingIntegrations.length > 0
+        ? { pending_integrations: pendingIntegrations }
+        : {}),
     };
   }
 
@@ -4871,11 +4926,15 @@ export class RuntimeAgentToolsService {
       workspaceId: params.workspaceId,
       appId,
     });
+    const pendingIntegrations = this.pendingIntegrationsForApps(params.workspaceId, [appId]);
     return {
       workspace_id: params.workspaceId,
       app_id: appId,
       restarted: true,
       status,
+      ...(pendingIntegrations.length > 0
+        ? { pending_integrations: pendingIntegrations }
+        : {}),
     };
   }
 
@@ -4921,11 +4980,15 @@ export class RuntimeAgentToolsService {
         appId,
       });
       if (status.ready === true || status.build_status === "failed") {
+        const pendingIntegrations = this.pendingIntegrationsForApps(params.workspaceId, [appId]);
         return {
           ...(status as JsonObject),
           timed_out: false,
           polls,
           elapsed_ms: Date.now() - startedAt,
+          ...(pendingIntegrations.length > 0
+            ? { pending_integrations: pendingIntegrations }
+            : {}),
         };
       }
       await sleep(pollIntervalMs);
@@ -4935,11 +4998,15 @@ export class RuntimeAgentToolsService {
       workspaceId: params.workspaceId,
       appId,
     });
+    const pendingIntegrations = this.pendingIntegrationsForApps(params.workspaceId, [appId]);
     return {
       ...(status as JsonObject),
       timed_out: true,
       polls,
       elapsed_ms: Date.now() - startedAt,
+      ...(pendingIntegrations.length > 0
+        ? { pending_integrations: pendingIntegrations }
+        : {}),
     };
   }
 

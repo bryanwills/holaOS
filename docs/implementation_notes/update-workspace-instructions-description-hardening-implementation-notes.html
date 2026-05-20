@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Update Workspace Instructions Description Hardening Implementation Notes</title>
+  </head>
+  <body>
+    <h1>Update Workspace Instructions Description Hardening Implementation Notes</h1>
+    <h2>Design decisions</h2>
+    <ul>
+      <li>Hardened the tool by tightening text guidance first instead of changing the parameter schema shape.</li>
+      <li>Repeated the exact op names in the top-level tool description, the <code>op</code> field description, and the prompt guidelines so the model sees the same constraint through multiple channels.</li>
+    </ul>
+    <h2>Deviations</h2>
+    <ul>
+      <li>No schema-shape change yet. The implementation intentionally keeps the existing object-plus-union schema to avoid introducing provider-specific behavior differences before the description fix is evaluated.</li>
+    </ul>
+    <h2>Tradeoffs</h2>
+    <ul>
+      <li>Description hardening is lower risk across providers than moving immediately to a more complex discriminated schema.</li>
+      <li>This improves model guidance but does not add backend compatibility aliases, so a model can still fail if it ignores the guidance entirely.</li>
+    </ul>
+    <h2>Open questions</h2>
+    <ul>
+      <li>Whether to add a server-side alias from <code>read</code> to <code>read_current</code> if model-side adherence is still not reliable enough.</li>
+    </ul>
+  </body>
+</html>

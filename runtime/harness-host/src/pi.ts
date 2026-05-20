@@ -496,15 +496,8 @@ export async function buildPiPromptPayload(request: HarnessHostPiRequest): Promi
     imageUrlFallbackLines.push(`- ${promptLabel}`);
   }
 
-  if (attachments.length === 0 && imageUrlLines.length === 0) {
-    sections.push(["Attachments: none.", "Image inputs: none."].join("\n"));
-  } else if (attachments.length === 0) {
-    sections.push("Attachments: none.");
-  }
   if (imageLines.length > 0) {
     sections.push(["Attached images:", ...imageLines].join("\n"));
-  } else if (attachments.length > 0 && imageUrlLines.length === 0) {
-    sections.push("Image inputs: none.");
   }
   if (imageUrlLines.length > 0) {
     sections.push(["Referenced image URLs:", ...imageUrlLines].join("\n"));

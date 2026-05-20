@@ -69,6 +69,7 @@ import {
 } from "./ts-runner-session-state.js";
 
 const ONBOARD_PROMPT_HEADER = "[Holaboss Workspace Onboarding v1]";
+const RETRY_CONTINUATION_PROMPT_HEADER = "[Holaboss Retry Continuation v1]";
 const RUNTIME_EXEC_CONTEXT_KEY = "_sandbox_runtime_exec_v1";
 const RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY = "model_proxy_api_key";
 const RUNTIME_EXEC_SANDBOX_ID_KEY = "sandbox_id";
@@ -134,6 +135,9 @@ const NON_CONTEXT_OVERFLOW_PATTERNS = [
   /rate limit/i,
   /too many requests/i,
 ];
+const PROVIDER_TERMINATION_RECOVERY_MIN_INPUT_TOKENS = 250_000;
+const PROVIDER_TERMINATION_RECOVERY_MIN_MODEL_TURNS = 24;
+const PROVIDER_TERMINATION_RECOVERY_MIN_TOOL_CALLS = 12;
 
 interface SessionInputAttachment {
   id: string;
@@ -232,6 +236,19 @@ interface OverflowRecoveryTelemetryRecord {
   retry_attempted: boolean;
   recovered: boolean;
   reset_required: boolean;
+}
+
+interface ProviderTerminationRecoveryTelemetryRecord {
+  trigger_reason: string | null;
+  initial_error_type: string | null;
+  initial_error_message: string | null;
+  initial_input_tokens: number | null;
+  initial_model_turns: number | null;
+  initial_tool_calls: number | null;
+  compaction_attempted: boolean;
+  compaction_changed_branch: boolean;
+  retry_attempted: boolean;
+  recovered: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1364,9 +1381,9 @@ function buildOnboardingInstruction(params: {
     "- Ask concise questions and collect durable facts/preferences.",
     "- Do not start regular execution work until onboarding is complete.",
     "- Relevant native onboarding tools:",
-    "- `holaboss_onboarding_status` reads the local onboarding status for this workspace.",
-    "- `holaboss_onboarding_complete` marks onboarding complete. Required argument: `summary`. Optional argument: `requested_by`.",
-    "- When all onboarding requirements are satisfied and the user confirms, call `holaboss_onboarding_complete` with a concise durable summary.",
+    "- `onboarding_status` reads the local onboarding status for this workspace.",
+    "- `onboarding_complete` marks onboarding complete. Required argument: `summary`. Optional argument: `requested_by`.",
+    "- When all onboarding requirements are satisfied and the user confirms, call `onboarding_complete` with a concise durable summary.",
     "",
     "[ONBOARD.md]",
     rawOnboardPrompt,
@@ -1425,6 +1442,32 @@ function instructionWithInlineBackgroundUpdates(params: {
   ]
     .join("\n")
     .trim();
+}
+
+function instructionWithRetryContinuationPrompt(params: {
+  baseInstruction: string;
+  failureMessage?: string | null;
+}): string {
+  if (params.baseInstruction.includes(RETRY_CONTINUATION_PROMPT_HEADER)) {
+    return params.baseInstruction;
+  }
+  const lines = [
+    params.baseInstruction,
+    "",
+    RETRY_CONTINUATION_PROMPT_HEADER,
+    "- The previous attempt ended after partial progress and this is a continuation retry.",
+    "- Do not start over from scratch.",
+    "- First inspect the current workspace and session state to determine what already completed.",
+    "- Reuse existing files, installs, outputs, and running state when they are still valid.",
+    "- Only repeat a step if inspection shows it is missing, inconsistent, or broken.",
+    "- After inspection, continue the task from the current state and finish the remaining work.",
+  ];
+  const failureMessage =
+    typeof params.failureMessage === "string" ? params.failureMessage.trim() : "";
+  if (failureMessage) {
+    lines.push(`- Previous failure signal: ${failureMessage}`);
+  }
+  return lines.join("\n").trim();
 }
 
 function queuedForwardedDeliverablesFromContext(
@@ -1960,6 +2003,17 @@ function overflowRecoveryPayload(
   };
 }
 
+function providerTerminationRecoveryPayload(
+  value: ProviderTerminationRecoveryTelemetryRecord | null,
+): Record<string, unknown> | null {
+  if (!value) {
+    return null;
+  }
+  return {
+    ...value,
+  };
+}
+
 function contextOverflowFailureText(payload: Record<string, unknown>): string {
   const candidates = [
     optionalString(payload.message),
@@ -1991,6 +2045,46 @@ function isContextOverflowFailurePayload(
     return false;
   }
   return CONTEXT_OVERFLOW_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function isRecoverableProviderTerminationPayload(params: {
+  payload: Record<string, unknown> | null;
+  tokenUsage: Record<string, unknown> | null;
+  modelTurns: number;
+  toolCallCount: number;
+}): boolean {
+  if (!params.payload) {
+    return false;
+  }
+  const payloadType = optionalString(params.payload.type)?.toLowerCase();
+  if (payloadType !== "providererror") {
+    return false;
+  }
+  const payloadSource = optionalString(params.payload.source)?.toLowerCase();
+  if (payloadSource && payloadSource !== "pi") {
+    return false;
+  }
+  const payloadEvent = optionalString(params.payload.event)?.toLowerCase();
+  if (payloadEvent && payloadEvent !== "message_end" && payloadEvent !== "turn_end") {
+    return false;
+  }
+  const failureMessage = optionalString(params.payload.message);
+  if (!failureMessage || failureMessage.trim().toLowerCase() !== "terminated") {
+    return false;
+  }
+  const usage =
+    (isRecord(params.payload.usage) ? params.payload.usage : null) ??
+    params.tokenUsage;
+  const inputTokens = firstFiniteUsageNumber(usage, [
+    "input_tokens",
+    "prompt_tokens",
+  ]);
+  return (
+    (inputTokens !== null &&
+      inputTokens >= PROVIDER_TERMINATION_RECOVERY_MIN_INPUT_TOKENS) ||
+    params.modelTurns >= PROVIDER_TERMINATION_RECOVERY_MIN_MODEL_TURNS ||
+    params.toolCallCount >= PROVIDER_TERMINATION_RECOVERY_MIN_TOOL_CALLS
+  );
 }
 
 function runnerEventWithSequenceOffset(
@@ -2141,6 +2235,7 @@ function buildContextBudgetObservabilityPayload(params: {
   checkpointQueued: boolean;
   preRunCompaction?: PreRunCompactionTelemetryRecord | null;
   overflowRecovery?: OverflowRecoveryTelemetryRecord | null;
+  providerTerminationRecovery?: ProviderTerminationRecoveryTelemetryRecord | null;
 }): Record<string, unknown> {
   const inputTokens =
     firstFiniteUsageNumber(params.tokenUsage, ["input_tokens", "prompt_tokens"]);
@@ -2196,6 +2291,13 @@ function buildContextBudgetObservabilityPayload(params: {
     ...(params.overflowRecovery
       ? { overflow_recovery: overflowRecoveryPayload(params.overflowRecovery) }
       : {}),
+    ...(params.providerTerminationRecovery
+      ? {
+          provider_termination_recovery: providerTerminationRecoveryPayload(
+            params.providerTerminationRecovery,
+          ),
+        }
+      : {}),
     input_budget_total: null,
     metrics: {
       status,
@@ -2243,6 +2345,7 @@ function buildMergedContextBudgetPayload(params: {
   checkpointQueued: boolean;
   preRunCompaction?: PreRunCompactionTelemetryRecord | null;
   overflowRecovery?: OverflowRecoveryTelemetryRecord | null;
+  providerTerminationRecovery?: ProviderTerminationRecoveryTelemetryRecord | null;
 }): Record<string, unknown> {
   return {
     ...buildContextBudgetObservabilityPayload({
@@ -2258,6 +2361,7 @@ function buildMergedContextBudgetPayload(params: {
       checkpointQueued: params.checkpointQueued,
       preRunCompaction: params.preRunCompaction,
       overflowRecovery: params.overflowRecovery,
+      providerTerminationRecovery: params.providerTerminationRecovery,
     }),
     ...buildContextBudgetDecisions({
       promptCacheProfile: params.promptCacheProfile,
@@ -3231,6 +3335,11 @@ type SubagentPendingIntegration = {
   app_id: string;
   provider_id: string;
   credential_source: string | null;
+  // Opaque whoami config emitted by the runtime; forwarded verbatim to the
+  // chat UI and then to Hono's /composio/connect. Shape lives in
+  // integration-types.ts (WhoamiConfig). Treated as unknown here to keep
+  // this module free of Hono-specific knowledge.
+  whoami: Record<string, unknown> | null;
 };
 
 function parseSubagentPendingIntegrationsFromText(text: string): SubagentPendingIntegration[] {
@@ -3258,6 +3367,7 @@ function parseSubagentPendingIntegrationsFromText(text: string): SubagentPending
       provider_id: provider,
       credential_source:
         typeof entry.credential_source === "string" ? entry.credential_source : null,
+      whoami: isRecord(entry.whoami) ? entry.whoami : null,
     });
   }
   return out;
@@ -3268,6 +3378,14 @@ const PENDING_INTEGRATION_EMITTING_TOOLS = new Set([
   "workspace_apps_ensure_running",
   "workspace_apps_restart",
   "workspace_apps_restart_and_wait_ready",
+  // Also scan completion-ish tools — the agent may end its build flow on
+  // any of these without ever invoking ensure_running, leaving Connect
+  // buttons stranded if we only emit from the four above.
+  "workspace_apps_scaffold",
+  "workspace_apps_register",
+  "workspace_apps_build",
+  "workspace_apps_wait_until_ready",
+  "workspace_apps_get_status",
 ]);
 
 function subagentPendingIntegrations(params: {
@@ -4345,6 +4463,7 @@ export async function processClaimedInput(params: {
       harness_timeout_seconds: harnessTimeoutSeconds,
       debug: false,
     };
+    const baseRunnerInstruction = instruction;
     const synthesizedRequestSnapshotFingerprint =
       ensureClaimedInputTurnRequestSnapshot({
         store,
@@ -4390,6 +4509,8 @@ export async function processClaimedInput(params: {
     let toolReplayTrimmed = false;
     let preRunCompaction: PreRunCompactionTelemetryRecord | null = null;
     let overflowRecovery: OverflowRecoveryTelemetryRecord | null = null;
+    let providerTerminationRecovery: ProviderTerminationRecoveryTelemetryRecord | null =
+      null;
     const toolCallsById = new Map<
       string,
       {
@@ -4595,6 +4716,33 @@ export async function processClaimedInput(params: {
           }
         | null = null;
       let runnerSequenceOffset = 0;
+      const prepareRunnerRetry = (failureMessage?: string | null) => {
+        runnerSequenceOffset = Math.max(runnerSequenceOffset, lastSequence);
+        payload.instruction = instructionWithRetryContinuationPrompt({
+          baseInstruction: baseRunnerInstruction,
+          failureMessage,
+        });
+        assistantParts.length = 0;
+        capturedPiAssistantMessage = null;
+        terminalStatus = "IDLE";
+        lastError = null;
+        completedAt = null;
+        stopReason = null;
+        tokenUsage = null;
+        contextUsage = null;
+        promptSectionIds = [];
+        capabilityManifestFingerprint = null;
+        requestSnapshotFingerprint = null;
+        promptCacheProfile = null;
+        toolReplayTrimmed = false;
+        deferredTerminalEvent = null;
+        pendingOutputDeltaPayload = null;
+        pendingOutputDeltaSequence = 0;
+        pendingOutputDeltaTimestamp = null;
+        toolCallsById.clear();
+        skillInvocationsById.clear();
+        permissionDenials.length = 0;
+      };
 
       for (let runnerAttempt = 1; runnerAttempt <= 2; runnerAttempt += 1) {
         const execution = await executeRunner(payload, {
@@ -5206,28 +5354,67 @@ export async function processClaimedInput(params: {
               `overflow recovery compaction could not make the next prompt fit ${selectedModel ?? "the selected model"}; session reset required`,
             );
           }
-          runnerSequenceOffset = Math.max(runnerSequenceOffset, lastSequence);
-          assistantParts.length = 0;
-          capturedPiAssistantMessage = null;
-          terminalStatus = "IDLE";
-          lastError = null;
-          completedAt = null;
-          stopReason = null;
-          tokenUsage = null;
-          contextUsage = null;
-          promptSectionIds = [];
-          capabilityManifestFingerprint = null;
-          requestSnapshotFingerprint = null;
-          promptCacheProfile = null;
-          toolReplayTrimmed = false;
-          deferredTerminalEvent = null;
-          pendingOutputDeltaPayload = null;
-          pendingOutputDeltaSequence = 0;
-          pendingOutputDeltaTimestamp = null;
-          toolCallsById.clear();
-          skillInvocationsById.clear();
-          permissionDenials.length = 0;
+          prepareRunnerRetry(optionalString(terminalFailurePayload?.message));
           continue;
+        }
+        if (
+          isRecoverableProviderTerminationPayload({
+            payload: terminalFailurePayload,
+            tokenUsage,
+            modelTurns: contextBudgetTelemetry.modelTurns,
+            toolCallCount: toolCallsById.size,
+          })
+        ) {
+          const usage =
+            (terminalFailurePayload && isRecord(terminalFailurePayload.usage)
+              ? terminalFailurePayload.usage
+              : null) ?? tokenUsage;
+          providerTerminationRecovery = {
+            ...(providerTerminationRecovery ?? {
+              trigger_reason: "long_running_provider_termination",
+              initial_error_type:
+                optionalString(terminalFailurePayload?.type) ?? null,
+              initial_error_message:
+                optionalString(terminalFailurePayload?.message) ?? null,
+              initial_input_tokens: firstFiniteUsageNumber(usage, [
+                "input_tokens",
+                "prompt_tokens",
+              ]),
+              initial_model_turns: contextBudgetTelemetry.modelTurns,
+              initial_tool_calls: toolCallsById.size,
+              compaction_attempted: true,
+              compaction_changed_branch: false,
+              retry_attempted: false,
+              recovered: false,
+            }),
+          };
+          if (runnerAttempt < 2) {
+            const liveSessionState =
+              params.sessionCheckpointSessionOps?.currentLeafCheckpointState(
+                checkpointHarnessSessionId,
+              ) ?? currentPiSessionLeafState(checkpointHarnessSessionId);
+            const compactionResult = await forceCompactSessionWithSnapshotMerge({
+              store,
+              workspaceId: record.workspaceId,
+              sessionId: record.sessionId,
+              inputId: record.inputId,
+              harnessSessionId: checkpointHarnessSessionId,
+              baseLeafId: liveSessionState.leafId,
+              baseLatestCompactionId: liveSessionState.latestCompactionId,
+              runPiSessionCompactionFn: params.runPiSessionCompactionFn,
+              resolveRuntimeModelClientFn: params.resolveRuntimeModelClientFn,
+              sessionOps: params.sessionCheckpointSessionOps,
+            });
+            providerTerminationRecovery = {
+              ...providerTerminationRecovery,
+              compaction_changed_branch: compactionResult.merged,
+              retry_attempted: compactionResult.merged,
+            };
+            if (compactionResult.merged) {
+              prepareRunnerRetry(optionalString(terminalFailurePayload?.message));
+              continue;
+            }
+          }
         }
         if (
           runnerAttempt > 1 &&
@@ -5236,6 +5423,16 @@ export async function processClaimedInput(params: {
         ) {
           overflowRecovery = {
             ...overflowRecovery,
+            recovered: true,
+          };
+        }
+        if (
+          runnerAttempt > 1 &&
+          providerTerminationRecovery?.retry_attempted &&
+          terminalEventToRelay?.eventType === "run_completed"
+        ) {
+          providerTerminationRecovery = {
+            ...providerTerminationRecovery,
             recovered: true,
           };
         }
@@ -5385,6 +5582,7 @@ export async function processClaimedInput(params: {
         checkpointQueued: Boolean(checkpointJob),
         preRunCompaction,
         overflowRecovery,
+        providerTerminationRecovery,
       });
       if (deferredTerminalEvent) {
         deferredTerminalEvent.payload.context_budget_decisions =
@@ -5677,6 +5875,7 @@ export async function processClaimedInput(params: {
             checkpointQueued: false,
             preRunCompaction,
             overflowRecovery,
+            providerTerminationRecovery,
           }),
         },
       });
@@ -5724,6 +5923,7 @@ export async function processClaimedInput(params: {
           checkpointQueued: false,
           preRunCompaction,
           overflowRecovery,
+          providerTerminationRecovery,
         }),
         tokenUsage: null,
       });

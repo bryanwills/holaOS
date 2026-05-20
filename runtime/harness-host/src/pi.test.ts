@@ -2428,7 +2428,7 @@ test("runPi emits run_started and terminal success when the session completes", 
     assert.deepEqual(sentContent, [
       {
         type: "text",
-        text: "List the files\n\nAttachments: none.\nImage inputs: none.",
+        text: "List the files",
       },
     ]);
     assert.equal(events[0]?.payload.harness_session_id, "/tmp/pi-session.jsonl");
@@ -3392,7 +3392,7 @@ test("buildPiPromptPayload inlines image_urls from data URLs and remote image fe
       ],
     });
 
-    assert.match(prompt.text, /^List the files\s+Attachments: none\./);
+    assert.ok(!prompt.text.includes("Attachments: none."));
     assert.match(prompt.text, /Referenced image URLs:/);
     assert.match(prompt.text, /\[Image URL 1\] data URL/);
     assert.match(prompt.text, /\[Image URL 2\] https:\/\/example\.com\/reference\.png/);
@@ -3415,13 +3415,15 @@ test("buildPiPromptPayload inlines image_urls from data URLs and remote image fe
   }
 });
 
-test("buildPiPromptPayload explicitly marks when attachments and image inputs are absent", async () => {
+test("buildPiPromptPayload omits empty attachment and image-input sentinel text", async () => {
   const prompt = await buildPiPromptPayload({
     ...baseRequest(),
     attachments: [],
   });
 
-  assert.match(prompt.text, /^List the files\s+Attachments: none\.\s+Image inputs: none\.$/);
+  assert.equal(prompt.text, "List the files");
+  assert.ok(!prompt.text.includes("Attachments: none."));
+  assert.ok(!prompt.text.includes("Image inputs: none."));
   assert.deepEqual(prompt.images, []);
 });
 
@@ -3434,7 +3436,7 @@ test("buildPiPromptPayload keeps runtime context in a separate prompt section", 
 
   assert.match(
     prompt.text,
-    /^List the files\s+Runtime context:\s+\[Runtime Context 1\]\s+Previous summary\s+\[\/Runtime Context 1\]\s+\[Runtime Context 2\]\s+User prefers terse answers\s+\[\/Runtime Context 2\]\s+Attachments: none\.\s+Image inputs: none\.$/
+    /^List the files\s+Runtime context:\s+\[Runtime Context 1\]\s+Previous summary\s+\[\/Runtime Context 1\]\s+\[Runtime Context 2\]\s+User prefers terse answers\s+\[\/Runtime Context 2\]$/
   );
   assert.ok(prompt.text.startsWith("List the files\n\nRuntime context:\n\n[Runtime Context 1]"));
 });

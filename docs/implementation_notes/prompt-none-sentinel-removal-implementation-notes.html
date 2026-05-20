@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Prompt None Sentinel Removal Implementation Notes</title>
+  </head>
+  <body>
+    <h1>Prompt None Sentinel Removal Implementation Notes</h1>
+    <h2>Design decisions</h2>
+    <ul>
+      <li>Removed synthetic <code>Attachments: none.</code> and <code>Image inputs: none.</code> prompt lines entirely instead of replacing them with shorter placeholders.</li>
+      <li>Kept all positive attachment and image sections unchanged so prompts still surface real attached content and referenced image URLs.</li>
+    </ul>
+    <h2>Deviations</h2>
+    <ul>
+      <li>No spec deviation. The change follows the request to omit no-op attachment and image-input prompt text.</li>
+    </ul>
+    <h2>Tradeoffs</h2>
+    <ul>
+      <li>Removing the sentinel lines makes prompts smaller and avoids priming the model with attachment and image vocabulary when no such inputs exist.</li>
+      <li>The prompt no longer explicitly states absence, so any downstream consumer that relied on that exact text must use attachment arrays rather than prompt string matching.</li>
+    </ul>
+    <h2>Open questions</h2>
+    <ul>
+      <li>None at implementation time.</li>
+    </ul>
+  </body>
+</html>

@@ -572,9 +572,9 @@ function requestPlan(
   body?: Record<string, unknown>;
 } {
   switch (toolId) {
-    case "holaboss_onboarding_status":
+    case "onboarding_status":
       return { method: "GET", requestPath: RUNTIME_TOOLS_ONBOARDING_STATUS_PATH };
-    case "holaboss_onboarding_complete": {
+    case "onboarding_complete": {
       const params = isRecord(toolParams) ? toolParams : {};
       return {
         method: "POST",
@@ -585,55 +585,55 @@ function requestPlan(
         },
       };
     }
-    case "holaboss_cronjobs_list":
+    case "cronjobs_list":
       return { method: "GET", requestPath: cronjobsListPath(toolParams) };
-    case "holaboss_cronjobs_create":
+    case "cronjobs_create":
       return { method: "POST", requestPath: RUNTIME_TOOLS_CRONJOBS_PATH, body: createCronjobBody(toolParams) };
-    case "holaboss_cronjobs_get":
+    case "cronjobs_get":
       return {
         method: "GET",
         requestPath: cronjobPath(isRecord(toolParams) ? toolParams.job_id : undefined),
       };
-    case "holaboss_cronjobs_update":
+    case "cronjobs_update":
       return {
         method: "PATCH",
         requestPath: cronjobPath(isRecord(toolParams) ? toolParams.job_id : undefined),
         body: updateCronjobBody(toolParams),
       };
-    case "holaboss_cronjobs_delete":
+    case "cronjobs_delete":
       return {
         method: "DELETE",
         requestPath: cronjobPath(isRecord(toolParams) ? toolParams.job_id : undefined),
       };
-    case "holaboss_delegate_task":
+    case "delegate_task":
       return {
         method: "POST",
         requestPath: RUNTIME_TOOLS_SUBAGENTS_PATH,
         body: createDelegateTaskBody(toolParams),
       };
-    case "holaboss_get_subagent":
+    case "get_subagent":
       return {
         method: "GET",
         requestPath: getSubagentPath(toolParams),
       };
-    case "holaboss_list_background_tasks":
+    case "list_background_tasks":
       return {
         method: "GET",
         requestPath: listBackgroundTasksPath(toolParams),
       };
-    case "holaboss_cancel_subagent":
+    case "cancel_subagent":
       return {
         method: "POST",
         requestPath: `${subagentPath(isRecord(toolParams) ? toolParams.subagent_id : undefined)}/cancel`,
         body: {},
       };
-    case "holaboss_resume_subagent":
+    case "resume_subagent":
       return {
         method: "POST",
         requestPath: `${subagentPath(isRecord(toolParams) ? toolParams.subagent_id : undefined)}/resume`,
         body: createResumeSubagentBody(toolParams),
       };
-    case "holaboss_continue_subagent":
+    case "continue_subagent":
       return {
         method: "POST",
         requestPath: `${subagentPath(isRecord(toolParams) ? toolParams.subagent_id : undefined)}/continue`,
@@ -653,11 +653,11 @@ function requestPlan(
       return { method: "GET", requestPath: RUNTIME_TOOLS_TODO_PATH };
     case "todowrite":
       return { method: "POST", requestPath: RUNTIME_TOOLS_TODO_PATH, body: createTodoWriteBody(toolParams) };
-    case "holaboss_scratchpad_read":
+    case "scratchpad_read":
       return { method: "GET", requestPath: RUNTIME_TOOLS_SCRATCHPAD_PATH };
-    case "holaboss_scratchpad_write":
+    case "scratchpad_write":
       return { method: "POST", requestPath: RUNTIME_TOOLS_SCRATCHPAD_PATH, body: createScratchpadWriteBody(toolParams) };
-    case "holaboss_update_workspace_instructions":
+    case "update_workspace_instructions":
       return {
         method: "POST",
         requestPath: RUNTIME_TOOLS_WORKSPACE_INSTRUCTIONS_PATH,
