@@ -44,10 +44,12 @@ function NewAppShellContent() {
   const setSearchOpen = useSetAtom(searchOpenAtom);
   const setSidebarCollapsed = useSetAtom(sidebarCollapsedAtom);
   const { selectedWorkspaceId } = useWorkspaceSelection();
-  const { onboardingModeActive } = useWorkspaceDesktop();
+  const { onboardingModeActive, workspaces, hasHydratedWorkspaceList } =
+    useWorkspaceDesktop();
   const [publishOpen, setPublishOpen] = useAtom(publishOpenAtom);
   const createWorkspaceOpen = useAtomValue(createWorkspaceOpenAtom);
   const setCreateWorkspaceOpen = useSetAtom(createWorkspaceOpenAtom);
+  const hasWorkspaces = workspaces.length > 0;
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -65,6 +67,14 @@ function NewAppShellContent() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [setNewTabOpen, setSearchOpen, setSidebarCollapsed]);
+
+  if (hasHydratedWorkspaceList && !hasWorkspaces) {
+    return (
+      <div className="flex h-screen w-screen overflow-hidden text-foreground antialiased">
+        <FirstWorkspacePane variant="full" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen w-screen overflow-hidden text-foreground antialiased">
