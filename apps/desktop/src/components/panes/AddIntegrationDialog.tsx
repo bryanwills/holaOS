@@ -2,7 +2,12 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { Loader2, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from "@/components/ui/input-group";
 import { cn } from "@/lib/utils";
 
 export interface AddIntegrationDialogIntegration {
@@ -86,29 +91,32 @@ export function AddIntegrationDialog({
             className="flex h-[min(640px,calc(100vh-96px))] w-[min(560px,calc(100vw-48px))] scale-[0.97] flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-2xl ring-1 ring-foreground/5 transition-transform duration-stride ease-emphasized group-data-[open]:scale-100"
             style={{ willChange: "transform" }}
           >
-            <header className="flex shrink-0 items-center gap-2 border-border border-b px-4 py-3">
-              <Search className="size-3.5 shrink-0 text-muted-foreground" />
-              <Input
-                autoFocus
-                className="h-7 flex-1 border-0 bg-transparent px-0 text-sm shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search integrations…"
-                type="text"
-                value={query}
-              />
-              <DialogPrimitive.Close
-                render={
-                  <Button
-                    aria-label="Close"
-                    className="size-6 text-muted-foreground hover:text-foreground"
-                    size="icon-sm"
-                    type="button"
-                    variant="ghost"
-                  >
-                    <X className="size-3.5" />
-                  </Button>
-                }
-              />
+            <header className="shrink-0 border-border border-b p-3">
+              <InputGroup className="border-0">
+                <InputGroupAddon align="inline-start">
+                  <Search />
+                </InputGroupAddon>
+                <InputGroupInput
+                  autoFocus
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search integrations…"
+                  value={query}
+                />
+                <InputGroupAddon align="inline-end">
+                  <DialogPrimitive.Close
+                    render={
+                      <InputGroupButton
+                        aria-label="Close"
+                        size="icon-xs"
+                        type="button"
+                        variant="ghost"
+                      >
+                        <X />
+                      </InputGroupButton>
+                    }
+                  />
+                </InputGroupAddon>
+              </InputGroup>
             </header>
 
             <div className="min-h-0 flex-1 overflow-y-auto">
