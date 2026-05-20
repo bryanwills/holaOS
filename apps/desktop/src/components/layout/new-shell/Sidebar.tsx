@@ -24,8 +24,10 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   ChevronDown,
   ChevronRight,
+  Clock,
   Copy,
   Globe,
+  Home,
   Inbox,
   Link2,
   Loader2,
@@ -39,8 +41,9 @@ import {
   Upload,
   Wrench,
   X,
+  Zap,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { SectionLabel } from "./shared";
 import {
   activeInternalTabIdAtom,
@@ -61,6 +64,11 @@ import {
   inboxOpenAtom,
   publishOpenAtom,
   searchOpenAtom,
+  SIDEBAR_MAX_WIDTH,
+  SIDEBAR_MIN_WIDTH,
+  type SidebarSection,
+  sidebarSectionAtom,
+  sidebarWidthAtom,
   settingsOpenAtom,
   settingsSectionAtom,
   sidebarCollapsedAtom,
@@ -84,37 +92,181 @@ function hostFromUrl(url: string): string {
   }
 }
 
-const SIDEBAR_WIDTH = 260;
-
 export function Sidebar() {
   const collapsed = useAtomValue(sidebarCollapsedAtom);
+  const width = useAtomValue(sidebarWidthAtom);
   return (
     <div
-      className="flex shrink-0 overflow-hidden transition-[width] duration-stride ease-out-expo"
-      style={{ width: collapsed ? 0 : SIDEBAR_WIDTH }}
+      className="relative flex shrink-0 overflow-hidden transition-[width] duration-stride ease-out-expo"
+      style={{ width: collapsed ? 0 : width }}
     >
       <SidebarExpanded />
+      {!collapsed ? <SidebarResizeHandle /> : null}
+    </div>
+  );
+}
+
+function SidebarResizeHandle() {
+  const [width, setWidth] = useAtom(sidebarWidthAtom);
+  const draggingRef = useRef(false);
+  const [hovering, setHovering] = useState(false);
+
+  const onMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      draggingRef.current = true;
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      const startX = e.clientX;
+      const startWidth = width;
+      const onMove = (ev: MouseEvent) => {
+        if (!draggingRef.current) return;
+        const next = Math.max(
+          SIDEBAR_MIN_WIDTH,
+          Math.min(SIDEBAR_MAX_WIDTH, startWidth + (ev.clientX - startX)),
+        );
+        setWidth(next);
+      };
+      const onUp = () => {
+        draggingRef.current = false;
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [setWidth, width],
+  );
+
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+      onMouseDown={onMouseDown}
+      onMouseEnter={() => setHovering(true)}
+      onMouseLeave={() => setHovering(false)}
+      onDoubleClick={() => setWidth(260)}
+      className="absolute top-0 right-0 z-10 h-full w-1.5 cursor-col-resize select-none"
+    >
+      <div
+        className={cn(
+          "absolute top-0 right-0 h-full w-px bg-primary/60 transition-opacity duration-snappy ease-emphasized",
+          hovering || draggingRef.current ? "opacity-100" : "opacity-0",
+        )}
+      />
     </div>
   );
 }
 
 function SidebarExpanded() {
-  const { selectedWorkspaceId } = useWorkspaceSelection();
+  const section = useAtomValue(sidebarSectionAtom);
+  return (
+    <aside
+      data-pane-card="true"
+      data-pane-role="sidebar"
+      className="flex h-full w-full shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground backdrop-blur-sm"
+    >
+      <WorkspaceSwitcher />
+      <SidebarSectionNav />
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div
+          key={section}
+          className="absolute inset-0 flex flex-col animate-in fade-in-0 slide-in-from-bottom-1 duration-snappy"
+          style={{ animationTimingFunction: "var(--ease-emphasized)" }}
+        >
+          {section === "home" ? <SidebarHomeSection /> : null}
+          {section === "inbox" ? <SidebarInboxSection /> : null}
+          {section === "artifacts" ? <SidebarArtifactsSection /> : null}
+          {section === "automations" ? <SidebarAutomationsSection /> : null}
+        </div>
+      </div>
+    </aside>
+  );
+}
 
-  const setArtifactsOpen = useSetAtom(artifactsOpenAtom);
-  const setInboxOpen = useSetAtom(inboxOpenAtom);
-  const setAutomationsOpen = useSetAtom(automationsOpenAtom);
+const SECTION_NAV_ITEMS: Array<{
+  key: SidebarSection;
+  label: string;
+  icon: React.ReactNode;
+}> = [
+  { key: "home", label: "Home", icon: <Home /> },
+  { key: "inbox", label: "Inbox", icon: <Inbox /> },
+  { key: "artifacts", label: "Artifacts", icon: <Package /> },
+  { key: "automations", label: "Automations", icon: <Zap /> },
+];
+
+function SidebarSectionNav() {
+  const [section, setSection] = useAtom(sidebarSectionAtom);
+  const { selectedWorkspaceId } = useWorkspaceSelection();
+  const { proposals } = useTaskProposals(selectedWorkspaceId || null);
+  const unreadInbox = proposals.length;
+
+  return (
+    <div className="flex shrink-0 items-center gap-0.5 border-b border-sidebar-border bg-sidebar px-2 py-1.5">
+      {SECTION_NAV_ITEMS.map((item) => {
+        const active = section === item.key;
+        const badge = item.key === "inbox" && unreadInbox > 0 ? unreadInbox : 0;
+        return (
+          <button
+            key={item.key}
+            type="button"
+            aria-label={item.label}
+            aria-pressed={active}
+            title={item.label}
+            onClick={() => setSection(item.key)}
+            className={cn(
+              "group/sec-nav relative flex h-7 shrink-0 items-center rounded-md text-foreground/55 transition-colors duration-snappy ease-emphasized hover:bg-foreground/[0.05] hover:text-foreground",
+              "[&_svg]:size-4",
+              // Inactive = true 28×28 square: w-7 (28) - px-1.5 (6+6) =
+              // 16px inner; size-4 icon (16) fits exactly, centered.
+              // No gap when inactive — gap would push the icon left of
+              // center because the collapsed label is still a flex sibling.
+              active
+                ? "gap-1.5 bg-foreground/[0.1] pr-2 pl-1.5 text-foreground"
+                : "w-7 px-1.5",
+            )}
+          >
+            {item.icon}
+            <span
+              className={cn(
+                "overflow-hidden whitespace-nowrap text-[12px] font-medium leading-none transition-[max-width,opacity] duration-base ease-emphasized",
+                active ? "max-w-[140px] opacity-100" : "max-w-0 opacity-0",
+              )}
+            >
+              {item.label}
+            </span>
+            {badge > 0 ? (
+              <span
+                aria-hidden
+                className={cn(
+                  "grid h-3 min-w-3 shrink-0 place-items-center rounded-full bg-primary px-0.5 text-[9px] font-medium leading-none text-primary-foreground transition-[margin] duration-base ease-emphasized",
+                  active ? "-mr-0.5 ml-0" : "absolute top-0.5 right-0.5",
+                )}
+              >
+                {badge > 9 ? "9+" : badge}
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function SidebarHomeSection() {
+  const { selectedWorkspaceId } = useWorkspaceSelection();
   const setSettingsOpen = useSetAtom(settingsOpenAtom);
   const setSearchOpen = useSetAtom(searchOpenAtom);
   const setSettingsSection = useSetAtom(settingsSectionAtom);
-
-  const artifactsOpen = useAtomValue(artifactsOpenAtom);
-  const inboxOpen = useAtomValue(inboxOpenAtom);
-  const automationsOpen = useAtomValue(automationsOpenAtom);
   const settingsOpen = useAtomValue(settingsOpenAtom);
 
   const skills = useWorkspaceSkills(selectedWorkspaceId || null);
   const cronjobs = useWorkspaceCronjobs(selectedWorkspaceId || null);
+  const setAutomationsOpen = useSetAtom(automationsOpenAtom);
+  const automationsOpen = useAtomValue(automationsOpenAtom);
   const urlRecents = useRecentBrowserHistory(20);
   const allFileRecents = useAtomValue(recentFilesAtom);
   const fileRecents = useMemo(
@@ -140,99 +292,210 @@ function SidebarExpanded() {
     merged.sort((a, b) => b.ts.localeCompare(a.ts));
     return merged.slice(0, 7);
   }, [urlRecents, fileRecents]);
-  const { proposals } = useTaskProposals(selectedWorkspaceId || null);
-  const unreadInbox = proposals.length;
 
   return (
-    <aside
-      data-pane-card="true"
-      data-pane-role="sidebar"
-      className="flex h-full w-[260px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground backdrop-blur-sm"
-    >
-      <WorkspaceSwitcher />
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-3">
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-3">
+      <SidebarGroup>
+        <NavItem icon={<Search />} onClick={() => setSearchOpen(true)}>
+          Search
+        </NavItem>
+        <AppsSection />
+      </SidebarGroup>
+
+      {recents.length > 0 ? (
         <SidebarGroup>
-          <NavItem
-            icon={<Search />}
-            onClick={() => setSearchOpen(true)}
-          >
-            Search
-          </NavItem>
-          <NavItem
-            icon={<Inbox />}
-            badge={unreadInbox > 0 ? unreadInbox : undefined}
-            active={inboxOpen}
-            onClick={() => setInboxOpen(true)}
-          >
-            Inbox
-          </NavItem>
-          <NavItem
-            icon={<Package />}
-            active={artifactsOpen}
+          <SectionLabel>Recents</SectionLabel>
+          {recents.map((item) =>
+            item.kind === "url" ? (
+              <RecentRow key={`u:${item.entry.id}`} entry={item.entry} />
+            ) : (
+              <RecentFileRow key={`f:${item.entry.id}`} entry={item.entry} />
+            ),
+          )}
+        </SidebarGroup>
+      ) : null}
+
+      {skills.length > 0 || cronjobs.length > 0 ? (
+        <SidebarGroup>
+          {skills.length > 0 ? (
+            <SectionLabel>
+              Skills
+              <span className="ml-auto text-foreground/30">
+                {skills.length}
+              </span>
+            </SectionLabel>
+          ) : null}
+          {cronjobs.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => setAutomationsOpen(true)}
+              className={cn(
+                "flex items-center gap-2 rounded-md px-2 py-1 text-left text-xs font-medium tracking-wide text-foreground/40 uppercase transition-colors hover:bg-foreground/[0.04]",
+                automationsOpen && "bg-foreground/[0.07]",
+              )}
+            >
+              <span>Automations</span>
+              <span className="ml-auto text-foreground/30">
+                {cronjobs.length}
+              </span>
+            </button>
+          ) : null}
+        </SidebarGroup>
+      ) : null}
+
+      <div className="mt-auto" />
+
+      <SidebarGroup>
+        <NavItem
+          icon={<Settings />}
+          active={settingsOpen}
+          onClick={() => {
+            setSettingsSection("settings");
+            setSettingsOpen(true);
+          }}
+        >
+          Settings
+        </NavItem>
+      </SidebarGroup>
+    </div>
+  );
+}
+
+function SidebarInboxSection() {
+  const { selectedWorkspaceId } = useWorkspaceSelection();
+  const { proposals, isLoading } = useTaskProposals(selectedWorkspaceId || null);
+  const setInboxOpen = useSetAtom(inboxOpenAtom);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-3">
+      <SectionLabel>
+        Inbox
+        {proposals.length > 0 ? (
+          <span className="ml-auto text-foreground/30">{proposals.length}</span>
+        ) : null}
+      </SectionLabel>
+      {isLoading && proposals.length === 0 ? (
+        <div className="grid place-items-center py-8">
+          <Loader2 className="size-4 animate-spin text-foreground/40" />
+        </div>
+      ) : proposals.length === 0 ? (
+        <div className="grid place-items-center px-3 py-12 text-center">
+          <div className="flex flex-col items-center gap-2">
+            <Inbox className="size-5 text-foreground/30" />
+            <div className="text-xs text-foreground/55">
+              You're all caught up
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-0.5">
+          {proposals.slice(0, 12).map((p) => (
+            <button
+              key={p.proposal_id}
+              type="button"
+              onClick={() => setInboxOpen(true)}
+              className="flex flex-col gap-0.5 rounded-md px-2 py-1.5 text-left text-xs text-foreground/80 transition-colors hover:bg-foreground/[0.04]"
+            >
+              <span className="truncate font-medium text-foreground">
+                {p.task_name || "Untitled proposal"}
+              </span>
+              {p.task_generation_rationale ? (
+                <span className="line-clamp-2 text-foreground/55">
+                  {p.task_generation_rationale}
+                </span>
+              ) : null}
+            </button>
+          ))}
+          {proposals.length > 12 ? (
+            <button
+              type="button"
+              onClick={() => setInboxOpen(true)}
+              className="mt-1 rounded-md px-2 py-1 text-left text-xs text-foreground/55 transition-colors hover:bg-foreground/[0.04] hover:text-foreground"
+            >
+              See all {proposals.length} →
+            </button>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SidebarArtifactsSection() {
+  const setArtifactsOpen = useSetAtom(artifactsOpenAtom);
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-3">
+      <SectionLabel>Artifacts</SectionLabel>
+      <div className="grid place-items-center px-3 py-12 text-center">
+        <div className="flex flex-col items-center gap-3">
+          <Package className="size-5 text-foreground/30" />
+          <div className="text-xs text-foreground/55">
+            Artifacts from your agent runs will appear here.
+          </div>
+          <button
+            type="button"
             onClick={() => setArtifactsOpen(true)}
+            className="rounded-md bg-foreground/[0.05] px-2.5 py-1 text-xs text-foreground/70 transition-colors hover:bg-foreground/[0.08] hover:text-foreground"
           >
-            Artifacts
-          </NavItem>
-          <AppsSection />
-        </SidebarGroup>
-
-        {recents.length > 0 ? (
-          <SidebarGroup>
-            <SectionLabel>Recents</SectionLabel>
-            {recents.map((item) =>
-              item.kind === "url" ? (
-                <RecentRow key={`u:${item.entry.id}`} entry={item.entry} />
-              ) : (
-                <RecentFileRow key={`f:${item.entry.id}`} entry={item.entry} />
-              ),
-            )}
-          </SidebarGroup>
-        ) : null}
-
-        {skills.length > 0 || cronjobs.length > 0 ? (
-          <SidebarGroup>
-            {skills.length > 0 ? (
-              <SectionLabel>
-                Skills
-                <span className="ml-auto text-foreground/30">
-                  {skills.length}
-                </span>
-              </SectionLabel>
-            ) : null}
-            {cronjobs.length > 0 ? (
-              <button
-                type="button"
-                onClick={() => setAutomationsOpen(true)}
-                className={cn(
-                  "flex items-center gap-2 rounded-md px-2 py-1 text-left text-xs font-medium tracking-wide text-foreground/40 uppercase transition-colors hover:bg-foreground/[0.04]",
-                  automationsOpen && "bg-foreground/[0.07]",
-                )}
-              >
-                <span>Automations</span>
-                <span className="ml-auto text-foreground/30">
-                  {cronjobs.length}
-                </span>
-              </button>
-            ) : null}
-          </SidebarGroup>
-        ) : null}
-
-        <div className="mt-auto" />
-
-        <SidebarGroup>
-          <NavItem
-            icon={<Settings />}
-            active={settingsOpen}
-            onClick={() => {
-              setSettingsSection("settings");
-              setSettingsOpen(true);
-            }}
-          >
-            Settings
-          </NavItem>
-        </SidebarGroup>
+            Open full Artifacts view
+          </button>
+        </div>
       </div>
-    </aside>
+    </div>
+  );
+}
+
+function SidebarAutomationsSection() {
+  const { selectedWorkspaceId } = useWorkspaceSelection();
+  const cronjobs = useWorkspaceCronjobs(selectedWorkspaceId || null);
+  const setAutomationsOpen = useSetAtom(automationsOpenAtom);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-3">
+      <SectionLabel>
+        Automations
+        {cronjobs.length > 0 ? (
+          <span className="ml-auto text-foreground/30">{cronjobs.length}</span>
+        ) : null}
+      </SectionLabel>
+      {cronjobs.length === 0 ? (
+        <div className="grid place-items-center px-3 py-12 text-center">
+          <div className="flex flex-col items-center gap-2">
+            <Clock className="size-5 text-foreground/30" />
+            <div className="text-xs text-foreground/55">
+              No scheduled automations yet.
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-0.5">
+          {cronjobs.slice(0, 12).map((job) => (
+            <button
+              key={job.id}
+              type="button"
+              onClick={() => setAutomationsOpen(true)}
+              className="flex flex-col gap-0.5 rounded-md px-2 py-1.5 text-left text-xs text-foreground/80 transition-colors hover:bg-foreground/[0.04]"
+            >
+              <span className="truncate font-medium text-foreground">
+                {job.name || "Untitled automation"}
+              </span>
+              <span className="truncate font-mono text-[10px] text-foreground/45">
+                {job.cron}
+              </span>
+            </button>
+          ))}
+          {cronjobs.length > 12 ? (
+            <button
+              type="button"
+              onClick={() => setAutomationsOpen(true)}
+              className="mt-1 rounded-md px-2 py-1 text-left text-xs text-foreground/55 transition-colors hover:bg-foreground/[0.04] hover:text-foreground"
+            >
+              See all {cronjobs.length} →
+            </button>
+          ) : null}
+        </div>
+      )}
+    </div>
   );
 }
 
