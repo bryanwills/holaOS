@@ -15,10 +15,10 @@ import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
+  SuspendingPopover as Popover,
+} from "./overlay-presence";
 import { useWorkspaceBrowser } from "@/components/panes/useWorkspaceBrowser";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import { cn } from "@/lib/utils";
