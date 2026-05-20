@@ -12,6 +12,7 @@ import {
   Info,
   Loader2,
   Plug,
+  PlugZap,
   RotateCcw,
   Send,
   Settings2,
@@ -24,6 +25,7 @@ import { AuthPanel } from "@/components/auth/AuthPanel";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { BillingSettingsPanel } from "@/components/billing/BillingSettingsPanel";
 import { IntegrationsPane } from "@/components/panes/IntegrationsPane";
+import { WorkspaceIntegrationsPane } from "@/components/panes/WorkspaceIntegrationsPane";
 import {
   SettingsCard,
   SettingsMenuSelectRow,
@@ -118,6 +120,7 @@ const SETTINGS_NAV: ReadonlyArray<SettingsScreenNavEntry<UiSettingsPaneSection>>
   { id: "billing", label: "Billing", icon: CreditCard },
   { id: "providers", label: "Providers", icon: Waypoints },
   { id: "integrations", label: "Integrations", icon: Plug },
+  { id: "workspace-integrations", label: "Workspace integrations", icon: PlugZap },
   { id: "submissions", label: "Submissions", icon: Send },
   { id: "experimental", label: "Experimental", icon: FlaskConical },
 ];
@@ -153,6 +156,8 @@ function pageTitle(section: UiSettingsPaneSection): string {
       return "Providers";
     case "integrations":
       return "Integrations";
+    case "workspace-integrations":
+      return "Workspace integrations";
     case "submissions":
       return "Submissions";
     case "experimental":
@@ -174,6 +179,8 @@ function pageDescription(section: UiSettingsPaneSection): string | undefined {
       return "Default models, providers, and per-workspace overrides.";
     case "integrations":
       return "Manage connections to third-party services your apps depend on.";
+    case "workspace-integrations":
+      return "Pick which of your account integrations this workspace's agent can use.";
     case "submissions":
       return "Review templates and apps you've submitted for marketplace listing.";
     case "experimental":
@@ -539,6 +546,19 @@ export function SettingsScreenRoot({
 
         {activeSection === "integrations" ? (
           <IntegrationsPane embedded />
+        ) : null}
+
+        {activeSection === "workspace-integrations" ? (
+          selectedWorkspace ? (
+            <WorkspaceIntegrationsPane workspaceId={selectedWorkspace.id} />
+          ) : (
+            <SettingsSection
+              description="Switch to a workspace to manage its integrations."
+              title="No workspace selected"
+            >
+              <></>
+            </SettingsSection>
+          )
         ) : null}
 
         {activeSection === "submissions" ? (

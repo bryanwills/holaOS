@@ -9,6 +9,7 @@ import {
   ShieldAlert,
   Unplug,
 } from "lucide-react";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   SettingsCard,
   SettingsSection,
@@ -175,23 +176,41 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     string | null
   >(null);
   const [statusMessage, setStatusMessage] = useState("");
+  const [workspaceUsageByConnection, setWorkspaceUsageByConnection] = useState<
+    Map<string, ConnectionWorkspaceUsageEntry["workspaces"]>
+  >(new Map());
+  const [capabilitiesByToolkit, setCapabilitiesByToolkit] = useState<
+    Record<string, ComposioToolkitCapability[]>
+  >({});
   const accountMetadata = useIntegrationAccountMetadata(connections);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [catalogResult, connectionResult, toolkitResult] =
+      const [catalogResult, connectionResult, toolkitResult, usageResult, capabilitiesResult] =
         await Promise.all([
           window.electronAPI.workspace.listIntegrationCatalog(),
           window.electronAPI.workspace.listIntegrationConnections(),
           window.electronAPI.workspace
             .composioListToolkits()
             .catch(() => ({ toolkits: [] as ComposioToolkit[] })),
+          window.electronAPI.workspace
+            .listConnectionWorkspaceUsage()
+            .catch(() => ({ usage: [] as ConnectionWorkspaceUsageEntry[] })),
+          window.electronAPI.workspace
+            .listComposioToolkitCapabilities()
+            .catch(() => ({ toolkits: {} as Record<string, ComposioToolkitCapability[]> })),
         ]);
       setIntegrations(
         mergeIntegrationCards(catalogResult.providers, toolkitResult.toolkits),
       );
       setConnections(connectionResult.connections);
+      const usageMap = new Map<string, ConnectionWorkspaceUsageEntry["workspaces"]>();
+      for (const entry of usageResult.usage) {
+        usageMap.set(entry.connection_id, entry.workspaces);
+      }
+      setWorkspaceUsageByConnection(usageMap);
+      setCapabilitiesByToolkit(capabilitiesResult.toolkits ?? {});
     } catch (error) {
       setIntegrations([]);
       setConnections([]);
@@ -560,7 +579,29 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     }
   }
 
-  async function handleDisconnect(connectionId: string) {
+  const [pendingDisconnect, setPendingDisconnect] = useState<{
+    connectionId: string;
+    label: string;
+    workspaceCount: number;
+  } | null>(null);
+
+  function handleDisconnect(connectionId: string) {
+    const target = connections.find((c) => c.connection_id === connectionId);
+    if (!target) return;
+    const usage = workspaceUsageByConnection.get(connectionId) ?? [];
+    const workspaceCount = new Set(usage.map((u) => u.workspace_id)).size;
+    if (workspaceCount > 0) {
+      setPendingDisconnect({
+        connectionId,
+        label: target.account_label || target.provider_id,
+        workspaceCount,
+      });
+      return;
+    }
+    void performDisconnect(connectionId);
+  }
+
+  async function performDisconnect(connectionId: string) {
     setDisconnectingConnectionId(connectionId);
     setStatusMessage("");
     try {
@@ -800,12 +841,14 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
                 metadata={accountMetadata}
                 onConnect={() => void handleConnect(integration)}
                 onDisconnect={(connectionId) =>
-                  void handleDisconnect(connectionId)
+                  handleDisconnect(connectionId)
                 }
                 onRefresh={(connectionId) =>
                   void handleRefresh(connectionId)
                 }
                 refreshingConnectionId={refreshingConnectionId}
+                toolkitCapabilities={capabilitiesByToolkit[integration.providerId] ?? []}
+                workspaceUsageByConnection={workspaceUsageByConnection}
               />
             ))}
           </div>
@@ -857,6 +900,27 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
           No integrations found.
         </p>
       ) : null}
+
+      <ConfirmDialog
+        confirmLabel="Disconnect"
+        description={
+          pendingDisconnect
+            ? `${pendingDisconnect.label} is bound in ${pendingDisconnect.workspaceCount} workspace${pendingDisconnect.workspaceCount === 1 ? "" : "s"}. Disconnecting drops every binding and revokes the Composio account. Apps in those workspaces will lose access until you reconnect.`
+            : ""
+        }
+        destructive
+        onConfirm={() => {
+          if (pendingDisconnect) {
+            void performDisconnect(pendingDisconnect.connectionId);
+            setPendingDisconnect(null);
+          }
+        }}
+        onOpenChange={(open) => {
+          if (!open) setPendingDisconnect(null);
+        }}
+        open={Boolean(pendingDisconnect)}
+        title="Disconnect this account?"
+      />
     </>
   );
 
@@ -977,12 +1041,14 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
                   metadata={accountMetadata}
                   onConnect={() => void handleConnect(integration)}
                   onDisconnect={(connectionId) =>
-                    void handleDisconnect(connectionId)
+                    handleDisconnect(connectionId)
                   }
                   onRefresh={(connectionId) =>
                     void handleRefresh(connectionId)
                   }
                   refreshingConnectionId={refreshingConnectionId}
+                  toolkitCapabilities={capabilitiesByToolkit[integration.providerId] ?? []}
+                  workspaceUsageByConnection={workspaceUsageByConnection}
                 />
               ))}
             </div>
@@ -1280,6 +1346,8 @@ function ConnectedProviderCard({
   disconnectingConnectionId,
   metadata,
   compact,
+  workspaceUsageByConnection,
+  toolkitCapabilities,
 }: {
   integration: IntegrationCard;
   connections: IntegrationConnectionPayload[];
@@ -1293,7 +1361,10 @@ function ConnectedProviderCard({
   disconnectingConnectionId: string | null;
   metadata: Map<string, ComposioAccountStatus>;
   compact: boolean;
+  workspaceUsageByConnection: Map<string, ConnectionWorkspaceUsageEntry["workspaces"]>;
+  toolkitCapabilities: ComposioToolkitCapability[];
 }) {
+  const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
   const containerClass = compact
     ? "flex flex-col gap-1 rounded-xl bg-card px-3 py-2.5 ring-1 ring-border"
     : "flex flex-col gap-1 rounded-xl border border-border px-3 py-2.5";
@@ -1359,6 +1430,8 @@ function ConnectedProviderCard({
           const showAvatar = Boolean(avatarUrl) && !failedAvatar;
           const disconnecting =
             disconnectingConnectionId === conn.connection_id;
+          const usage = workspaceUsageByConnection.get(conn.connection_id) ?? [];
+          const workspaceCount = new Set(usage.map((u) => u.workspace_id)).size;
           return (
             <div
               className="flex items-center gap-2 py-1"
@@ -1391,6 +1464,14 @@ function ConnectedProviderCard({
               <span className="min-w-0 flex-1 truncate text-xs text-foreground">
                 {label}
               </span>
+              {workspaceCount > 0 ? (
+                <span
+                  className="shrink-0 text-[10px] text-muted-foreground"
+                  title={`Bound in ${workspaceCount} workspace${workspaceCount === 1 ? "" : "s"}`}
+                >
+                  {workspaceCount}w
+                </span>
+              ) : null}
               <Button
                 aria-label={`Refresh ${label} identity`}
                 title="Refetch handle, email, and avatar from the provider"
@@ -1428,6 +1509,44 @@ function ConnectedProviderCard({
             </div>
           );
         })}
+        {toolkitCapabilities.length > 0 ? (
+          <div className="mt-1 border-border border-t pt-2">
+            <button
+              aria-expanded={capabilitiesOpen}
+              className="flex w-full items-center justify-between text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+              onClick={() => setCapabilitiesOpen((prev) => !prev)}
+              type="button"
+            >
+              <span>
+                {toolkitCapabilities.length} agent{" "}
+                {toolkitCapabilities.length === 1 ? "tool" : "tools"} available
+              </span>
+              <span>{capabilitiesOpen ? "Hide" : "Show"}</span>
+            </button>
+            {capabilitiesOpen ? (
+              <ul className="mt-2 space-y-1.5">
+                {toolkitCapabilities.map((cap) => (
+                  <li className="text-[11px]" key={cap.tool_slug}>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-medium text-foreground">{cap.name}</span>
+                      {cap.read_only ? (
+                        <Badge
+                          className="border-border bg-background/60 text-[9px] text-muted-foreground"
+                          variant="outline"
+                        >
+                          read-only
+                        </Badge>
+                      ) : null}
+                    </div>
+                    <div className="text-[11px] leading-5 text-muted-foreground">
+                      {cap.description}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </div>
   );

@@ -10135,6 +10135,60 @@ async function deleteIntegrationBinding(
   });
 }
 
+interface WorkspaceIntegrationConnectionView {
+  connected_account_id: string;
+  status: string;
+  user_id: string;
+  created_at: string;
+}
+
+interface WorkspaceIntegrationView {
+  toolkit_slug: string;
+  toolkit_name: string;
+  toolkit_logo: string | null;
+  supported: boolean;
+  effective_state: "auto" | "disabled" | "pinned";
+  effective_connection_id: string | null;
+  pinned_connection_id: string | null;
+  connections: WorkspaceIntegrationConnectionView[];
+}
+
+interface WorkspaceIntegrationsListResponse {
+  workspace_id: string;
+  integrations: WorkspaceIntegrationView[];
+}
+
+async function listWorkspaceIntegrations(
+  workspaceId: string,
+): Promise<WorkspaceIntegrationsListResponse> {
+  return requestWorkspaceRuntimeJson<WorkspaceIntegrationsListResponse>(workspaceId, {
+    method: "GET",
+    path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/integrations`,
+  });
+}
+
+async function setWorkspaceIntegrationOverride(
+  workspaceId: string,
+  toolkitSlug: string,
+  payload: { state: "disabled" | "pinned"; pinned_connection_id?: string | null },
+): Promise<unknown> {
+  return requestWorkspaceRuntimeJson<unknown>(workspaceId, {
+    method: "PUT",
+    path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/integrations/${encodeURIComponent(toolkitSlug)}`,
+    payload,
+  });
+}
+
+async function clearWorkspaceIntegrationOverride(
+  workspaceId: string,
+  toolkitSlug: string,
+): Promise<{ deleted: boolean }> {
+  return requestWorkspaceRuntimeJson<{ deleted: boolean }>(workspaceId, {
+    method: "DELETE",
+    path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/integrations/${encodeURIComponent(toolkitSlug)}`,
+  });
+}
+
 // Restarts a single workspace app via the runtime's capabilities tool. Used
 // after an integration binding is added/changed so the app re-reads
 // HOLABOSS_APP_GRANT (which is captured at boot in the bridge-transport
@@ -10182,6 +10236,37 @@ async function mergeIntegrationConnections(
     keepConnectionId,
     removeConnectionIds,
   );
+}
+
+async function listConnectionWorkspaceUsage(): Promise<{
+  usage: Array<{
+    connection_id: string;
+    workspaces: Array<{
+      workspace_id: string;
+      target_type: string;
+      target_id: string;
+      integration_key: string;
+    }>;
+  }>;
+}> {
+  return localIntegrationMetadataStore.listConnectionWorkspaceUsage();
+}
+
+async function listComposioToolkitCapabilities(): Promise<{
+  toolkits: Record<
+    string,
+    Array<{ name: string; description: string; tool_slug: string; read_only: boolean }>
+  >;
+}> {
+  return requestRuntimeJson<{
+    toolkits: Record<
+      string,
+      Array<{ name: string; description: string; tool_slug: string; read_only: boolean }>
+    >;
+  }>({
+    method: "GET",
+    path: "/api/v1/integrations/composio-capabilities",
+  });
 }
 
 async function listOAuthConfigs(): Promise<OAuthAppConfigListResponsePayload> {
@@ -22858,6 +22943,37 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, bindingId: string, workspaceId: string) =>
       deleteIntegrationBinding(bindingId, workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:listConnectionWorkspaceUsage",
+    ["main"],
+    async () => listConnectionWorkspaceUsage(),
+  );
+  handleTrustedIpc(
+    "workspace:listComposioToolkitCapabilities",
+    ["main"],
+    async () => listComposioToolkitCapabilities(),
+  );
+  handleTrustedIpc(
+    "workspace:listWorkspaceIntegrations",
+    ["main"],
+    async (_event, workspaceId: string) => listWorkspaceIntegrations(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:setWorkspaceIntegrationOverride",
+    ["main"],
+    async (
+      _event,
+      workspaceId: string,
+      toolkitSlug: string,
+      payload: { state: "disabled" | "pinned"; pinned_connection_id?: string | null },
+    ) => setWorkspaceIntegrationOverride(workspaceId, toolkitSlug, payload),
+  );
+  handleTrustedIpc(
+    "workspace:clearWorkspaceIntegrationOverride",
+    ["main"],
+    async (_event, workspaceId: string, toolkitSlug: string) =>
+      clearWorkspaceIntegrationOverride(workspaceId, toolkitSlug),
   );
   handleTrustedIpc(
     "workspace:restartApp",

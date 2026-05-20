@@ -155,7 +155,7 @@ declare global {
     height: number;
   }
 
-  type UiSettingsPaneSection = "account" | "billing" | "providers" | "integrations" | "submissions" | "settings" | "experimental";
+  type UiSettingsPaneSection = "account" | "billing" | "providers" | "integrations" | "workspace-integrations" | "submissions" | "settings" | "experimental";
 
   interface BrowserStatePayload {
     id: string;
@@ -1409,6 +1409,63 @@ interface RuntimeNotificationListOptionsPayload {
     is_default?: boolean;
   }
 
+  interface ConnectionWorkspaceUsageEntry {
+    connection_id: string;
+    workspaces: Array<{
+      workspace_id: string;
+      target_type: string;
+      target_id: string;
+      integration_key: string;
+    }>;
+  }
+
+  interface ConnectionWorkspaceUsagePayload {
+    usage: ConnectionWorkspaceUsageEntry[];
+  }
+
+  interface ComposioToolkitCapability {
+    name: string;
+    description: string;
+    tool_slug: string;
+    read_only: boolean;
+  }
+
+  interface ComposioToolkitCapabilitiesPayload {
+    toolkits: Record<string, ComposioToolkitCapability[]>;
+  }
+
+  interface WorkspaceIntegrationConnectionPayload {
+    connected_account_id: string;
+    status: string;
+    user_id: string;
+    created_at: string;
+  }
+
+  interface WorkspaceIntegrationPayload {
+    toolkit_slug: string;
+    toolkit_name: string;
+    toolkit_logo: string | null;
+    supported: boolean;
+    effective_state: "auto" | "disabled" | "pinned";
+    effective_connection_id: string | null;
+    pinned_connection_id: string | null;
+    connections: WorkspaceIntegrationConnectionPayload[];
+  }
+
+  interface WorkspaceIntegrationsListResponsePayload {
+    workspace_id: string;
+    integrations: WorkspaceIntegrationPayload[];
+  }
+
+  interface WorkspaceIntegrationOverridePayload {
+    workspace_id: string;
+    toolkit_slug: string;
+    state: "disabled" | "pinned";
+    pinned_connection_id: string | null;
+    created_at: string;
+    updated_at: string;
+  }
+
   interface IntegrationCreateConnectionPayload {
     provider_id: string;
     owner_user_id: string;
@@ -1838,6 +1895,18 @@ interface RuntimeNotificationListOptionsPayload {
         removeConnectionIds: string[]
       ) => Promise<IntegrationMergeConnectionsResult>;
       deleteIntegrationBinding: (bindingId: string, workspaceId: string) => Promise<{ deleted: boolean }>;
+      listConnectionWorkspaceUsage: () => Promise<ConnectionWorkspaceUsagePayload>;
+      listComposioToolkitCapabilities: () => Promise<ComposioToolkitCapabilitiesPayload>;
+      listWorkspaceIntegrations: (workspaceId: string) => Promise<WorkspaceIntegrationsListResponsePayload>;
+      setWorkspaceIntegrationOverride: (
+        workspaceId: string,
+        toolkitSlug: string,
+        payload: { state: "disabled" | "pinned"; pinned_connection_id?: string | null }
+      ) => Promise<WorkspaceIntegrationOverridePayload>;
+      clearWorkspaceIntegrationOverride: (
+        workspaceId: string,
+        toolkitSlug: string
+      ) => Promise<{ deleted: boolean }>;
       listOAuthConfigs: () => Promise<OAuthAppConfigListResponsePayload>;
       upsertOAuthConfig: (providerId: string, payload: OAuthAppConfigUpsertPayload) => Promise<OAuthAppConfigPayload>;
       deleteOAuthConfig: (providerId: string) => Promise<{ deleted: boolean }>;

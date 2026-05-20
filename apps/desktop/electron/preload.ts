@@ -981,6 +981,54 @@ interface IntegrationUpsertBindingPayload {
   is_default?: boolean;
 }
 
+interface ConnectionWorkspaceUsageEntry {
+  connection_id: string;
+  workspaces: Array<{
+    workspace_id: string;
+    target_type: string;
+    target_id: string;
+    integration_key: string;
+  }>;
+}
+
+interface ConnectionWorkspaceUsagePayload {
+  usage: ConnectionWorkspaceUsageEntry[];
+}
+
+interface ComposioToolkitCapability {
+  name: string;
+  description: string;
+  tool_slug: string;
+  read_only: boolean;
+}
+
+interface ComposioToolkitCapabilitiesPayload {
+  toolkits: Record<string, ComposioToolkitCapability[]>;
+}
+
+interface WorkspaceIntegrationConnectionPayload {
+  connected_account_id: string;
+  status: string;
+  user_id: string;
+  created_at: string;
+}
+
+interface WorkspaceIntegrationPayload {
+  toolkit_slug: string;
+  toolkit_name: string;
+  toolkit_logo: string | null;
+  supported: boolean;
+  effective_state: "auto" | "disabled" | "pinned";
+  effective_connection_id: string | null;
+  pinned_connection_id: string | null;
+  connections: WorkspaceIntegrationConnectionPayload[];
+}
+
+interface WorkspaceIntegrationsListResponsePayload {
+  workspace_id: string;
+  integrations: WorkspaceIntegrationPayload[];
+}
+
 interface IntegrationCreateConnectionPayload {
   provider_id: string;
   owner_user_id: string;
@@ -1453,6 +1501,29 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ) as Promise<IntegrationMergeConnectionsResult>,
     deleteIntegrationBinding: (bindingId: string, workspaceId: string) =>
       ipcRenderer.invoke("workspace:deleteIntegrationBinding", bindingId, workspaceId) as Promise<{ deleted: boolean }>,
+    listConnectionWorkspaceUsage: () =>
+      ipcRenderer.invoke("workspace:listConnectionWorkspaceUsage") as Promise<ConnectionWorkspaceUsagePayload>,
+    listComposioToolkitCapabilities: () =>
+      ipcRenderer.invoke("workspace:listComposioToolkitCapabilities") as Promise<ComposioToolkitCapabilitiesPayload>,
+    listWorkspaceIntegrations: (workspaceId: string) =>
+      ipcRenderer.invoke("workspace:listWorkspaceIntegrations", workspaceId) as Promise<WorkspaceIntegrationsListResponsePayload>,
+    setWorkspaceIntegrationOverride: (
+      workspaceId: string,
+      toolkitSlug: string,
+      payload: { state: "disabled" | "pinned"; pinned_connection_id?: string | null },
+    ) =>
+      ipcRenderer.invoke(
+        "workspace:setWorkspaceIntegrationOverride",
+        workspaceId,
+        toolkitSlug,
+        payload,
+      ) as Promise<unknown>,
+    clearWorkspaceIntegrationOverride: (workspaceId: string, toolkitSlug: string) =>
+      ipcRenderer.invoke(
+        "workspace:clearWorkspaceIntegrationOverride",
+        workspaceId,
+        toolkitSlug,
+      ) as Promise<{ deleted: boolean }>,
     restartApp: (workspaceId: string, appId: string) =>
       ipcRenderer.invoke("workspace:restartApp", workspaceId, appId) as Promise<{
         workspace_id: string;
