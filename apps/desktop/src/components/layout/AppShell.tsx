@@ -235,7 +235,6 @@ function isSettingsPaneSection(value: string): value is UiSettingsPaneSection {
     value === "billing" ||
     value === "providers" ||
     value === "integrations" ||
-    value === "workspace-integrations" ||
     value === "submissions" ||
     value === "settings"
   );

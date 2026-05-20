@@ -1,3 +1,27 @@
+import { AppIcon } from "@/components/marketplace/AppIcon";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { StatusDot } from "@/components/ui/status-dot";
+import { WorkspaceIcon } from "@/components/ui/workspace-icon";
+import { WorkspaceIconPicker } from "@/components/ui/workspace-icon-picker";
+import { FileTypeIcon } from "@/lib/fileIcon";
+import { useIntegrationBinding } from "@/lib/useIntegrationBinding";
+import { cn } from "@/lib/utils";
+import type { WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
+import { resolveAppDisplay, useWorkspaceDesktop } from "@/lib/workspaceDesktop";
+import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   ChevronDown,
@@ -9,6 +33,7 @@ import {
   Loader2,
   MoreHorizontal,
   Package,
+  Plug,
   Plus,
   RotateCw,
   Search,
@@ -19,30 +44,6 @@ import {
   X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { StatusDot } from "@/components/ui/status-dot";
-import { WorkspaceIcon } from "@/components/ui/workspace-icon";
-import { WorkspaceIconPicker } from "@/components/ui/workspace-icon-picker";
-import { AppIcon } from "@/components/marketplace/AppIcon";
-import { FileTypeIcon } from "@/lib/fileIcon";
-import { useIntegrationBinding } from "@/lib/useIntegrationBinding";
-import type { WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
-import { resolveAppDisplay, useWorkspaceDesktop } from "@/lib/workspaceDesktop";
-import { useWorkspaceSelection } from "@/lib/workspaceSelection";
-import { cn } from "@/lib/utils";
 import { SectionLabel } from "./shared";
 import {
   activeInternalTabIdAtom,
@@ -61,12 +62,12 @@ import {
   automationsOpenAtom,
   createWorkspaceOpenAtom,
   inboxOpenAtom,
-  marketplaceOpenAtom,
   publishOpenAtom,
   searchOpenAtom,
   settingsOpenAtom,
   settingsSectionAtom,
   sidebarCollapsedAtom,
+  workspaceIntegrationsOpenAtom,
 } from "./state/ui";
 import { useTaskProposals } from "./useTaskProposals";
 import {
@@ -110,11 +111,13 @@ function SidebarExpanded() {
   const setSettingsOpen = useSetAtom(settingsOpenAtom);
   const setSearchOpen = useSetAtom(searchOpenAtom);
   const setSettingsSection = useSetAtom(settingsSectionAtom);
+  const setWorkspaceIntegrationsOpen = useSetAtom(workspaceIntegrationsOpenAtom);
 
   const artifactsOpen = useAtomValue(artifactsOpenAtom);
   const inboxOpen = useAtomValue(inboxOpenAtom);
   const automationsOpen = useAtomValue(automationsOpenAtom);
   const settingsOpen = useAtomValue(settingsOpenAtom);
+  const workspaceIntegrationsOpen = useAtomValue(workspaceIntegrationsOpenAtom);
 
   const skills = useWorkspaceSkills(selectedWorkspaceId || null);
   const cronjobs = useWorkspaceCronjobs(selectedWorkspaceId || null);
@@ -224,6 +227,13 @@ function SidebarExpanded() {
 
         <SidebarGroup>
           <NavItem
+            active={workspaceIntegrationsOpen}
+            icon={<Plug />}
+            onClick={() => setWorkspaceIntegrationsOpen(true)}
+          >
+            Integrations
+          </NavItem>
+          <NavItem
             icon={<Settings />}
             active={settingsOpen}
             onClick={() => {
@@ -248,7 +258,6 @@ function AppsSection() {
   } = useWorkspaceDesktop();
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const [expanded, setExpanded] = useAtom(appsExpandedAtom);
-  const setMarketplaceOpen = useSetAtom(marketplaceOpenAtom);
   const setSettingsOpen = useSetAtom(settingsOpenAtom);
   const setSettingsSection = useSetAtom(settingsSectionAtom);
 
@@ -342,15 +351,6 @@ function AppsSection() {
                 />
               );
             })}
-            <button
-              type="button"
-              onClick={() => setMarketplaceOpen(true)}
-              tabIndex={expanded ? 0 : -1}
-              className="flex items-center gap-2 rounded-[6px] px-2 py-[5px] pl-6 text-left text-xs text-foreground/55 transition-colors hover:bg-foreground/[0.04] hover:text-foreground"
-            >
-              <Plus className="size-3.5 shrink-0" />
-              <span className="truncate">Browse marketplace</span>
-            </button>
             <button
               type="button"
               onClick={() => {

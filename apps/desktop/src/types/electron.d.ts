@@ -155,7 +155,7 @@ declare global {
     height: number;
   }
 
-  type UiSettingsPaneSection = "account" | "billing" | "providers" | "integrations" | "workspace-integrations" | "submissions" | "settings" | "experimental";
+  type UiSettingsPaneSection = "account" | "billing" | "providers" | "integrations" | "submissions" | "settings" | "experimental";
 
   interface BrowserStatePayload {
     id: string;
