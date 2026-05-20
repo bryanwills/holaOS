@@ -135,6 +135,7 @@ function IntegrationProposalCard({
           )}
         </div>
         <Button
+          className="h-7 px-3 text-xs"
           disabled={phase === "connecting" || !workspaceId}
           onClick={() => void handleConnect()}
           size="sm"
@@ -143,7 +144,7 @@ function IntegrationProposalCard({
         >
           {phase === "connecting" ? (
             <>
-              <LoaderCircle className="mr-1.5 size-3.5 animate-spin" />
+              <LoaderCircle className="mr-1 size-3 animate-spin" />
               Connecting…
             </>
           ) : (
