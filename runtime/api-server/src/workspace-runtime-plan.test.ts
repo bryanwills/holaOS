@@ -77,6 +77,26 @@ mcp_registry:
   assert.deepEqual(plan.resolved_mcp_servers.map((server) => server.server_id), []);
 });
 
+test("compileWorkspaceRuntimePlan accepts the legacy agents array scaffold", () => {
+  const plan = compileWorkspaceRuntimePlan({
+    workspace_id: "workspace-legacy-agents",
+    workspace_yaml: `
+agents:
+  - id: workspace.general
+    model: openai/gpt-5
+mcp_registry:
+  allowlist:
+    tool_ids: []
+  servers: {}
+`,
+    references: {}
+  });
+
+  assert.equal(plan.general_config.type, "single");
+  assert.equal(plan.general_config.agent.id, "workspace.general");
+  assert.equal(plan.general_config.agent.model, "openai/gpt-5");
+});
+
 test("compileWorkspaceRuntimePlan exposes configured remote MCP servers when no allowlist is indicated", () => {
   const plan = compileWorkspaceRuntimePlan({
     workspace_id: "workspace-remote-mcp",

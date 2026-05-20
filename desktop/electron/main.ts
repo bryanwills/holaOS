@@ -12202,6 +12202,18 @@ async function ensureLocalWorkspaceRuntimeSessionReady(
     runtime_base_url: status.url ?? runtimeBaseUrl(),
   });
 }
+
+function workspaceRuntimeRequestUrl(
+  runtimeBaseUrlValue: string,
+  requestPath: string,
+): URL {
+  const normalizedBaseUrl = runtimeBaseUrlValue.trim().replace(/\/+$/, "");
+  const normalizedPath = requestPath.startsWith("/")
+    ? requestPath
+    : `/${requestPath}`;
+  return new URL(`${normalizedBaseUrl}${normalizedPath}`);
+}
+
 async function requestWorkspaceRuntimeJson<T>(
   workspaceId: string,
   {
@@ -12229,7 +12241,10 @@ async function requestWorkspaceRuntimeJson<T>(
           refresh: attempt > 1,
         }),
       );
-      const url = new URL(`${session.runtime_base_url}${requestPath}`);
+      const url = workspaceRuntimeRequestUrl(
+        session.runtime_base_url,
+        requestPath,
+      );
       if (params) {
         for (const [key, value] of Object.entries(params)) {
           if (value === undefined || value === null || value === "") {
@@ -15127,9 +15142,9 @@ async function openSessionOutputStream(
         ? await resolveWorkspaceRuntimeSession(payload.workspaceId)
         : null;
       const status = workspaceSession ? null : await ensureRuntimeReady();
-      const url = new URL(
-        `/api/v1/agent-sessions/${payload.sessionId}/outputs/stream`,
+      const url = workspaceRuntimeRequestUrl(
         workspaceSession?.runtime_base_url ?? status?.url ?? runtimeBaseUrl(),
+        `/api/v1/agent-sessions/${encodeURIComponent(payload.sessionId)}/outputs/stream`,
       );
       if (payload.inputId) {
         url.searchParams.set("input_id", payload.inputId);

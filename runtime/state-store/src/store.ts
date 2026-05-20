@@ -718,6 +718,7 @@ export interface RuntimeStateStoreOptions {
 
 type WorkspaceUpdateFields = Partial<{
   status: string | null;
+  harness: string | null;
   errorMessage: string | null;
   deletedAtUtc: string | null;
   onboardingStatus: string | null;
@@ -1551,6 +1552,9 @@ export class RuntimeStateStore {
       switch (typedKey) {
         case "status":
           next.status = value as string;
+          break;
+        case "harness":
+          next.harness = value as string | null;
           break;
         case "errorMessage":
           next.errorMessage = value as string | null;

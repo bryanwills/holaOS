@@ -61,7 +61,19 @@ export function readWorkspaceRuntimePlanReferences(workspaceDir: string): Record
   const references = collectWorkspaceRuntimePlanReferences({ workspace_yaml: workspaceYaml });
   const resolved: Record<string, string> = {};
   for (const relativePath of references) {
-    resolved[relativePath] = readWorkspaceReference(workspaceDir, relativePath);
+    try {
+      resolved[relativePath] = readWorkspaceReference(workspaceDir, relativePath);
+    } catch (error) {
+      if (
+        relativePath === "AGENTS.md" &&
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ) {
+        continue;
+      }
+      throw error;
+    }
   }
   return resolved;
 }

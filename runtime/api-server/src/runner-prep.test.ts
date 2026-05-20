@@ -54,6 +54,34 @@ test("compileWorkspaceRuntimePlanFromWorkspace reads referenced prompt files fro
   assert.equal(plan.resolved_prompts.main.trim(), "You are concise.");
 });
 
+test("readWorkspaceRuntimePlanReferences tolerates a missing root AGENTS file", () => {
+  const root = makeTempDir("hb-runner-prep-missing-agents-");
+  fs.writeFileSync(
+    path.join(root, "workspace.yaml"),
+    [
+      "template_id: demo",
+      "name: Demo",
+      "agents:",
+      "  id: main",
+      "  model: gpt-5",
+      "mcp_registry:",
+      "  allowlist:",
+      "    tool_ids: []",
+      "  servers: {}",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  assert.deepEqual(readWorkspaceRuntimePlanReferences(root), {});
+
+  const plan = compileWorkspaceRuntimePlanFromWorkspace({
+    workspaceId: "workspace-no-agents-md",
+    workspaceDir: root,
+  });
+  assert.equal(plan.general_config.agent.prompt, "");
+});
+
 test("mcpServerIdMap assigns a stable physical workspace server id", () => {
   const compiledPlan = {
     resolved_mcp_servers: [{ server_id: "workspace" }, { server_id: "twitter" }],

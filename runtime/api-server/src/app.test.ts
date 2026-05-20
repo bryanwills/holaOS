@@ -3551,6 +3551,39 @@ test("PATCH workspace_path relocates to a fresh empty directory", async () => {
   store.close();
 });
 
+test("PATCH /api/v1/workspaces/:workspaceId can update harness", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: { name: "Harness Patch", harness: "opencode" }
+  });
+  const workspaceId = (created.json().workspace as { id: string }).id;
+
+  const updated = await app.inject({
+    method: "PATCH",
+    url: `/api/v1/workspaces/${workspaceId}`,
+    payload: { harness: "pi" }
+  });
+  assert.equal(updated.statusCode, 200);
+  assert.equal(updated.json().workspace.harness, "pi");
+
+  const fetched = await app.inject({
+    method: "GET",
+    url: `/api/v1/workspaces/${workspaceId}`
+  });
+  assert.equal(fetched.statusCode, 200);
+  assert.equal(fetched.json().workspace.harness, "pi");
+
+  await app.close();
+  store.close();
+});
+
 test("PATCH workspace_path accepts a folder with matching identity (move case)", async () => {
   const root = makeTempDir("hb-runtime-api-");
   const customRoot = makeTempDir("hb-custom-ws-");

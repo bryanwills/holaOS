@@ -6252,6 +6252,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       if (hasOwn(request.body, "status")) {
         fields.status = nullableString(request.body.status);
       }
+      if (hasOwn(request.body, "harness")) {
+        fields.harness = nullableString(request.body.harness);
+      }
       if (hasOwn(request.body, "error_message")) {
         fields.errorMessage = nullableString(request.body.error_message) ?? null;
       }

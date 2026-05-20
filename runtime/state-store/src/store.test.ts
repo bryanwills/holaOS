@@ -613,6 +613,28 @@ test("updateWorkspace clears a stale managed identity write lock before persisti
   store.close();
 });
 
+test("updateWorkspace can change the workspace harness in place", () => {
+  const root = makeTempDir("hb-state-store-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  store.createWorkspace({
+    workspaceId: "ws-harness",
+    name: "Harness",
+    harness: "opencode"
+  });
+
+  const updated = store.updateWorkspace("ws-harness", {
+    harness: "pi"
+  });
+
+  assert.equal(updated.harness, "pi");
+  assert.equal(store.getWorkspace("ws-harness")?.harness, "pi");
+  store.close();
+});
+
 test("deleteWorkspace still succeeds when a managed folder is already missing", () => {
   const root = makeTempDir("hb-state-store-");
   const workspaceRoot = path.join(root, "workspace");

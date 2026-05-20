@@ -140,11 +140,19 @@ test("workspace runtime transport respects https session URLs for JSON and SSE r
   assert.match(source, /import \{ request as httpsRequest } from "node:https";/);
   assert.match(
     source,
+    /function workspaceRuntimeRequestUrl\(\s*runtimeBaseUrlValue: string,\s*requestPath: string,\s*\): URL \{[\s\S]*?replace\(\/\\\/\+\$\/, ""\);[\s\S]*?requestPath\.startsWith\("\/"\)\s*\?[\s\S]*?new URL\(`\$\{normalizedBaseUrl\}\$\{normalizedPath\}`\);/,
+  );
+  assert.match(
+    source,
     /async function requestRuntimeJsonViaHttp<T>\([\s\S]*?const requestImpl = targetUrl\.protocol === "https:"\s*\?\s*httpsRequest\s*:\s*httpRequest;[\s\S]*?const port = targetUrl\.port \|\| \(targetUrl\.protocol === "https:" \? "443" : "80"\);[\s\S]*?const request = requestImpl\(/,
   );
   assert.match(
     source,
-    /async function openSessionOutputStream\([\s\S]*?const requestImpl = url\.protocol === "https:" \? httpsRequest : httpRequest;[\s\S]*?const port = url\.port \|\| \(url\.protocol === "https:" \? "443" : "80"\);[\s\S]*?const request = requestImpl\(/,
+    /async function requestWorkspaceRuntimeJson<T>\([\s\S]*?const url = workspaceRuntimeRequestUrl\(\s*session\.runtime_base_url,\s*requestPath,\s*\);/,
+  );
+  assert.match(
+    source,
+    /async function openSessionOutputStream\([\s\S]*?const url = workspaceRuntimeRequestUrl\(\s*workspaceSession\?\.runtime_base_url \?\? status\?\.url \?\? runtimeBaseUrl\(\),\s*`\/api\/v1\/agent-sessions\/\$\{encodeURIComponent\(payload\.sessionId\)\}\/outputs\/stream`,[\s\S]*?const requestImpl = url\.protocol === "https:" \? httpsRequest : httpRequest;[\s\S]*?const port = url\.port \|\| \(url\.protocol === "https:" \? "443" : "80"\);[\s\S]*?const request = requestImpl\(/,
   );
 });
 

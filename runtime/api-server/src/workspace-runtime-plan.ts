@@ -340,6 +340,22 @@ function loadGeneralConfig(config: JsonRecord, references: Record<string, string
     });
   }
 
+  if (Array.isArray(agentsValue) && agentsValue.length === 1 && isRecord(agentsValue[0])) {
+    const firstAgent = agentsValue[0];
+    if (Object.hasOwn(firstAgent, "id") && Object.hasOwn(firstAgent, "model")) {
+      return {
+        type: "single",
+        agent: parseMember(firstAgent, "agents[0]", prompt)
+      };
+    }
+    err({
+      code: "workspace_general_missing",
+      path: "agents[0]",
+      message: "missing required fields 'agents[0].id' and 'agents[0].model'",
+      hint: "set 'agents' to an object with non-empty 'id' and 'model'"
+    });
+  }
+
   err({
     code: "workspace_general_missing",
     path: "agents",
