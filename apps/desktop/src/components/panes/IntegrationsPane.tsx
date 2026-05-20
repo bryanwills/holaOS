@@ -23,6 +23,10 @@ import {
   invalidateIntegrationAccountCache,
   useIntegrationAccountMetadata,
 } from "@/lib/integrationAccountStore";
+import {
+  composioToolkitMatchesProvider,
+  composioToolkitSlugForProvider,
+} from "@/lib/workspaceDesktop";
 
 interface ComposioToolkit {
   slug: string;
@@ -518,8 +522,9 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
         authSessionState.data?.user?.id?.trim() ||
         "local";
 
+      const toolkitSlug = composioToolkitSlugForProvider(integration.providerId);
       const link = await window.electronAPI.workspace.composioConnect({
-        provider: integration.providerId,
+        provider: toolkitSlug,
         owner_user_id: userId,
       });
 
@@ -1520,5 +1525,4 @@ function WorkspaceScopeSection({
     </div>
   );
 }
-
 

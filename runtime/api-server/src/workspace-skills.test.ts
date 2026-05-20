@@ -322,8 +322,6 @@ test("embedded app-builder-sdk skill only references bundled local assets", () =
   // duplicates and no nested sdk-package/reference/ duplicates.
   assert.doesNotMatch(skillBody, /`sdk\/[^`]+`/);
   assert.doesNotMatch(skillBody, /`sdk-package\/reference\//);
-  // @holaboss/ui ships to npm — there is no embedded ui-package/ snapshot,
-  // and the ui-reference/ stub from earlier iterations is gone too.
   assert.doesNotMatch(skillBody, /`ui-reference\//);
   assert.doesNotMatch(skillBody, /`ui-package\//);
 

@@ -112,7 +112,11 @@ export interface WorkspaceRecord {
   harness: string | null;
   errorMessage: string | null;
   onboardingStatus: string;
+  onboardingState: string | null;
   onboardingSessionId: string | null;
+  onboardingAlignmentQuestion: string | null;
+  onboardingAlignmentReport: string | null;
+  onboardingVerificationReport: string | null;
   onboardingCompletedAt: string | null;
   onboardingCompletionSummary: string | null;
   onboardingRequestedAt: string | null;
@@ -122,6 +126,10 @@ export interface WorkspaceRecord {
   deletedAtUtc: string | null;
   icon: string | null;
   iconColor: string | null;
+  workspaceRole: string;
+  sourceWorkspaceId: string | null;
+  labPurpose: string | null;
+  labStatus: string | null;
 }
 
 export interface AgentSessionRecord {
@@ -699,8 +707,16 @@ export interface CreateWorkspaceParams {
   harness: string;
   status?: string;
   onboardingStatus?: string;
+  onboardingState?: string | null;
   onboardingSessionId?: string | null;
+  onboardingAlignmentQuestion?: string | null;
+  onboardingAlignmentReport?: string | null;
+  onboardingVerificationReport?: string | null;
   errorMessage?: string | null;
+  workspaceRole?: string;
+  sourceWorkspaceId?: string | null;
+  labPurpose?: string | null;
+  labStatus?: string | null;
   /**
    * Optional absolute path to use as the workspace's on-disk directory.
    * When omitted, the workspace is placed under the runtime's managed
@@ -732,13 +748,21 @@ type WorkspaceUpdateFields = Partial<{
   errorMessage: string | null;
   deletedAtUtc: string | null;
   onboardingStatus: string | null;
+  onboardingState: string | null;
   onboardingSessionId: string | null;
+  onboardingAlignmentQuestion: string | null;
+  onboardingAlignmentReport: string | null;
+  onboardingVerificationReport: string | null;
   onboardingCompletedAt: string | null;
   onboardingCompletionSummary: string | null;
   onboardingRequestedAt: string | null;
   onboardingRequestedBy: string | null;
   icon: string | null;
   iconColor: string | null;
+  workspaceRole: string | null;
+  sourceWorkspaceId: string | null;
+  labPurpose: string | null;
+  labStatus: string | null;
 }>;
 
 type AgentSessionUpdateFields = Partial<{
@@ -883,7 +907,11 @@ type WorkspaceRow = {
   harness: string | null;
   error_message: string | null;
   onboarding_status: string;
+  onboarding_state: string | null;
   onboarding_session_id: string | null;
+  onboarding_alignment_question: string | null;
+  onboarding_alignment_report: string | null;
+  onboarding_verification_report: string | null;
   onboarding_completed_at: string | null;
   onboarding_completion_summary: string | null;
   onboarding_requested_at: string | null;
@@ -893,6 +921,10 @@ type WorkspaceRow = {
   deleted_at_utc: string | null;
   icon: string | null;
   icon_color: string | null;
+  workspace_role: string | null;
+  source_workspace_id: string | null;
+  lab_purpose: string | null;
+  lab_status: string | null;
 };
 
 const TASK_PROPOSAL_SOURCES = new Set<TaskProposalSource>(["proactive", "evolve"]);
@@ -1290,19 +1322,49 @@ export class RuntimeStateStore {
     const rows = this.controlPlaneDb()
       .prepare<[], WorkspaceRow>(`
         SELECT id, workspace_path, name, status, harness, error_message,
-               onboarding_status, onboarding_session_id, onboarding_completed_at,
+               onboarding_status, onboarding_state, onboarding_session_id,
+               onboarding_alignment_question, onboarding_alignment_report, onboarding_verification_report, onboarding_completed_at,
                onboarding_completion_summary, onboarding_requested_at, onboarding_requested_by,
-               created_at, updated_at, deleted_at_utc, icon, icon_color
+               created_at, updated_at, deleted_at_utc, icon, icon_color,
+               workspace_role, source_workspace_id, lab_purpose, lab_status
         FROM workspaces
         ORDER BY updated_at DESC, created_at DESC, id DESC
       `)
       .all();
 
     const items = rows.map((row) => this.rowToWorkspace(row));
-    if (options.includeDeleted) {
-      return items;
-    }
-    return items.filter((record) => !record.deletedAtUtc);
+    return items.filter(
+      (record) =>
+        (options.includeDeleted || !record.deletedAtUtc) &&
+        record.workspaceRole !== "draft_lab",
+    );
+  }
+
+  listWorkspaceLabs(params: { sourceWorkspaceId: string; activeOnly?: boolean }): WorkspaceRecord[] {
+    this.ensureWorkspaceMetadataReady();
+    const rows = this.controlPlaneDb()
+      .prepare<[string], WorkspaceRow>(`
+        SELECT id, workspace_path, name, status, harness, error_message,
+               onboarding_status, onboarding_state, onboarding_session_id,
+               onboarding_alignment_question, onboarding_alignment_report, onboarding_verification_report, onboarding_completed_at,
+               onboarding_completion_summary, onboarding_requested_at, onboarding_requested_by,
+               created_at, updated_at, deleted_at_utc, icon, icon_color,
+               workspace_role, source_workspace_id, lab_purpose, lab_status
+        FROM workspaces
+        WHERE workspace_role = 'draft_lab'
+          AND source_workspace_id = ?
+          AND deleted_at_utc IS NULL
+        ORDER BY updated_at DESC, created_at DESC, id DESC
+      `)
+      .all(params.sourceWorkspaceId);
+    const labs = rows.map((row) => this.rowToWorkspace(row));
+    return params.activeOnly
+      ? labs.filter((lab) => lab.labStatus === "active" && lab.status === "active")
+      : labs;
+  }
+
+  getActiveWorkspaceLab(sourceWorkspaceId: string): WorkspaceRecord | null {
+    return this.listWorkspaceLabs({ sourceWorkspaceId, activeOnly: true })[0] ?? null;
   }
 
   getWorkspace(workspaceId: string, options: { includeDeleted?: boolean } = {}): WorkspaceRecord | null {
@@ -1310,9 +1372,11 @@ export class RuntimeStateStore {
     const row = this.controlPlaneDb()
       .prepare<[string], WorkspaceRow>(`
         SELECT id, workspace_path, name, status, harness, error_message,
-               onboarding_status, onboarding_session_id, onboarding_completed_at,
+               onboarding_status, onboarding_state, onboarding_session_id,
+               onboarding_alignment_question, onboarding_alignment_report, onboarding_verification_report, onboarding_completed_at,
                onboarding_completion_summary, onboarding_requested_at, onboarding_requested_by,
-               created_at, updated_at, deleted_at_utc, icon, icon_color
+               created_at, updated_at, deleted_at_utc, icon, icon_color,
+               workspace_role, source_workspace_id, lab_purpose, lab_status
         FROM workspaces
         WHERE id = ?
         LIMIT 1
@@ -1350,7 +1414,11 @@ export class RuntimeStateStore {
       harness: params.harness,
       errorMessage: params.errorMessage ?? null,
       onboardingStatus: params.onboardingStatus ?? "not_required",
+      onboardingState: params.onboardingState ?? null,
       onboardingSessionId: params.onboardingSessionId ?? null,
+      onboardingAlignmentQuestion: params.onboardingAlignmentQuestion ?? null,
+      onboardingAlignmentReport: params.onboardingAlignmentReport ?? null,
+      onboardingVerificationReport: params.onboardingVerificationReport ?? null,
       onboardingCompletedAt: null,
       onboardingCompletionSummary: null,
       onboardingRequestedAt: null,
@@ -1359,7 +1427,11 @@ export class RuntimeStateStore {
       updatedAt: now,
       deletedAtUtc: null,
       icon: null,
-      iconColor: null
+      iconColor: null,
+      workspaceRole: params.workspaceRole ?? "source",
+      sourceWorkspaceId: params.sourceWorkspaceId ?? null,
+      labPurpose: params.labPurpose ?? null,
+      labStatus: params.labStatus ?? null
     };
 
     const workspacePath = this.resolveCreateWorkspacePath(params.workspacePath, workspaceId);
@@ -1572,8 +1644,20 @@ export class RuntimeStateStore {
         case "onboardingStatus":
           next.onboardingStatus = value as string;
           break;
+        case "onboardingState":
+          next.onboardingState = value as string | null;
+          break;
         case "onboardingSessionId":
           next.onboardingSessionId = value as string | null;
+          break;
+        case "onboardingAlignmentQuestion":
+          next.onboardingAlignmentQuestion = value as string | null;
+          break;
+        case "onboardingAlignmentReport":
+          next.onboardingAlignmentReport = value as string | null;
+          break;
+        case "onboardingVerificationReport":
+          next.onboardingVerificationReport = value as string | null;
           break;
         case "onboardingCompletedAt":
           next.onboardingCompletedAt = value as string | null;
@@ -1592,6 +1676,18 @@ export class RuntimeStateStore {
           break;
         case "iconColor":
           next.iconColor = value as string | null;
+          break;
+        case "workspaceRole":
+          next.workspaceRole = (value as string | null) || "source";
+          break;
+        case "sourceWorkspaceId":
+          next.sourceWorkspaceId = value as string | null;
+          break;
+        case "labPurpose":
+          next.labPurpose = value as string | null;
+          break;
+        case "labStatus":
+          next.labStatus = value as string | null;
           break;
         default:
           throw new Error(`unsupported workspace update field: ${typedKey}`);
@@ -8576,7 +8672,11 @@ export class RuntimeStateStore {
           harness TEXT,
           error_message TEXT,
           onboarding_status TEXT NOT NULL,
+          onboarding_state TEXT,
           onboarding_session_id TEXT,
+          onboarding_alignment_question TEXT,
+          onboarding_alignment_report TEXT,
+          onboarding_verification_report TEXT,
           onboarding_completed_at TEXT,
           onboarding_completion_summary TEXT,
           onboarding_requested_at TEXT,
@@ -8585,7 +8685,11 @@ export class RuntimeStateStore {
           updated_at TEXT,
           deleted_at_utc TEXT,
           icon TEXT,
-          icon_color TEXT
+          icon_color TEXT,
+          workspace_role TEXT NOT NULL DEFAULT 'source',
+          source_workspace_id TEXT,
+          lab_purpose TEXT,
+          lab_status TEXT
       );
 
       CREATE INDEX IF NOT EXISTS idx_workspaces_updated
@@ -9477,6 +9581,30 @@ export class RuntimeStateStore {
     if (!columns.has("icon_color")) {
       db.exec("ALTER TABLE workspaces ADD COLUMN icon_color TEXT;");
     }
+    if (!columns.has("workspace_role")) {
+      db.exec("ALTER TABLE workspaces ADD COLUMN workspace_role TEXT NOT NULL DEFAULT 'source';");
+    }
+    if (!columns.has("source_workspace_id")) {
+      db.exec("ALTER TABLE workspaces ADD COLUMN source_workspace_id TEXT;");
+    }
+    if (!columns.has("lab_purpose")) {
+      db.exec("ALTER TABLE workspaces ADD COLUMN lab_purpose TEXT;");
+    }
+    if (!columns.has("lab_status")) {
+      db.exec("ALTER TABLE workspaces ADD COLUMN lab_status TEXT;");
+    }
+    if (!columns.has("onboarding_state")) {
+      db.exec("ALTER TABLE workspaces ADD COLUMN onboarding_state TEXT;");
+    }
+    if (!columns.has("onboarding_alignment_question")) {
+      db.exec("ALTER TABLE workspaces ADD COLUMN onboarding_alignment_question TEXT;");
+    }
+    if (!columns.has("onboarding_alignment_report")) {
+      db.exec("ALTER TABLE workspaces ADD COLUMN onboarding_alignment_report TEXT;");
+    }
+    if (!columns.has("onboarding_verification_report")) {
+      db.exec("ALTER TABLE workspaces ADD COLUMN onboarding_verification_report TEXT;");
+    }
   }
 
   private migrateWorkspacesTable(db: Database.Database): void {
@@ -9620,7 +9748,14 @@ export class RuntimeStateStore {
       harness: row.harness == null ? null : String(row.harness),
       errorMessage: row.error_message == null ? null : String(row.error_message),
       onboardingStatus: String(row.onboarding_status),
+      onboardingState: row.onboarding_state == null ? null : String(row.onboarding_state),
       onboardingSessionId: row.onboarding_session_id == null ? null : String(row.onboarding_session_id),
+      onboardingAlignmentQuestion:
+        row.onboarding_alignment_question == null ? null : String(row.onboarding_alignment_question),
+      onboardingAlignmentReport:
+        row.onboarding_alignment_report == null ? null : String(row.onboarding_alignment_report),
+      onboardingVerificationReport:
+        row.onboarding_verification_report == null ? null : String(row.onboarding_verification_report),
       onboardingCompletedAt: row.onboarding_completed_at == null ? null : String(row.onboarding_completed_at),
       onboardingCompletionSummary:
         row.onboarding_completion_summary == null ? null : String(row.onboarding_completion_summary),
@@ -9630,7 +9765,11 @@ export class RuntimeStateStore {
       updatedAt: row.updated_at == null ? null : String(row.updated_at),
       deletedAtUtc: row.deleted_at_utc == null ? null : String(row.deleted_at_utc),
       icon: row.icon == null ? null : String(row.icon),
-      iconColor: row.icon_color == null ? null : String(row.icon_color)
+      iconColor: row.icon_color == null ? null : String(row.icon_color),
+      workspaceRole: row.workspace_role == null ? "source" : String(row.workspace_role),
+      sourceWorkspaceId: row.source_workspace_id == null ? null : String(row.source_workspace_id),
+      labPurpose: row.lab_purpose == null ? null : String(row.lab_purpose),
+      labStatus: row.lab_status == null ? null : String(row.lab_status)
     };
   }
 
@@ -9642,7 +9781,14 @@ export class RuntimeStateStore {
       harness: data.harness == null ? null : String(data.harness),
       errorMessage: data.error_message == null ? null : String(data.error_message),
       onboardingStatus: String(data.onboarding_status),
+      onboardingState: data.onboarding_state == null ? null : String(data.onboarding_state),
       onboardingSessionId: data.onboarding_session_id == null ? null : String(data.onboarding_session_id),
+      onboardingAlignmentQuestion:
+        data.onboarding_alignment_question == null ? null : String(data.onboarding_alignment_question),
+      onboardingAlignmentReport:
+        data.onboarding_alignment_report == null ? null : String(data.onboarding_alignment_report),
+      onboardingVerificationReport:
+        data.onboarding_verification_report == null ? null : String(data.onboarding_verification_report),
       onboardingCompletedAt: data.onboarding_completed_at == null ? null : String(data.onboarding_completed_at),
       onboardingCompletionSummary:
         data.onboarding_completion_summary == null ? null : String(data.onboarding_completion_summary),
@@ -9652,7 +9798,11 @@ export class RuntimeStateStore {
       updatedAt: data.updated_at == null ? null : String(data.updated_at),
       deletedAtUtc: data.deleted_at_utc == null ? null : String(data.deleted_at_utc),
       icon: data.icon == null ? null : String(data.icon),
-      iconColor: data.icon_color == null ? null : String(data.icon_color)
+      iconColor: data.icon_color == null ? null : String(data.icon_color),
+      workspaceRole: data.workspace_role == null ? "source" : String(data.workspace_role),
+      sourceWorkspaceId: data.source_workspace_id == null ? null : String(data.source_workspace_id),
+      labPurpose: data.lab_purpose == null ? null : String(data.lab_purpose),
+      labStatus: data.lab_status == null ? null : String(data.lab_status)
     };
   }
 
@@ -9671,10 +9821,12 @@ export class RuntimeStateStore {
     db.prepare(`
       INSERT INTO workspaces (
           id, workspace_path, name, status, harness, error_message,
-          onboarding_status, onboarding_session_id, onboarding_completed_at,
+          onboarding_status, onboarding_state, onboarding_session_id,
+          onboarding_alignment_question, onboarding_alignment_report, onboarding_verification_report, onboarding_completed_at,
           onboarding_completion_summary, onboarding_requested_at, onboarding_requested_by,
-          created_at, updated_at, deleted_at_utc, icon, icon_color
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          created_at, updated_at, deleted_at_utc, icon, icon_color,
+          workspace_role, source_workspace_id, lab_purpose, lab_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
           workspace_path = excluded.workspace_path,
           name = excluded.name,
@@ -9682,7 +9834,11 @@ export class RuntimeStateStore {
           harness = excluded.harness,
           error_message = excluded.error_message,
           onboarding_status = excluded.onboarding_status,
+          onboarding_state = excluded.onboarding_state,
           onboarding_session_id = excluded.onboarding_session_id,
+          onboarding_alignment_question = excluded.onboarding_alignment_question,
+          onboarding_alignment_report = excluded.onboarding_alignment_report,
+          onboarding_verification_report = excluded.onboarding_verification_report,
           onboarding_completed_at = excluded.onboarding_completed_at,
           onboarding_completion_summary = excluded.onboarding_completion_summary,
           onboarding_requested_at = excluded.onboarding_requested_at,
@@ -9691,7 +9847,11 @@ export class RuntimeStateStore {
           updated_at = excluded.updated_at,
           deleted_at_utc = excluded.deleted_at_utc,
           icon = excluded.icon,
-          icon_color = excluded.icon_color
+          icon_color = excluded.icon_color,
+          workspace_role = excluded.workspace_role,
+          source_workspace_id = excluded.source_workspace_id,
+          lab_purpose = excluded.lab_purpose,
+          lab_status = excluded.lab_status
     `).run(
       record.id,
       workspacePath,
@@ -9700,7 +9860,11 @@ export class RuntimeStateStore {
       record.harness,
       record.errorMessage,
       record.onboardingStatus,
+      record.onboardingState,
       record.onboardingSessionId,
+      record.onboardingAlignmentQuestion,
+      record.onboardingAlignmentReport,
+      record.onboardingVerificationReport,
       record.onboardingCompletedAt,
       record.onboardingCompletionSummary,
       record.onboardingRequestedAt,
@@ -9709,7 +9873,11 @@ export class RuntimeStateStore {
       record.updatedAt,
       record.deletedAtUtc,
       record.icon,
-      record.iconColor
+      record.iconColor,
+      record.workspaceRole,
+      record.sourceWorkspaceId,
+      record.labPurpose,
+      record.labStatus
     );
   }
 
@@ -9967,7 +10135,11 @@ export class RuntimeStateStore {
       harness: this.sandboxAgentHarness,
       errorMessage: null,
       onboardingStatus: "not_required",
+      onboardingState: null,
       onboardingSessionId: null,
+      onboardingAlignmentQuestion: null,
+      onboardingAlignmentReport: null,
+      onboardingVerificationReport: null,
       onboardingCompletedAt: null,
       onboardingCompletionSummary: null,
       onboardingRequestedAt: null,
@@ -9976,7 +10148,11 @@ export class RuntimeStateStore {
       updatedAt: now,
       deletedAtUtc: null,
       icon: null,
-      iconColor: null
+      iconColor: null,
+      workspaceRole: "source",
+      sourceWorkspaceId: null,
+      labPurpose: null,
+      labStatus: null
     };
     this.upsertWorkspaceRow(record, discovered);
     return record;

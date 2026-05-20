@@ -69,6 +69,7 @@ import {
 } from "./ts-runner-session-state.js";
 
 const ONBOARD_PROMPT_HEADER = "[Holaboss Workspace Onboarding v1]";
+const RETRY_CONTINUATION_PROMPT_HEADER = "[Holaboss Retry Continuation v1]";
 const RUNTIME_EXEC_CONTEXT_KEY = "_sandbox_runtime_exec_v1";
 const RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY = "model_proxy_api_key";
 const RUNTIME_EXEC_SANDBOX_ID_KEY = "sandbox_id";
@@ -134,6 +135,9 @@ const NON_CONTEXT_OVERFLOW_PATTERNS = [
   /rate limit/i,
   /too many requests/i,
 ];
+const PROVIDER_TERMINATION_RECOVERY_MIN_INPUT_TOKENS = 250_000;
+const PROVIDER_TERMINATION_RECOVERY_MIN_MODEL_TURNS = 24;
+const PROVIDER_TERMINATION_RECOVERY_MIN_TOOL_CALLS = 12;
 
 interface SessionInputAttachment {
   id: string;
@@ -232,6 +236,19 @@ interface OverflowRecoveryTelemetryRecord {
   retry_attempted: boolean;
   recovered: boolean;
   reset_required: boolean;
+}
+
+interface ProviderTerminationRecoveryTelemetryRecord {
+  trigger_reason: string | null;
+  initial_error_type: string | null;
+  initial_error_message: string | null;
+  initial_input_tokens: number | null;
+  initial_model_turns: number | null;
+  initial_tool_calls: number | null;
+  compaction_attempted: boolean;
+  compaction_changed_branch: boolean;
+  retry_attempted: boolean;
+  recovered: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1427,6 +1444,32 @@ function instructionWithInlineBackgroundUpdates(params: {
     .trim();
 }
 
+function instructionWithRetryContinuationPrompt(params: {
+  baseInstruction: string;
+  failureMessage?: string | null;
+}): string {
+  if (params.baseInstruction.includes(RETRY_CONTINUATION_PROMPT_HEADER)) {
+    return params.baseInstruction;
+  }
+  const lines = [
+    params.baseInstruction,
+    "",
+    RETRY_CONTINUATION_PROMPT_HEADER,
+    "- The previous attempt ended after partial progress and this is a continuation retry.",
+    "- Do not start over from scratch.",
+    "- First inspect the current workspace and session state to determine what already completed.",
+    "- Reuse existing files, installs, outputs, and running state when they are still valid.",
+    "- Only repeat a step if inspection shows it is missing, inconsistent, or broken.",
+    "- After inspection, continue the task from the current state and finish the remaining work.",
+  ];
+  const failureMessage =
+    typeof params.failureMessage === "string" ? params.failureMessage.trim() : "";
+  if (failureMessage) {
+    lines.push(`- Previous failure signal: ${failureMessage}`);
+  }
+  return lines.join("\n").trim();
+}
+
 function queuedForwardedDeliverablesFromContext(
   context: Record<string, unknown> | null | undefined,
 ): Array<{
@@ -1960,6 +2003,17 @@ function overflowRecoveryPayload(
   };
 }
 
+function providerTerminationRecoveryPayload(
+  value: ProviderTerminationRecoveryTelemetryRecord | null,
+): Record<string, unknown> | null {
+  if (!value) {
+    return null;
+  }
+  return {
+    ...value,
+  };
+}
+
 function contextOverflowFailureText(payload: Record<string, unknown>): string {
   const candidates = [
     optionalString(payload.message),
@@ -1991,6 +2045,46 @@ function isContextOverflowFailurePayload(
     return false;
   }
   return CONTEXT_OVERFLOW_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function isRecoverableProviderTerminationPayload(params: {
+  payload: Record<string, unknown> | null;
+  tokenUsage: Record<string, unknown> | null;
+  modelTurns: number;
+  toolCallCount: number;
+}): boolean {
+  if (!params.payload) {
+    return false;
+  }
+  const payloadType = optionalString(params.payload.type)?.toLowerCase();
+  if (payloadType !== "providererror") {
+    return false;
+  }
+  const payloadSource = optionalString(params.payload.source)?.toLowerCase();
+  if (payloadSource && payloadSource !== "pi") {
+    return false;
+  }
+  const payloadEvent = optionalString(params.payload.event)?.toLowerCase();
+  if (payloadEvent && payloadEvent !== "message_end" && payloadEvent !== "turn_end") {
+    return false;
+  }
+  const failureMessage = optionalString(params.payload.message);
+  if (!failureMessage || failureMessage.trim().toLowerCase() !== "terminated") {
+    return false;
+  }
+  const usage =
+    (isRecord(params.payload.usage) ? params.payload.usage : null) ??
+    params.tokenUsage;
+  const inputTokens = firstFiniteUsageNumber(usage, [
+    "input_tokens",
+    "prompt_tokens",
+  ]);
+  return (
+    (inputTokens !== null &&
+      inputTokens >= PROVIDER_TERMINATION_RECOVERY_MIN_INPUT_TOKENS) ||
+    params.modelTurns >= PROVIDER_TERMINATION_RECOVERY_MIN_MODEL_TURNS ||
+    params.toolCallCount >= PROVIDER_TERMINATION_RECOVERY_MIN_TOOL_CALLS
+  );
 }
 
 function runnerEventWithSequenceOffset(
@@ -2141,6 +2235,7 @@ function buildContextBudgetObservabilityPayload(params: {
   checkpointQueued: boolean;
   preRunCompaction?: PreRunCompactionTelemetryRecord | null;
   overflowRecovery?: OverflowRecoveryTelemetryRecord | null;
+  providerTerminationRecovery?: ProviderTerminationRecoveryTelemetryRecord | null;
 }): Record<string, unknown> {
   const inputTokens =
     firstFiniteUsageNumber(params.tokenUsage, ["input_tokens", "prompt_tokens"]);
@@ -2196,6 +2291,13 @@ function buildContextBudgetObservabilityPayload(params: {
     ...(params.overflowRecovery
       ? { overflow_recovery: overflowRecoveryPayload(params.overflowRecovery) }
       : {}),
+    ...(params.providerTerminationRecovery
+      ? {
+          provider_termination_recovery: providerTerminationRecoveryPayload(
+            params.providerTerminationRecovery,
+          ),
+        }
+      : {}),
     input_budget_total: null,
     metrics: {
       status,
@@ -2243,6 +2345,7 @@ function buildMergedContextBudgetPayload(params: {
   checkpointQueued: boolean;
   preRunCompaction?: PreRunCompactionTelemetryRecord | null;
   overflowRecovery?: OverflowRecoveryTelemetryRecord | null;
+  providerTerminationRecovery?: ProviderTerminationRecoveryTelemetryRecord | null;
 }): Record<string, unknown> {
   return {
     ...buildContextBudgetObservabilityPayload({
@@ -2258,6 +2361,7 @@ function buildMergedContextBudgetPayload(params: {
       checkpointQueued: params.checkpointQueued,
       preRunCompaction: params.preRunCompaction,
       overflowRecovery: params.overflowRecovery,
+      providerTerminationRecovery: params.providerTerminationRecovery,
     }),
     ...buildContextBudgetDecisions({
       promptCacheProfile: params.promptCacheProfile,
@@ -3228,6 +3332,7 @@ function plusMillisecondsIso(
 }
 
 type SubagentPendingIntegration = {
+  workspace_id: string | null;
   app_id: string;
   provider_id: string;
   credential_source: string | null;
@@ -3238,7 +3343,10 @@ type SubagentPendingIntegration = {
   whoami: Record<string, unknown> | null;
 };
 
-function parseSubagentPendingIntegrationsFromText(text: string): SubagentPendingIntegration[] {
+function parseSubagentPendingIntegrationsFromText(
+  text: string,
+  fallbackWorkspaceId?: string | null,
+): SubagentPendingIntegration[] {
   if (!text.includes("pending_integrations")) {
     return [];
   }
@@ -3251,14 +3359,21 @@ function parseSubagentPendingIntegrationsFromText(text: string): SubagentPending
   if (!isRecord(parsed)) {
     return [];
   }
+  const normalizedFallbackWorkspaceId =
+    typeof fallbackWorkspaceId === "string" ? fallbackWorkspaceId.trim() : "";
   const list = Array.isArray(parsed.pending_integrations) ? parsed.pending_integrations : [];
   const out: SubagentPendingIntegration[] = [];
   for (const entry of list) {
     if (!isRecord(entry)) continue;
     const appId = typeof entry.app_id === "string" ? entry.app_id.trim() : "";
     const provider = typeof entry.provider_id === "string" ? entry.provider_id.trim() : "";
+    const workspaceId =
+      typeof entry.workspace_id === "string" && entry.workspace_id.trim()
+        ? entry.workspace_id.trim()
+        : normalizedFallbackWorkspaceId;
     if (!appId || !provider) continue;
     out.push({
+      workspace_id: workspaceId || null,
       app_id: appId,
       provider_id: provider,
       credential_source:
@@ -3306,8 +3421,12 @@ function subagentPendingIntegrations(params: {
     if (!result || !Array.isArray(result.content)) continue;
     for (const part of result.content) {
       if (!isRecord(part) || part.type !== "text" || typeof part.text !== "string") continue;
-      for (const integration of parseSubagentPendingIntegrationsFromText(part.text)) {
-        const key = integration.provider_id.toLowerCase();
+      for (const integration of parseSubagentPendingIntegrationsFromText(part.text, params.workspaceId)) {
+        const key = [
+          integration.workspace_id?.toLowerCase() ?? "",
+          integration.provider_id.toLowerCase(),
+          integration.app_id.toLowerCase(),
+        ].join("|");
         if (seen.has(key)) continue;
         seen.add(key);
         out.push(integration);
@@ -3441,6 +3560,7 @@ function subagentLifecyclePayload(params: {
   });
   const assistantText = optionalString(params.turnResult.assistantText);
   const payload: Record<string, unknown> = {
+    workspace_id: params.run.workspaceId,
     subagent_id: params.run.subagentId,
     child_session_id: params.run.childSessionId,
     child_input_id: params.record.inputId,
@@ -4359,6 +4479,7 @@ export async function processClaimedInput(params: {
       harness_timeout_seconds: harnessTimeoutSeconds,
       debug: false,
     };
+    const baseRunnerInstruction = instruction;
     const synthesizedRequestSnapshotFingerprint =
       ensureClaimedInputTurnRequestSnapshot({
         store,
@@ -4404,6 +4525,8 @@ export async function processClaimedInput(params: {
     let toolReplayTrimmed = false;
     let preRunCompaction: PreRunCompactionTelemetryRecord | null = null;
     let overflowRecovery: OverflowRecoveryTelemetryRecord | null = null;
+    let providerTerminationRecovery: ProviderTerminationRecoveryTelemetryRecord | null =
+      null;
     const toolCallsById = new Map<
       string,
       {
@@ -4555,48 +4678,71 @@ export async function processClaimedInput(params: {
           after_session_tokens: null,
           estimated_request_tokens: initialPreRunDecision.estimatedRequestTokens,
           projected_total_tokens: initialPreRunDecision.projectedTotalTokens,
-          compaction_attempted: true,
+          compaction_attempted: Boolean(snapshotPayload),
           compaction_changed_branch: false,
           reset_required: false,
         };
         preRunCompaction = initialPreRunCompaction;
-        const liveSessionState =
-          params.sessionCheckpointSessionOps?.currentLeafCheckpointState(
-            checkpointHarnessSessionId,
-          ) ?? currentPiSessionLeafState(checkpointHarnessSessionId);
-        const compactionResult = await forceCompactSessionWithSnapshotMerge({
-          store,
-          workspaceId: record.workspaceId,
-          sessionId: record.sessionId,
-          inputId: record.inputId,
-          harnessSessionId: checkpointHarnessSessionId,
-          baseLeafId: liveSessionState.leafId,
-          baseLatestCompactionId: liveSessionState.latestCompactionId,
-          runPiSessionCompactionFn: params.runPiSessionCompactionFn,
-          resolveRuntimeModelClientFn: params.resolveRuntimeModelClientFn,
-          sessionOps: params.sessionCheckpointSessionOps,
-        });
-        const finalPreRunDecision = evaluatePreRunSessionCompaction({
-          liveSessionFile: checkpointHarnessSessionId,
-          snapshotPayload,
-          selectedModel,
-          previousSelectedModel,
-          previousContextUsage: null,
-        });
-        const currentPreRunCompaction =
-          preRunCompaction ?? initialPreRunCompaction;
-        preRunCompaction = {
-          ...currentPreRunCompaction,
-          final_decision: finalPreRunDecision.decision,
-          after_session_tokens: finalPreRunDecision.currentSessionTokens,
-          estimated_request_tokens:
-            finalPreRunDecision.estimatedRequestTokens ??
-            currentPreRunCompaction.estimated_request_tokens,
-          projected_total_tokens:
-            finalPreRunDecision.projectedTotalTokens ??
-            currentPreRunCompaction.projected_total_tokens,
-          compaction_changed_branch: compactionResult.merged,
-        };
+        if (!snapshotPayload) {
+          if (initialPreRunDecision.decision === "would_overflow") {
+            preRunCompaction = {
+              ...initialPreRunCompaction,
+              final_decision: "reset_required",
+              reset_required: true,
+            };
+            throw new SessionResetRequiredError(
+              `pre-run session compaction could not make the next prompt fit ${selectedModel ?? "the selected model"}; session reset required`,
+            );
+          }
+        } else {
+          const liveSessionState =
+            params.sessionCheckpointSessionOps?.currentLeafCheckpointState(
+              checkpointHarnessSessionId,
+            ) ?? currentPiSessionLeafState(checkpointHarnessSessionId);
+          const compactionResult = await forceCompactSessionWithSnapshotMerge({
+            store,
+            workspaceId: record.workspaceId,
+            sessionId: record.sessionId,
+            inputId: record.inputId,
+            harnessSessionId: checkpointHarnessSessionId,
+            baseLeafId: liveSessionState.leafId,
+            baseLatestCompactionId: liveSessionState.latestCompactionId,
+            runPiSessionCompactionFn: params.runPiSessionCompactionFn,
+            resolveRuntimeModelClientFn: params.resolveRuntimeModelClientFn,
+            sessionOps: params.sessionCheckpointSessionOps,
+          });
+          const finalPreRunDecision = evaluatePreRunSessionCompaction({
+            liveSessionFile: checkpointHarnessSessionId,
+            snapshotPayload,
+            selectedModel,
+            previousSelectedModel,
+            previousContextUsage: null,
+          });
+          const currentPreRunCompaction =
+            preRunCompaction ?? initialPreRunCompaction;
+          preRunCompaction = {
+            ...currentPreRunCompaction,
+            final_decision: finalPreRunDecision.decision,
+            after_session_tokens: finalPreRunDecision.currentSessionTokens,
+            estimated_request_tokens:
+              finalPreRunDecision.estimatedRequestTokens ??
+              currentPreRunCompaction.estimated_request_tokens,
+            projected_total_tokens:
+              finalPreRunDecision.projectedTotalTokens ??
+              currentPreRunCompaction.projected_total_tokens,
+            compaction_changed_branch: compactionResult.merged,
+          };
+          if (finalPreRunDecision.decision !== "fit") {
+            preRunCompaction = {
+              ...preRunCompaction,
+              final_decision: "reset_required",
+              reset_required: true,
+            };
+            throw new SessionResetRequiredError(
+              `pre-run session compaction could not make the next prompt fit ${selectedModel ?? "the selected model"}; session reset required`,
+            );
+          }
+        }
       }
       const executeRunner =
         params.executeRunnerRequestFn ?? executeRunnerRequest;
@@ -4609,6 +4755,33 @@ export async function processClaimedInput(params: {
           }
         | null = null;
       let runnerSequenceOffset = 0;
+      const prepareRunnerRetry = (failureMessage?: string | null) => {
+        runnerSequenceOffset = Math.max(runnerSequenceOffset, lastSequence);
+        payload.instruction = instructionWithRetryContinuationPrompt({
+          baseInstruction: baseRunnerInstruction,
+          failureMessage,
+        });
+        assistantParts.length = 0;
+        capturedPiAssistantMessage = null;
+        terminalStatus = "IDLE";
+        lastError = null;
+        completedAt = null;
+        stopReason = null;
+        tokenUsage = null;
+        contextUsage = null;
+        promptSectionIds = [];
+        capabilityManifestFingerprint = null;
+        requestSnapshotFingerprint = null;
+        promptCacheProfile = null;
+        toolReplayTrimmed = false;
+        deferredTerminalEvent = null;
+        pendingOutputDeltaPayload = null;
+        pendingOutputDeltaSequence = 0;
+        pendingOutputDeltaTimestamp = null;
+        toolCallsById.clear();
+        skillInvocationsById.clear();
+        permissionDenials.length = 0;
+      };
 
       for (let runnerAttempt = 1; runnerAttempt <= 2; runnerAttempt += 1) {
         const execution = await executeRunner(payload, {
@@ -5220,28 +5393,67 @@ export async function processClaimedInput(params: {
               `overflow recovery compaction could not make the next prompt fit ${selectedModel ?? "the selected model"}; session reset required`,
             );
           }
-          runnerSequenceOffset = Math.max(runnerSequenceOffset, lastSequence);
-          assistantParts.length = 0;
-          capturedPiAssistantMessage = null;
-          terminalStatus = "IDLE";
-          lastError = null;
-          completedAt = null;
-          stopReason = null;
-          tokenUsage = null;
-          contextUsage = null;
-          promptSectionIds = [];
-          capabilityManifestFingerprint = null;
-          requestSnapshotFingerprint = null;
-          promptCacheProfile = null;
-          toolReplayTrimmed = false;
-          deferredTerminalEvent = null;
-          pendingOutputDeltaPayload = null;
-          pendingOutputDeltaSequence = 0;
-          pendingOutputDeltaTimestamp = null;
-          toolCallsById.clear();
-          skillInvocationsById.clear();
-          permissionDenials.length = 0;
+          prepareRunnerRetry(optionalString(terminalFailurePayload?.message));
           continue;
+        }
+        if (
+          isRecoverableProviderTerminationPayload({
+            payload: terminalFailurePayload,
+            tokenUsage,
+            modelTurns: contextBudgetTelemetry.modelTurns,
+            toolCallCount: toolCallsById.size,
+          })
+        ) {
+          const usage =
+            (terminalFailurePayload && isRecord(terminalFailurePayload.usage)
+              ? terminalFailurePayload.usage
+              : null) ?? tokenUsage;
+          providerTerminationRecovery = {
+            ...(providerTerminationRecovery ?? {
+              trigger_reason: "long_running_provider_termination",
+              initial_error_type:
+                optionalString(terminalFailurePayload?.type) ?? null,
+              initial_error_message:
+                optionalString(terminalFailurePayload?.message) ?? null,
+              initial_input_tokens: firstFiniteUsageNumber(usage, [
+                "input_tokens",
+                "prompt_tokens",
+              ]),
+              initial_model_turns: contextBudgetTelemetry.modelTurns,
+              initial_tool_calls: toolCallsById.size,
+              compaction_attempted: true,
+              compaction_changed_branch: false,
+              retry_attempted: false,
+              recovered: false,
+            }),
+          };
+          if (runnerAttempt < 2) {
+            const liveSessionState =
+              params.sessionCheckpointSessionOps?.currentLeafCheckpointState(
+                checkpointHarnessSessionId,
+              ) ?? currentPiSessionLeafState(checkpointHarnessSessionId);
+            const compactionResult = await forceCompactSessionWithSnapshotMerge({
+              store,
+              workspaceId: record.workspaceId,
+              sessionId: record.sessionId,
+              inputId: record.inputId,
+              harnessSessionId: checkpointHarnessSessionId,
+              baseLeafId: liveSessionState.leafId,
+              baseLatestCompactionId: liveSessionState.latestCompactionId,
+              runPiSessionCompactionFn: params.runPiSessionCompactionFn,
+              resolveRuntimeModelClientFn: params.resolveRuntimeModelClientFn,
+              sessionOps: params.sessionCheckpointSessionOps,
+            });
+            providerTerminationRecovery = {
+              ...providerTerminationRecovery,
+              compaction_changed_branch: compactionResult.merged,
+              retry_attempted: compactionResult.merged,
+            };
+            if (compactionResult.merged) {
+              prepareRunnerRetry(optionalString(terminalFailurePayload?.message));
+              continue;
+            }
+          }
         }
         if (
           runnerAttempt > 1 &&
@@ -5250,6 +5462,16 @@ export async function processClaimedInput(params: {
         ) {
           overflowRecovery = {
             ...overflowRecovery,
+            recovered: true,
+          };
+        }
+        if (
+          runnerAttempt > 1 &&
+          providerTerminationRecovery?.retry_attempted &&
+          terminalEventToRelay?.eventType === "run_completed"
+        ) {
+          providerTerminationRecovery = {
+            ...providerTerminationRecovery,
             recovered: true,
           };
         }
@@ -5399,6 +5621,7 @@ export async function processClaimedInput(params: {
         checkpointQueued: Boolean(checkpointJob),
         preRunCompaction,
         overflowRecovery,
+        providerTerminationRecovery,
       });
       if (deferredTerminalEvent) {
         deferredTerminalEvent.payload.context_budget_decisions =
@@ -5691,6 +5914,7 @@ export async function processClaimedInput(params: {
             checkpointQueued: false,
             preRunCompaction,
             overflowRecovery,
+            providerTerminationRecovery,
           }),
         },
       });
@@ -5738,6 +5962,7 @@ export async function processClaimedInput(params: {
           checkpointQueued: false,
           preRunCompaction,
           overflowRecovery,
+          providerTerminationRecovery,
         }),
         tokenUsage: null,
       });

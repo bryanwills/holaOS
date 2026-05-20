@@ -83,10 +83,119 @@ function runtimeToolLabel(toolId: RuntimeAgentToolId): string {
     .join(" ");
 }
 
+function alignmentQuestionOptionSchema(): Record<string, unknown> {
+  return {
+    type: "object",
+    properties: {
+      id: { type: "string", description: "Optional stable option id." },
+      label: { type: "string", description: "Visible answer label shown to the user." },
+      description: { type: "string", description: "Optional helper detail for this option." },
+      answer_text: {
+        type: "string",
+        description: "Optional normalized answer text to store instead of the visible label.",
+      },
+      recommended: { type: "boolean", description: "Mark the recommended default option." },
+    },
+    required: ["label"],
+    additionalProperties: false,
+  };
+}
+
+function alignmentQuestionItemSchema(): Record<string, unknown> {
+  return {
+    type: "object",
+    properties: {
+      id: { type: "string", description: "Optional stable question id." },
+      title: { type: "string", description: "Optional short heading above the prompt." },
+      prompt: { type: "string", description: "Required question text shown to the user." },
+      details: { type: "string", description: "Optional supporting detail under the prompt." },
+      allow_notes: { type: "boolean", description: "Allow a short notes field." },
+      notes_placeholder: { type: "string", description: "Optional notes input placeholder." },
+      allow_freeform: {
+        type: "boolean",
+        description: "Allow a natural-language answer box in addition to options.",
+      },
+      freeform_placeholder: {
+        type: "string",
+        description: "Optional placeholder for the freeform answer box.",
+      },
+      options: {
+        type: "array",
+        description: "Two or more answer choices.",
+        minItems: 2,
+        items: alignmentQuestionOptionSchema(),
+      },
+    },
+    required: ["prompt", "options"],
+    additionalProperties: false,
+  };
+}
+
+function alignmentQuestionDeckSchema(): Record<string, unknown> {
+  return {
+    type: "object",
+    properties: {
+      title: { type: "string", description: "Optional deck heading above the questions." },
+      details: { type: "string", description: "Optional deck-level context." },
+      allow_notes: {
+        type: "boolean",
+        description: "Default notes toggle inherited by questions unless overridden.",
+      },
+      notes_placeholder: {
+        type: "string",
+        description: "Default notes placeholder inherited by questions unless overridden.",
+      },
+      allow_freeform: {
+        type: "boolean",
+        description: "Default freeform-answer toggle inherited by questions unless overridden.",
+      },
+      freeform_placeholder: {
+        type: "string",
+        description: "Default freeform placeholder inherited by questions unless overridden.",
+      },
+      questions: {
+        type: "array",
+        description: "One or more structured alignment questions.",
+        minItems: 1,
+        items: alignmentQuestionItemSchema(),
+      },
+    },
+    required: ["questions"],
+    additionalProperties: false,
+  };
+}
+
 function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unknown> {
   switch (toolId) {
     case "holaboss_onboarding_status":
       return { type: "object", properties: {}, additionalProperties: false };
+    case "holaboss_create_alignment_question":
+      return {
+        type: "object",
+        properties: {
+          question: {
+            description:
+              "Structured onboarding question payload. Use either one question object with `prompt` and `options`, or a deck object with `questions: [...]` where each item also has `prompt` and `options`.",
+            anyOf: [alignmentQuestionItemSchema(), alignmentQuestionDeckSchema()],
+          },
+        },
+        required: ["question"],
+        additionalProperties: false,
+      };
+    case "holaboss_create_alignment_report":
+    case "holaboss_create_verification_report":
+      return {
+        type: "object",
+        properties: {
+          report: {
+            type: "object",
+            description: "Structured onboarding report payload.",
+            additionalProperties: true,
+          },
+        },
+        required: ["report"],
+        additionalProperties: false,
+      };
     case "holaboss_onboarding_complete":
       return {
         type: "object",
@@ -680,6 +789,8 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         },
         additionalProperties: false,
       };
+    case "workspace_integrations_list_catalog":
+      return { type: "object", properties: {}, additionalProperties: false };
     case "workspace_apps_install":
       return {
         type: "object",
@@ -938,7 +1049,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         required: ["query"],
         additionalProperties: false,
       };
-    case "workspace_integrations_propose_connect":
+    case "holaboss_workspace_integrations_propose_connect":
       return {
         type: "object",
         properties: {
@@ -960,6 +1071,15 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
 }
 
 function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
+  if (toolId === "holaboss_create_alignment_question") {
+    return [
+      "Pass `question` as either a single question object or a deck object with `questions: [...]`.",
+      "Every question item must include a human-readable `prompt` and at least two `options` with `label` fields.",
+      "Use `title` only as a short heading; do not rely on `title` alone when you can provide a clearer `prompt`.",
+      "Use `allow_freeform: true` when the user may answer in their own words instead of only choosing an option.",
+      "Keep question decks short and tightly related, usually 2-5 questions.",
+    ];
+  }
   if (toolId === "download_url") {
     return [
       "Use `download_url` when you already have a direct asset URL and need the file saved into the workspace.",
@@ -1109,7 +1229,7 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "When a background terminal is no longer needed, stop it with `terminal_session_signal` or `terminal_session_close` instead of leaving it running indefinitely.",
     ];
   }
-  if (toolId === "workspace_integrations_propose_connect") {
+  if (toolId === "holaboss_workspace_integrations_propose_connect") {
     return [
       "When the user expresses intent to connect or use a known third-party service (Gmail, Slack, Notion, Linear, GitHub, HubSpot, Stripe, …) and there is NO matching `<toolkit>_<verb>` tool already in your tool list, call this tool. Connecting an integration is one OAuth click for the user, not an engineering task.",
       "Do NOT call `workspace_apps_scaffold` / `workspace_apps_install` / `workspace_apps_build` to satisfy a 'connect X' request. Integrations and apps are separate concepts: integrations are user OAuth accounts, apps are user-built tools that consume those accounts.",
@@ -1121,7 +1241,7 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
   if (toolId === "workspace_apps_install" || toolId === "workspace_apps_scaffold") {
     return [
       "These tools build user-facing apps (TanStack Start projects, dashboards, vibe-coded internal tools). They are NOT how a user connects an integration.",
-      "If the user said 'connect <service>', 'use my <service>', '我要连接 <service>', or otherwise wants OAuth access to a third-party account, call `workspace_integrations_propose_connect` instead — building an app for that is a category error.",
+      "If the user wants to connect, authorize, or otherwise gain OAuth access to a known third-party service, call `holaboss_workspace_integrations_propose_connect` instead — building an app for that is a category error.",
       "Use these only when the user actually asked for a new app, dashboard, tool, surface, internal product, or other UI/persistence/schedule-bearing capability.",
     ];
   }

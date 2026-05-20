@@ -162,7 +162,6 @@ function SidebarResizeHandle() {
     </div>
   );
 }
-
 function SidebarExpanded() {
   const section = useAtomValue(sidebarSectionAtom);
   return (
@@ -1388,4 +1387,3 @@ function NavItem({
     </Button>
   );
 }
-

@@ -1,15 +1,5 @@
 import { atom } from "jotai";
 
-/**
- * Internal (non-browser) tabs. Live alongside browser tabs in TopChrome;
- * when one is active the native BrowserView suspends and Center renders
- * the corresponding preview.
- *
- * - `file`: a workspace file opened from sidebar / chat output / link.
- * - `image`: an in-memory image (chat attachment without a workspace path).
- *   `dataUrl` may be a blob: URL; when `revokeOnClose` is true, the shell
- *   calls URL.revokeObjectURL after the tab is removed.
- */
 export type InternalTab =
   | {
       id: string;

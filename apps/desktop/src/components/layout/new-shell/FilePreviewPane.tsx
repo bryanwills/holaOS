@@ -168,7 +168,6 @@ export function FilePreviewPane({ filePath, onClose }: FilePreviewPaneProps) {
     </div>
   );
 }
-
 interface EditorSurfaceProps {
   preview: FilePreviewPayload;
   workspaceId: string | null;
@@ -312,4 +311,3 @@ function TextEditor({ preview, workspaceId, onUpdated }: EditorSurfaceProps) {
     </div>
   );
 }
-

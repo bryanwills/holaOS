@@ -26,7 +26,7 @@ export interface ChatMessage {
   outputs?: WorkspaceOutputRecordPayload[];
   memoryProposals?: MemoryUpdateProposalRecordPayload[];
   pendingIntegrations?: ChatPendingIntegration[];
-  // Proposals emitted by `workspace_integrations_propose_connect`. Same
+  // Proposals emitted by `holaboss_workspace_integrations_propose_connect`. Same
   // visual treatment as pendingIntegrations but no app_id (the agent is
   // asking to add to the account-level integration pool so it can call
   // the toolkit's tools directly — no app wrapping).
@@ -34,6 +34,7 @@ export interface ChatMessage {
 }
 
 export interface ChatPendingIntegration {
+  workspace_id?: string | null;
   app_id: string;
   provider_id: string;
   credential_source?: string | null;

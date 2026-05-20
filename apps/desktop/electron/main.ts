@@ -1,7 +1,9 @@
-import "dotenv/config";
 import { app as electronApp } from "electron";
+import { loadDesktopEnv } from "./desktopEnv";
 
 electronApp.setName("holaOS");
+
+loadDesktopEnv();
 
 import * as Sentry from "@sentry/electron/main";
 
@@ -2620,7 +2622,11 @@ interface WorkspaceRecordPayload {
   harness: string | null;
   error_message: string | null;
   onboarding_status: string;
+  onboarding_state?: string | null;
   onboarding_session_id: string | null;
+  alignment_question?: Record<string, unknown> | null;
+  alignment_report?: Record<string, unknown> | null;
+  verification_report?: Record<string, unknown> | null;
   onboarding_completed_at: string | null;
   onboarding_completion_summary: string | null;
   onboarding_requested_at: string | null;
@@ -2630,10 +2636,21 @@ interface WorkspaceRecordPayload {
   deleted_at_utc: string | null;
   workspace_path?: string | null;
   folder_state?: "healthy" | "missing" | null;
+  workspace_role?: string | null;
+  source_workspace_id?: string | null;
+  lab_purpose?: string | null;
+  lab_status?: string | null;
 }
 
 interface WorkspaceResponsePayload {
   workspace: WorkspaceRecordPayload;
+}
+
+interface WorkspaceLabResponsePayload {
+  lab: WorkspaceRecordPayload | null;
+  source: WorkspaceRecordPayload | null;
+  session: AgentSessionRecordPayload | null;
+  created?: boolean;
 }
 
 interface WorkspaceListResponsePayload {
@@ -2641,6 +2658,22 @@ interface WorkspaceListResponsePayload {
   total: number;
   limit: number;
   offset: number;
+}
+
+interface WorkspaceOnboardingStatusPayload {
+  workspace_id: string;
+  onboarding_status: string;
+  onboarding_state: string | null;
+  alignment_question: Record<string, unknown> | null;
+  alignment_report: Record<string, unknown> | null;
+  verification_report: Record<string, unknown> | null;
+  onboarding_completed_at: string | null;
+  onboarding_completion_summary: string | null;
+  onboarding_requested_at: string | null;
+  onboarding_requested_by: string | null;
+  lab_workspace_id?: string | null;
+  lab_purpose?: string | null;
+  lab_status?: string | null;
 }
 
 interface DiagnosticsExportRequestPayload {
@@ -3265,6 +3298,8 @@ interface HolabossCreateWorkspacePayload {
   template_commit?: string | null;
   /** App names from template metadata, used for integration resolution without materialization. */
   template_apps?: string[];
+  workspace_onboarding_mode?: "start" | "skip" | null;
+  workspace_onboarding_engine?: "deterministic" | "agentic" | null;
   /** Optional absolute path for the workspace's on-disk folder. When provided, the runtime registers this
    * as the workspace root instead of the default managed location. */
   workspace_path?: string | null;
@@ -9152,7 +9187,7 @@ function embeddedRuntimeStartupConfigError() {
   }
   return (
     "Embedded runtime remote bridge is enabled but no remote base URL is configured. " +
-    "Set HOLABOSS_BACKEND_BASE_URL or HOLABOSS_PROACTIVE_URL in desktop/.env."
+    "Set HOLABOSS_BACKEND_BASE_URL or HOLABOSS_PROACTIVE_URL in apps/desktop/.env."
   );
 }
 
@@ -10384,11 +10419,23 @@ async function composioConnect(payload: {
   callback_url?: string;
   whoami?: PendingIntegrationWhoami | null;
 }): Promise<ComposioConnectResult> {
+  const provider = composioToolkitSlugForProvider(payload.provider);
   return composioFetch<ComposioConnectResult>(
     "/api/composio/connect",
     "POST",
-    payload,
+    {
+      ...payload,
+      provider,
+    },
   );
+}
+
+function composioToolkitSlugForProvider(provider: string): string {
+  const normalized = provider.trim().toLowerCase();
+  if (normalized === "x") {
+    return "twitter";
+  }
+  return normalized;
 }
 
 interface ComposioToolkit {
@@ -14649,6 +14696,17 @@ async function createLocalWorkspace(
     const workspaceOnboardPath = path.join(workspaceDir, "ONBOARD.md");
     const wantsEmptyOnboardingScaffold =
       payload.template_mode === "empty_onboarding";
+    const requestedWorkspaceOnboardingEngine =
+      templateMode === "empty" &&
+      payload.workspace_onboarding_mode === "start" &&
+      !wantsEmptyOnboardingScaffold &&
+      payload.workspace_onboarding_engine === "agentic"
+        ? "agentic"
+        : templateMode === "empty" &&
+            payload.workspace_onboarding_mode === "start" &&
+            !wantsEmptyOnboardingScaffold
+          ? "deterministic"
+          : null;
     if (templateMode === "empty") {
       await fs.mkdir(path.join(workspaceDir, "skills"), { recursive: true });
       await fs.writeFile(workspaceAgentsPath, "", "utf-8");
@@ -14720,7 +14778,16 @@ async function createLocalWorkspace(
     }
 
     let onboardingStatus = "NOT_REQUIRED";
+    let onboardingState: string | null = null;
     let onboardingSessionId: string | null = null;
+    const wantsDeterministicWorkspaceOnboarding =
+      requestedWorkspaceOnboardingEngine === "deterministic";
+    const wantsAgenticWorkspaceOnboarding =
+      requestedWorkspaceOnboardingEngine === "agentic";
+    const skipsWorkspaceOnboarding =
+      templateMode === "empty" &&
+      payload.workspace_onboarding_mode === "skip" &&
+      !wantsEmptyOnboardingScaffold;
     try {
       const onboardContent = await fs.readFile(
         path.join(workspaceDir, "ONBOARD.md"),
@@ -14734,6 +14801,15 @@ async function createLocalWorkspace(
       onboardingStatus = "NOT_REQUIRED";
       onboardingSessionId = null;
     }
+    if (wantsDeterministicWorkspaceOnboarding) {
+      onboardingStatus = "PENDING";
+      onboardingState = "deterministic_intro";
+      onboardingSessionId = null;
+    }
+    if (!onboardingSessionId && skipsWorkspaceOnboarding) {
+      onboardingStatus = "COMPLETED";
+      onboardingState = null;
+    }
 
     stageLog("activate_workspace.start", { workspaceId, onboardingStatus });
     let updated: Awaited<ReturnType<typeof runtimeClient.workspaces.update>>;
@@ -14741,7 +14817,15 @@ async function createLocalWorkspace(
       updated = await runtimeClient.workspaces.update(workspaceId, {
         status: "active",
         onboarding_status: onboardingStatus.toLowerCase(),
+        onboarding_state: onboardingState,
         onboarding_session_id: onboardingSessionId,
+        ...(skipsWorkspaceOnboarding
+          ? {
+              onboarding_completed_at: new Date().toISOString(),
+              onboarding_completion_summary: "Workspace onboarding skipped by user",
+              onboarding_requested_by: "workspace_user",
+            }
+          : {}),
         error_message: null,
       });
       stageLog("activate_workspace.ok", { workspaceId });
@@ -14860,6 +14944,31 @@ async function createLocalWorkspace(
           .update(workspaceId, {
             error_message: contextualWorkspaceCreateError(
               "Workspace created, but automatic onboarding could not start",
+              error,
+            ),
+          })
+          .catch(() => updated);
+      }
+    }
+    if (wantsAgenticWorkspaceOnboarding) {
+      try {
+        const onboardingLab = await requestWorkspaceRuntimeJson<{
+          lab?: { id?: string | null } | null;
+          source?: WorkspaceRecordPayload | null;
+          session?: { session_id?: string | null } | null;
+        }>(workspaceId, {
+          method: "POST",
+          path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/labs`,
+          payload: { purpose: "workspace_onboarding" },
+        });
+        updated = onboardingLab.source
+          ? { workspace: onboardingLab.source }
+          : await runtimeClient.workspaces.get(workspaceId).catch(() => updated);
+      } catch (error) {
+        updated = await runtimeClient.workspaces
+          .update(workspaceId, {
+            error_message: contextualWorkspaceCreateError(
+              "Workspace created, but workspace onboarding lab could not start",
               error,
             ),
           })
@@ -15007,6 +15116,21 @@ async function createWorkspace(
     : createLocalWorkspace(payload);
 }
 
+async function createWorkspaceLab(
+  workspaceId: string,
+  purpose: "workspace_onboarding" | "meeting_mode",
+): Promise<WorkspaceLabResponsePayload> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
+  return requestWorkspaceRuntimeJson<WorkspaceLabResponsePayload>(
+    safeWorkspaceId,
+    {
+      method: "POST",
+      path: `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}/labs`,
+      payload: { purpose },
+    },
+  );
+}
+
 async function deleteWorkspace(
   workspaceId: string,
   keepFiles?: boolean,
@@ -15037,6 +15161,7 @@ const desktopWorkspaceControlPlane = createLocalWorkspaceControlPlane({
   listWorkspaces,
   workspaceRegistry,
   createWorkspace,
+  createWorkspaceLab,
   deleteWorkspace,
   activateWorkspaceRecord,
   getWorkspaceLifecycle,
@@ -15396,6 +15521,214 @@ async function queueSessionInput(
     updated_at: utcNowIso(),
   });
   return response;
+}
+
+async function getOnboardingStatus(
+  workspaceId: string,
+): Promise<WorkspaceOnboardingStatusPayload> {
+  return requestWorkspaceRuntimeJson<WorkspaceOnboardingStatusPayload>(
+    workspaceId,
+    {
+      method: "GET",
+      path: "/api/v1/capabilities/runtime-tools/onboarding/status",
+      params: {
+        workspace_id: workspaceId,
+      },
+    },
+  );
+}
+
+async function continueDeterministicOnboarding(
+  workspaceId: string,
+): Promise<WorkspaceResponsePayload> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
+  const current = await runtimeClient.workspaces.get(safeWorkspaceId);
+  const onboardingSessionId =
+    current.workspace.onboarding_session_id?.trim() || "";
+  if (onboardingSessionId) {
+    throw new Error(
+      "Deterministic onboarding is only available for non-agentic onboarding workspaces.",
+    );
+  }
+  const status = (current.workspace.onboarding_status || "").trim().toLowerCase();
+  if (status === "completed" || status === "not_required") {
+    return withWorkspaceResponseLocation(current);
+  }
+  return withWorkspaceResponseLocation(
+    await runtimeClient.workspaces.update(safeWorkspaceId, {
+      onboarding_status: "completed",
+      onboarding_state: null,
+      onboarding_completed_at: new Date().toISOString(),
+      onboarding_completion_summary: "Deterministic onboarding completed",
+      onboarding_requested_by: "workspace_user",
+      error_message: null,
+    }),
+  );
+}
+
+async function skipWorkspaceOnboarding(
+  workspaceId: string,
+): Promise<WorkspaceResponsePayload> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
+  const current = await runtimeClient.workspaces.get(safeWorkspaceId);
+  const currentWorkspace = current.workspace;
+  const status = (currentWorkspace.onboarding_status || "").trim().toLowerCase();
+  if (status === "completed" || status === "not_required") {
+    return withWorkspaceResponseLocation(current);
+  }
+
+  const workspaceRole = (currentWorkspace.workspace_role || "")
+    .trim()
+    .toLowerCase();
+  const sourceWorkspaceId =
+    workspaceRole === "draft_lab"
+      ? currentWorkspace.source_workspace_id?.trim() || safeWorkspaceId
+      : safeWorkspaceId;
+  let labWorkspaceId =
+    workspaceRole === "draft_lab" ? safeWorkspaceId : "";
+
+  if (!labWorkspaceId) {
+    try {
+      const onboardingStatus = await getOnboardingStatus(sourceWorkspaceId);
+      labWorkspaceId = onboardingStatus.lab_workspace_id?.trim() || "";
+    } catch {
+      labWorkspaceId = "";
+    }
+  }
+
+  if (labWorkspaceId) {
+    const abandoned = await requestWorkspaceRuntimeJson<WorkspaceLabResponsePayload>(
+      sourceWorkspaceId,
+      {
+        method: "POST",
+        path: `/api/v1/workspace-labs/${encodeURIComponent(labWorkspaceId)}/abandon`,
+        payload: {
+          summary: "Workspace onboarding skipped",
+        },
+      },
+    );
+    if (abandoned.source) {
+      return withWorkspaceResponseLocation({
+        workspace: abandoned.source,
+      });
+    }
+    return withWorkspaceResponseLocation(
+      await runtimeClient.workspaces.get(sourceWorkspaceId),
+    );
+  }
+
+  return withWorkspaceResponseLocation(
+    await runtimeClient.workspaces.update(sourceWorkspaceId, {
+      onboarding_status: "completed",
+      onboarding_state: currentWorkspace.onboarding_session_id?.trim()
+        ? "abandoned"
+        : null,
+      onboarding_session_id: null,
+      onboarding_completed_at: new Date().toISOString(),
+      onboarding_completion_summary: "Workspace onboarding skipped",
+      onboarding_requested_by: "workspace_user",
+      error_message: null,
+    }),
+  );
+}
+
+async function approveOnboardingAlignment(
+  workspaceId: string,
+): Promise<WorkspaceOnboardingStatusPayload> {
+  return requestWorkspaceRuntimeJson<WorkspaceOnboardingStatusPayload>(
+    workspaceId,
+    {
+      method: "POST",
+      path: "/api/v1/capabilities/runtime-tools/onboarding/alignment/approve",
+      payload: {
+        workspace_id: workspaceId,
+      },
+    },
+  );
+}
+
+async function answerOnboardingAlignmentQuestion(
+  workspaceId: string,
+  payload: {
+    optionId?: string | null;
+    responseText?: string | null;
+    notes?: string | null;
+    answers?: Array<{
+      questionId?: string | null;
+      optionId?: string | null;
+      responseText?: string | null;
+      notes?: string | null;
+    }>;
+  },
+): Promise<WorkspaceOnboardingStatusPayload> {
+  return requestWorkspaceRuntimeJson<WorkspaceOnboardingStatusPayload>(
+    workspaceId,
+    {
+      method: "POST",
+      path: "/api/v1/capabilities/runtime-tools/onboarding/alignment-question/answer",
+      payload: {
+        workspace_id: workspaceId,
+        option_id: payload.optionId ?? undefined,
+        response_text: payload.responseText ?? undefined,
+        notes: payload.notes ?? undefined,
+        answers: Array.isArray(payload.answers)
+          ? payload.answers.map((answer) => ({
+              question_id: answer.questionId ?? undefined,
+              option_id: answer.optionId ?? undefined,
+              response_text: answer.responseText ?? undefined,
+              notes: answer.notes ?? undefined,
+            }))
+          : undefined,
+      },
+    },
+  );
+}
+
+async function requestOnboardingAlignmentRevision(
+  workspaceId: string,
+): Promise<WorkspaceOnboardingStatusPayload> {
+  return requestWorkspaceRuntimeJson<WorkspaceOnboardingStatusPayload>(
+    workspaceId,
+    {
+      method: "POST",
+      path: "/api/v1/capabilities/runtime-tools/onboarding/alignment/revise",
+      payload: {
+        workspace_id: workspaceId,
+      },
+    },
+  );
+}
+
+async function requestOnboardingVerificationRevision(
+  workspaceId: string,
+): Promise<WorkspaceOnboardingStatusPayload> {
+  return requestWorkspaceRuntimeJson<WorkspaceOnboardingStatusPayload>(
+    workspaceId,
+    {
+      method: "POST",
+      path: "/api/v1/capabilities/runtime-tools/onboarding/verification/revise",
+      payload: {
+        workspace_id: workspaceId,
+      },
+    },
+  );
+}
+
+async function completeOnboarding(
+  workspaceId: string,
+  payload: { summary: string; requestedBy?: string | null },
+): Promise<WorkspaceOnboardingStatusPayload | WorkspaceLabResponsePayload> {
+  return requestWorkspaceRuntimeJson<
+    WorkspaceOnboardingStatusPayload | WorkspaceLabResponsePayload
+  >(workspaceId, {
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/onboarding/complete",
+    payload: {
+      workspace_id: workspaceId,
+      summary: payload.summary,
+      requested_by: payload.requestedBy ?? undefined,
+    },
+  });
 }
 
 async function pauseSessionRun(
@@ -22855,6 +23188,15 @@ app.whenReady().then(async () => {
       desktopWorkspaceControlPlane.createWorkspace(payload),
   );
   handleTrustedIpc(
+    "workspace:createWorkspaceLab",
+    ["main"],
+    async (
+      _event,
+      workspaceId: string,
+      purpose: "workspace_onboarding" | "meeting_mode",
+    ) => desktopWorkspaceControlPlane.createWorkspaceLab(workspaceId, purpose),
+  );
+  handleTrustedIpc(
     "workspace:deleteWorkspace",
     ["main"],
     async (_event, workspaceId: string, keepFiles?: boolean) =>
@@ -23028,6 +23370,69 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, payload: HolabossQueueSessionInputPayload) =>
       queueSessionInput(payload),
+  );
+  handleTrustedIpc(
+    "workspace:getOnboardingStatus",
+    ["main"],
+    async (_event, workspaceId: string) => getOnboardingStatus(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:continueDeterministicOnboarding",
+    ["main"],
+    async (_event, workspaceId: string) =>
+      continueDeterministicOnboarding(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:skipWorkspaceOnboarding",
+    ["main"],
+    async (_event, workspaceId: string) =>
+      skipWorkspaceOnboarding(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:answerOnboardingAlignmentQuestion",
+    ["main"],
+    async (
+      _event,
+      workspaceId: string,
+      payload: {
+        optionId?: string | null;
+        responseText?: string | null;
+        notes?: string | null;
+        answers?: Array<{
+          questionId?: string | null;
+          optionId?: string | null;
+          responseText?: string | null;
+          notes?: string | null;
+        }>;
+      },
+    ) => answerOnboardingAlignmentQuestion(workspaceId, payload),
+  );
+  handleTrustedIpc(
+    "workspace:approveOnboardingAlignment",
+    ["main"],
+    async (_event, workspaceId: string) =>
+      approveOnboardingAlignment(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:requestOnboardingAlignmentRevision",
+    ["main"],
+    async (_event, workspaceId: string) =>
+      requestOnboardingAlignmentRevision(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:requestOnboardingVerificationRevision",
+    ["main"],
+    async (_event, workspaceId: string) =>
+      requestOnboardingVerificationRevision(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:completeOnboarding",
+    ["main"],
+    async (
+      _event,
+      workspaceId: string,
+      payload: { summary: string; requestedBy?: string | null },
+    ) => completeOnboarding(workspaceId, payload),
   );
   handleTrustedIpc(
     "workspace:pauseSessionRun",

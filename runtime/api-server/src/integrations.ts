@@ -6,18 +6,11 @@ import {
   type IntegrationReadinessResult,
   checkIntegrationReadiness
 } from "./integration-runtime.js";
+import {
+  INTEGRATION_CATALOG_PROVIDERS,
+  type IntegrationCatalogProviderRecord,
+} from "./integration-catalog.js";
 import { resolveWorkspaceAppRuntime } from "./workspace-apps.js";
-
-export interface IntegrationCatalogProviderRecord {
-  provider_id: string;
-  display_name: string;
-  description: string;
-  auth_modes: string[];
-  supports_oss: boolean;
-  supports_managed: boolean;
-  default_scopes: string[];
-  docs_url: string | null;
-}
 
 export interface IntegrationConnectionPayload {
   connection_id: string;
@@ -56,79 +49,6 @@ export class IntegrationServiceError extends Error {
   }
 }
 
-const PHASE_1_INTEGRATION_CATALOG: IntegrationCatalogProviderRecord[] = [
-  {
-    provider_id: "gmail",
-    display_name: "Gmail",
-    description: "Read, draft, and send emails through Gmail.",
-    auth_modes: ["managed", "oauth_app", "manual_token"],
-    supports_oss: true,
-    supports_managed: true,
-    default_scopes: ["gmail.send", "gmail.readonly"],
-    docs_url: null
-  },
-  {
-    provider_id: "googlesheets",
-    display_name: "Google Sheets",
-    description: "Read and manage spreadsheet data through Google Sheets.",
-    auth_modes: ["managed", "oauth_app", "manual_token"],
-    supports_oss: true,
-    supports_managed: true,
-    default_scopes: ["spreadsheets"],
-    docs_url: null
-  },
-  {
-    provider_id: "google",
-    display_name: "Google",
-    description: "Google account (legacy — prefer gmail or googlesheets).",
-    auth_modes: ["managed", "oauth_app", "manual_token"],
-    supports_oss: true,
-    supports_managed: true,
-    default_scopes: [],
-    docs_url: null
-  },
-  {
-    provider_id: "github",
-    display_name: "GitHub",
-    description: "Triage PRs, issues, and repository workflows.",
-    auth_modes: ["managed", "oauth_app", "manual_token"],
-    supports_oss: true,
-    supports_managed: true,
-    default_scopes: ["repo", "read:org"],
-    docs_url: null
-  },
-  {
-    provider_id: "reddit",
-    display_name: "Reddit",
-    description: "Read and manage Reddit content and moderation workflows.",
-    auth_modes: ["managed", "oauth_app", "manual_token"],
-    supports_oss: true,
-    supports_managed: true,
-    default_scopes: ["read", "submit"],
-    docs_url: null
-  },
-  {
-    provider_id: "twitter",
-    display_name: "Twitter / X",
-    description: "Read and publish social updates on X.",
-    auth_modes: ["managed", "oauth_app", "manual_token"],
-    supports_oss: true,
-    supports_managed: true,
-    default_scopes: ["tweet.read", "tweet.write"],
-    docs_url: null
-  },
-  {
-    provider_id: "linkedin",
-    display_name: "LinkedIn",
-    description: "Manage LinkedIn content and workflows.",
-    auth_modes: ["managed", "oauth_app", "manual_token"],
-    supports_oss: true,
-    supports_managed: true,
-    default_scopes: ["r_liteprofile", "w_member_social"],
-    docs_url: null
-  }
-];
-
 const VALID_TARGET_TYPES = new Set(["workspace", "app", "agent"]);
 
 function requiredString(value: unknown, fieldName: string): string {
@@ -140,7 +60,7 @@ function requiredString(value: unknown, fieldName: string): string {
 
 function lookupProviderDisplayName(providerId: string): string {
   return (
-    PHASE_1_INTEGRATION_CATALOG.find((provider) => provider.provider_id === providerId)?.display_name ??
+    INTEGRATION_CATALOG_PROVIDERS.find((provider) => provider.provider_id === providerId)?.display_name ??
     providerId
   );
 }
@@ -240,7 +160,7 @@ export class RuntimeIntegrationService {
   }
 
   getCatalog(): { providers: IntegrationCatalogProviderRecord[] } {
-    return { providers: PHASE_1_INTEGRATION_CATALOG };
+    return { providers: INTEGRATION_CATALOG_PROVIDERS };
   }
 
   listConnections(params: { providerId?: string; ownerUserId?: string } = {}): {

@@ -473,7 +473,11 @@ interface RuntimeNotificationListOptionsPayload {
     harness: string | null;
     error_message: string | null;
     onboarding_status: string;
+    onboarding_state?: string | null;
     onboarding_session_id: string | null;
+    alignment_question?: Record<string, unknown> | null;
+    alignment_report?: Record<string, unknown> | null;
+    verification_report?: Record<string, unknown> | null;
     onboarding_completed_at: string | null;
     onboarding_completion_summary: string | null;
     onboarding_requested_at: string | null;
@@ -483,6 +487,10 @@ interface RuntimeNotificationListOptionsPayload {
     deleted_at_utc: string | null;
     icon?: string | null;
     icon_color?: string | null;
+    workspace_role?: string | null;
+    source_workspace_id?: string | null;
+    lab_purpose?: string | null;
+    lab_status?: string | null;
     workspace_path?: string | null;
     folder_state?: "healthy" | "missing" | null;
   }
@@ -491,11 +499,34 @@ interface RuntimeNotificationListOptionsPayload {
     workspace: WorkspaceRecordPayload;
   }
 
+  interface WorkspaceLabResponsePayload {
+    lab: WorkspaceRecordPayload | null;
+    source: WorkspaceRecordPayload | null;
+    session: AgentSessionRecordPayload | null;
+    created?: boolean;
+  }
+
   interface WorkspaceListResponsePayload {
     items: WorkspaceRecordPayload[];
     total: number;
     limit: number;
     offset: number;
+  }
+
+  interface WorkspaceOnboardingStatusPayload {
+    workspace_id: string;
+    onboarding_status: string;
+    onboarding_state: string | null;
+    alignment_question: Record<string, unknown> | null;
+    alignment_report: Record<string, unknown> | null;
+    verification_report: Record<string, unknown> | null;
+    onboarding_completed_at: string | null;
+    onboarding_completion_summary: string | null;
+    onboarding_requested_at: string | null;
+    onboarding_requested_by: string | null;
+    lab_workspace_id?: string | null;
+    lab_purpose?: string | null;
+    lab_status?: string | null;
   }
 
   type BrowserImportSource = "chrome" | "chromium" | "arc" | "safari";
@@ -1282,6 +1313,8 @@ interface RuntimeNotificationListOptionsPayload {
     template_ref?: string | null;
     template_commit?: string | null;
     template_apps?: string[];
+    workspace_onboarding_mode?: "start" | "skip" | null;
+    workspace_onboarding_engine?: "deterministic" | "agentic" | null;
     workspace_path?: string | null;
   }
 
@@ -1844,6 +1877,10 @@ interface RuntimeNotificationListOptionsPayload {
       listSkills: (workspaceId: string) => Promise<WorkspaceSkillListResponsePayload>;
       getWorkspaceRoot: (workspaceId: string) => Promise<string>;
       createWorkspace: (payload: HolabossCreateWorkspacePayload) => Promise<WorkspaceResponsePayload>;
+      createWorkspaceLab: (
+        workspaceId: string,
+        purpose: "workspace_onboarding" | "meeting_mode",
+      ) => Promise<WorkspaceLabResponsePayload>;
       deleteWorkspace: (workspaceId: string, keepFiles?: boolean) => Promise<WorkspaceResponsePayload>;
       updateAppearance: (
         workspaceId: string,
@@ -1897,6 +1934,34 @@ interface RuntimeNotificationListOptionsPayload {
         payload: StageSessionAttachmentPathsPayload
       ) => Promise<StageSessionAttachmentsResponsePayload>;
       queueSessionInput: (payload: HolabossQueueSessionInputPayload) => Promise<EnqueueSessionInputResponsePayload>;
+      getOnboardingStatus: (workspaceId: string) => Promise<WorkspaceOnboardingStatusPayload>;
+      continueDeterministicOnboarding: (
+        workspaceId: string
+      ) => Promise<WorkspaceResponsePayload>;
+      skipWorkspaceOnboarding: (
+        workspaceId: string
+      ) => Promise<WorkspaceResponsePayload>;
+      answerOnboardingAlignmentQuestion: (
+        workspaceId: string,
+        payload: {
+          optionId?: string | null;
+          responseText?: string | null;
+          notes?: string | null;
+          answers?: Array<{
+            questionId?: string | null;
+            optionId?: string | null;
+            responseText?: string | null;
+            notes?: string | null;
+          }>;
+        }
+      ) => Promise<WorkspaceOnboardingStatusPayload>;
+      approveOnboardingAlignment: (workspaceId: string) => Promise<WorkspaceOnboardingStatusPayload>;
+      requestOnboardingAlignmentRevision: (workspaceId: string) => Promise<WorkspaceOnboardingStatusPayload>;
+      requestOnboardingVerificationRevision: (workspaceId: string) => Promise<WorkspaceOnboardingStatusPayload>;
+      completeOnboarding: (
+        workspaceId: string,
+        payload: { summary: string; requestedBy?: string | null }
+      ) => Promise<WorkspaceOnboardingStatusPayload | WorkspaceLabResponsePayload>;
       pauseSessionRun: (payload: HolabossPauseSessionRunPayload) => Promise<PauseSessionRunResponsePayload>;
       updateQueuedSessionInput: (
         payload: HolabossUpdateQueuedSessionInputPayload

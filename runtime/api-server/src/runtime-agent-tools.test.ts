@@ -1457,6 +1457,62 @@ test("scaffoldWorkspaceApp and registerWorkspaceApp create a minimal managed app
   assert.equal(ports.ports.mcp, status.ports?.mcp);
 });
 
+test("workspace app registration rejects non-canonical integration providers", async () => {
+  await harness.service.scaffoldWorkspaceApp({
+    workspaceId: harness.workspaceId,
+    appId: "x-demo",
+    name: "X Demo",
+  });
+  fs.appendFileSync(
+    path.join(harness.workspaceDir, "apps", "x-demo", "app.runtime.yaml"),
+    [
+      "",
+      "integrations:",
+      "  - key: primary_x",
+      "    provider: x",
+      "    capability: api",
+      "    required: true",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  await assert.rejects(
+    () =>
+      harness.service.registerWorkspaceApp({
+        workspaceId: harness.workspaceId,
+        appId: "x-demo",
+      }),
+    (error) => {
+      assert.equal(error instanceof RuntimeAgentToolsServiceError, true);
+      assert.equal((error as RuntimeAgentToolsServiceError).statusCode, 400);
+      assert.match(
+        (error as RuntimeAgentToolsServiceError).message,
+        /Use canonical provider_id 'twitter'/,
+      );
+      return true;
+    },
+  );
+});
+
+test("listIntegrationCatalog exposes canonical provider ids for app builders", () => {
+  const catalog = harness.service.listIntegrationCatalog({
+    workspaceId: harness.workspaceId,
+  }) as {
+    provider_ids: string[];
+    providers: Array<{ provider_id: string; display_name: string }>;
+    requirement: string;
+  };
+
+  assert.ok(catalog.provider_ids.includes("twitter"));
+  assert.equal(catalog.provider_ids.includes("x"), false);
+  assert.equal(
+    catalog.providers.some((provider) => provider.provider_id === "twitter"),
+    true,
+  );
+  assert.match(catalog.requirement, /use 'twitter' for X/i);
+});
+
 test("buildWorkspaceApp runs a deterministic app-local build script", async () => {
   await harness.service.scaffoldWorkspaceApp({
     workspaceId: harness.workspaceId,
@@ -1640,6 +1696,93 @@ test("ensureWorkspaceAppsRunning, restartWorkspaceApp, and waitUntilWorkspaceApp
     assert.equal(staleStatus.revision.managed_runtime_stale, true);
     assert.equal(typeof staleStatus.revision.source_updated_at, "string");
     assert.equal(typeof staleStatus.revision.last_ready_at, "string");
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ensureWorkspaceAppsRunning omits pending_integrations for already bound app integrations", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-bound-integration-"));
+  writeRuntimeConfig(root, {
+    runtime: {
+      default_model: "openai/gpt-5.4",
+    },
+  });
+  const workspaceRoot = path.join(root, "workspace");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceId = "workspace-1";
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+
+  try {
+    store.createWorkspace({
+      workspaceId,
+      name: "Workspace 1",
+      harness: "pi",
+      status: "active",
+    });
+    const connection = store.upsertIntegrationConnection({
+      connectionId: "conn-google",
+      providerId: "google",
+      ownerUserId: "user-1",
+      accountLabel: "user@example.com",
+      authMode: "oauth_app",
+      grantedScopes: ["gmail.send"],
+      status: "active",
+      secretRef: "token-google",
+    });
+    store.upsertIntegrationBinding({
+      bindingId: "bind-google",
+      workspaceId,
+      targetType: "app",
+      targetId: "gmail-helper",
+      integrationKey: "google",
+      connectionId: connection.connectionId,
+      isDefault: false,
+    });
+    const service = new RuntimeAgentToolsService(store, {
+      workspaceRoot,
+      appLifecycle: {
+        ensureAppRunning: async (callWorkspaceId, callAppId) => {
+          store.upsertAppBuild({
+            workspaceId: callWorkspaceId,
+            appId: callAppId,
+            status: "running",
+          });
+        },
+      },
+    });
+
+    await service.scaffoldWorkspaceApp({
+      workspaceId,
+      appId: "gmail-helper",
+      name: "Gmail Helper",
+    });
+    fs.appendFileSync(
+      path.join(workspaceRoot, workspaceId, "apps", "gmail-helper", "app.runtime.yaml"),
+      [
+        "",
+        "integrations:",
+        "  - key: primary_google",
+        "    provider: google",
+        "    capability: gmail",
+        "    required: true",
+        "    credential_source: platform",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await service.registerWorkspaceApp({
+      workspaceId,
+      appId: "gmail-helper",
+    });
+
+    const result = (await service.ensureWorkspaceAppsRunning({
+      workspaceId,
+      appIds: ["gmail-helper"],
+    })) as { pending_integrations?: unknown };
+
+    assert.equal(result.pending_integrations, undefined);
   } finally {
     store.close();
     await rm(root, { recursive: true, force: true });
