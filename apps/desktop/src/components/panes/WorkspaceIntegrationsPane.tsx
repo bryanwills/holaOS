@@ -1,13 +1,6 @@
 import { Info, Loader2, RefreshCcw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  SettingsCard,
-  SettingsRow,
-  SettingsSection,
-} from "@/components/settings";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -15,6 +8,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
 import { useIntegrationAccountMetadata } from "@/lib/integrationAccountStore";
 import { accountDisplayLabel } from "@/lib/integrationDisplay";
 
@@ -22,8 +16,19 @@ interface WorkspaceIntegrationsPaneProps {
   workspaceId: string;
 }
 
+interface ComposioToolkitInfo {
+  slug: string;
+  name: string;
+  logo: string | null;
+}
+
 function normalizeErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Request failed.";
+}
+
+function composioFallbackLogo(slug: string): string | null {
+  const cleaned = slug.trim().toLowerCase();
+  return cleaned ? `https://logos.composio.dev/api/${cleaned}` : null;
 }
 
 function connectionToAccountPayload(
@@ -49,6 +54,7 @@ function connectionToAccountPayload(
 
 export function WorkspaceIntegrationsPane({ workspaceId }: WorkspaceIntegrationsPaneProps) {
   const [data, setData] = useState<WorkspaceIntegrationsListResponsePayload | null>(null);
+  const [toolkitsBySlug, setToolkitsBySlug] = useState<Map<string, ComposioToolkitInfo>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
   const [statusMessage, setStatusMessage] = useState("");
   const [mutatingToolkit, setMutatingToolkit] = useState<string | null>(null);
@@ -57,10 +63,22 @@ export function WorkspaceIntegrationsPane({ workspaceId }: WorkspaceIntegrations
   const load = useCallback(async () => {
     setIsLoading(true);
     try {
-      const result = await window.electronAPI.workspace.listWorkspaceIntegrations(
-        workspaceId,
-      );
+      const [result, toolkitsResult] = await Promise.all([
+        window.electronAPI.workspace.listWorkspaceIntegrations(workspaceId),
+        window.electronAPI.workspace
+          .composioListToolkits()
+          .catch(() => ({ toolkits: [] as ComposioToolkitInfo[] })),
+      ]);
       setData(result);
+      const map = new Map<string, ComposioToolkitInfo>();
+      for (const t of toolkitsResult.toolkits) {
+        map.set(t.slug.trim().toLowerCase(), {
+          slug: t.slug,
+          name: t.name,
+          logo: t.logo ?? null,
+        });
+      }
+      setToolkitsBySlug(map);
     } catch (error) {
       setStatusMessage(normalizeErrorMessage(error));
       setData(null);
@@ -81,17 +99,12 @@ export function WorkspaceIntegrationsPane({ workspaceId }: WorkspaceIntegrations
   }, [data]);
   const accountMetadata = useIntegrationAccountMetadata(allConnections);
 
-  // Per-toolkit dedupe by resolved identity (email > handle > raw ca_id).
-  // Composio routinely mints a fresh connected_account on every re-auth
-  // attempt, so a single Gmail address can show up as N ca_ids; group
-  // them under the oldest ca as canonical so the picker is honest.
   const dedupedByToolkit = useMemo(() => {
     const result = new Map<
       string,
       Array<{
         canonical: WorkspaceIntegrationConnectionPayload;
         duplicates: WorkspaceIntegrationConnectionPayload[];
-        identityKey: string;
       }>
     >();
     if (!data) return result;
@@ -109,15 +122,14 @@ export function WorkspaceIntegrationsPane({ workspaceId }: WorkspaceIntegrations
       const entries: Array<{
         canonical: WorkspaceIntegrationConnectionPayload;
         duplicates: WorkspaceIntegrationConnectionPayload[];
-        identityKey: string;
       }> = [];
-      for (const [identityKey, conns] of groups) {
+      for (const conns of groups.values()) {
         const sorted = conns
           .slice()
           .sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""));
         const [canonical, ...duplicates] = sorted;
         if (!canonical) continue;
-        entries.push({ canonical, duplicates, identityKey });
+        entries.push({ canonical, duplicates });
       }
       result.set(integration.toolkit_slug, entries);
     }
@@ -207,54 +219,52 @@ export function WorkspaceIntegrationsPane({ workspaceId }: WorkspaceIntegrations
 
   if (isLoading) {
     return (
-      <SettingsSection
-        title="Workspace integrations"
-        description="Control which of your account integrations the agent in this workspace can use."
-      >
-        <SettingsCard>
-          <SettingsRow label="Loading…">
-            <Loader2 className="size-4 animate-spin text-muted-foreground" />
-          </SettingsRow>
-        </SettingsCard>
-      </SettingsSection>
+      <div className="grid gap-3">
+        <Header onRefresh={load} />
+        <div className="flex items-center justify-center rounded-xl border border-border px-6 py-12">
+          <Loader2 className="size-5 animate-spin text-muted-foreground" />
+        </div>
+      </div>
     );
   }
 
   const integrations = data?.integrations ?? [];
+  const supported = integrations.filter((i) => i.supported);
+  const unsupported = integrations.filter((i) => !i.supported);
 
   return (
-    <SettingsSection
-      title="Workspace integrations"
-      description="Your account integrations are the pool. Toggle which ones the agent in this workspace can use, and pick which account when you have more than one."
-      action={
-        <Button
-          onClick={() => void load()}
-          size="sm"
-          type="button"
-          variant="ghost"
-        >
-          <RefreshCcw className="mr-2 size-3.5" />
-          Refresh
-        </Button>
-      }
-    >
+    <div className="grid gap-4">
+      <Header onRefresh={load} />
+
       {statusMessage ? (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           {statusMessage}
         </div>
       ) : null}
 
-      {integrations.length === 0 ? (
-        <SettingsCard>
-          <SettingsRow
-            description="Connect an integration in Settings → Integrations to make it available here."
-            label="No account integrations yet"
-            leading={<Info className="size-4 text-muted-foreground" />}
-          />
-        </SettingsCard>
+      {supported.length === 0 ? (
+        <div className="flex items-start gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm">
+          <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <div>
+            <div className="font-medium text-foreground">
+              No connectable integrations yet
+            </div>
+            <div className="mt-0.5 text-xs text-muted-foreground">
+              Connect an integration in Settings → Integrations. Once it's
+              wired up to the agent, it'll show up here.
+            </div>
+          </div>
+        </div>
       ) : (
-        <SettingsCard>
-          {integrations.map((integration) => {
+        <div className="grid gap-3">
+          {supported.map((integration) => {
+            const toolkitInfo = toolkitsBySlug.get(integration.toolkit_slug);
+            const logo =
+              toolkitInfo?.logo ??
+              integration.toolkit_logo ??
+              composioFallbackLogo(integration.toolkit_slug);
+            const displayName =
+              toolkitInfo?.name || integration.toolkit_name || integration.toolkit_slug;
             const isEnabled = integration.effective_state !== "disabled";
             const isMutating = mutatingToolkit === integration.toolkit_slug;
             const isCleaning = cleaningToolkit === integration.toolkit_slug;
@@ -269,9 +279,6 @@ export function WorkspaceIntegrationsPane({ workspaceId }: WorkspaceIntegrations
               integration.effective_state === "pinned" && integration.pinned_connection_id
                 ? integration.pinned_connection_id
                 : null;
-            // Map a pin onto its canonical entry: if the user pinned a
-            // duplicate ca, the picker should highlight its canonical
-            // (so they don't see "Unknown" after a cleanup pass).
             const pickerValue = pinnedActiveId
               ? (dedupeEntries.find(
                   (e) =>
@@ -281,31 +288,23 @@ export function WorkspaceIntegrationsPane({ workspaceId }: WorkspaceIntegrations
                     ),
                 )?.canonical.connected_account_id ?? "auto")
               : "auto";
-
             const allDuplicateIds = dedupeEntries.flatMap((entry) =>
               entry.duplicates.map((d) => d.connected_account_id),
             );
 
             return (
-              <div className="flex flex-col gap-3 px-4 py-4" key={integration.toolkit_slug}>
+              <div
+                className="flex flex-col gap-3 rounded-xl border border-border bg-card px-4 py-3"
+                key={integration.toolkit_slug}
+              >
                 <div className="flex items-start justify-between gap-4">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <ToolkitLogo
-                      logo={integration.toolkit_logo}
-                      name={integration.toolkit_name}
-                    />
+                  <div className="flex min-w-0 items-center gap-3">
+                    <ToolkitLogo logo={logo} name={displayName} />
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <div className="truncate text-sm font-medium capitalize text-foreground">
-                          {integration.toolkit_name || integration.toolkit_slug}
-                        </div>
-                        {!integration.supported ? (
-                          <Badge className="text-[10px]" variant="outline">
-                            Not yet supported
-                          </Badge>
-                        ) : null}
+                      <div className="truncate text-sm font-medium text-foreground">
+                        {displayName}
                       </div>
-                      <div className="mt-0.5 text-xs text-muted-foreground">
+                      <div className="mt-0.5 truncate text-xs text-muted-foreground">
                         {describeState(integration, dedupeEntries, accountMetadata)}
                       </div>
                     </div>
@@ -317,11 +316,7 @@ export function WorkspaceIntegrationsPane({ workspaceId }: WorkspaceIntegrations
                     ) : null}
                     <Switch
                       checked={isEnabled}
-                      disabled={
-                        !integration.supported ||
-                        isMutating ||
-                        integration.connections.length === 0
-                      }
+                      disabled={isMutating || integration.connections.length === 0}
                       onCheckedChange={(value) =>
                         void setEnabled(integration.toolkit_slug, value)
                       }
@@ -330,10 +325,11 @@ export function WorkspaceIntegrationsPane({ workspaceId }: WorkspaceIntegrations
                 </div>
 
                 {totalDuplicates > 0 ? (
-                  <div className="ml-11 flex items-center justify-between gap-3 rounded-md border border-warning/30 bg-warning/5 px-3 py-2">
+                  <div className="flex items-center justify-between gap-3 rounded-md border border-warning/30 bg-warning/5 px-3 py-2">
                     <div className="text-[11px] text-muted-foreground">
-                      {totalDuplicates} duplicate{totalDuplicates === 1 ? "" : "s"} found
-                      — same identity connected multiple times.
+                      {totalDuplicates} duplicate
+                      {totalDuplicates === 1 ? "" : "s"} found — same identity
+                      connected multiple times.
                     </div>
                     <Button
                       disabled={isCleaning || isMutating}
@@ -355,8 +351,10 @@ export function WorkspaceIntegrationsPane({ workspaceId }: WorkspaceIntegrations
                 ) : null}
 
                 {showPicker ? (
-                  <div className="flex items-center gap-3 pl-11">
-                    <span className="text-xs text-muted-foreground">Use account:</span>
+                  <div className="flex items-center gap-3">
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      Account
+                    </span>
                     <Select
                       disabled={isMutating}
                       onValueChange={(value) =>
@@ -364,7 +362,7 @@ export function WorkspaceIntegrationsPane({ workspaceId }: WorkspaceIntegrations
                       }
                       value={pickerValue}
                     >
-                      <SelectTrigger className="h-8 w-[260px] text-xs">
+                      <SelectTrigger className="h-8 flex-1 text-xs">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -390,9 +388,46 @@ export function WorkspaceIntegrationsPane({ workspaceId }: WorkspaceIntegrations
               </div>
             );
           })}
-        </SettingsCard>
+        </div>
       )}
-    </SettingsSection>
+
+      {unsupported.length > 0 ? (
+        <div className="mt-2 rounded-md bg-muted/50 px-3 py-2 text-[11px] leading-5 text-muted-foreground">
+          <span className="font-medium text-foreground/80">
+            Coming soon to the agent:
+          </span>{" "}
+          {unsupported
+            .map(
+              (i) =>
+                toolkitsBySlug.get(i.toolkit_slug)?.name ||
+                i.toolkit_name ||
+                i.toolkit_slug,
+            )
+            .join(", ")}
+          .
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function Header({ onRefresh }: { onRefresh: () => void }) {
+  return (
+    <header className="flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <h2 className="text-base font-medium text-foreground">
+          Workspace integrations
+        </h2>
+        <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+          The agent in this workspace can use any of these. Toggle off to hide,
+          or pick a specific account when you've connected more than one.
+        </p>
+      </div>
+      <Button onClick={onRefresh} size="sm" type="button" variant="ghost">
+        <RefreshCcw className="mr-2 size-3.5" />
+        Refresh
+      </Button>
+    </header>
   );
 }
 
@@ -403,18 +438,21 @@ function ToolkitLogo({
   logo: string | null;
   name: string;
 }) {
-  if (logo) {
+  const [failed, setFailed] = useState(false);
+  if (logo && !failed) {
     return (
       <img
         alt={`${name} logo`}
-        className="size-8 rounded-md border border-border bg-background object-contain p-1"
+        className="size-8 shrink-0 rounded-md bg-muted object-contain p-1"
+        onError={() => setFailed(true)}
+        referrerPolicy="no-referrer"
         src={logo}
       />
     );
   }
   const initial = (name || "?").charAt(0).toUpperCase();
   return (
-    <div className="flex size-8 items-center justify-center rounded-md border border-border bg-muted text-xs font-medium text-muted-foreground">
+    <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-medium text-muted-foreground">
       {initial}
     </div>
   );
@@ -429,30 +467,25 @@ function describeState(
   metadata: Map<string, { email?: string | null; handle?: string | null } | undefined>,
 ): string {
   if (integration.connections.length === 0) {
-    return "No active account connected — disabled.";
+    return "Not connected yet.";
   }
   if (integration.effective_state === "disabled") {
-    return "Disabled in this workspace. The agent can't see this toolkit.";
+    return "Disabled in this workspace.";
   }
   if (integration.effective_state === "pinned" && integration.effective_connection_id) {
     const meta = metadata.get(integration.effective_connection_id);
     const label = meta?.email ?? meta?.handle ?? integration.effective_connection_id;
-    return `Locked to ${label}.`;
+    return `Locked to ${label}`;
   }
   if (integration.effective_state === "pinned") {
-    return "Pinned account no longer active — agent can't use this toolkit.";
+    return "Pinned account no longer active.";
   }
   const uniqueCount = dedupeEntries.length;
   if (uniqueCount > 1) {
-    return `${uniqueCount} accounts available · auto-picks the most recent.`;
+    return `${uniqueCount} accounts · auto-picks most recent`;
   }
   const entry = dedupeEntries[0];
-  if (!entry) {
-    return "Inherits from your account integrations.";
-  }
+  if (!entry) return "Active";
   const meta = metadata.get(entry.canonical.connected_account_id);
-  const label = meta?.email ?? meta?.handle;
-  return label
-    ? `Active · ${label}`
-    : "Inherits from your account integrations.";
+  return meta?.email ?? meta?.handle ?? "Active";
 }
