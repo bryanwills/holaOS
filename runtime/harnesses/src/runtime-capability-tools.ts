@@ -1201,10 +1201,12 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
   if (toolId === "holaboss_workspace_integrations_propose_connect") {
     return [
       "When the user expresses intent to connect or use a known third-party service (Gmail, Slack, Notion, Linear, GitHub, HubSpot, Stripe, …) and there is NO matching `<toolkit>_<verb>` tool already in your tool list, call this tool. Connecting an integration is one OAuth click for the user, not an engineering task.",
+      "Call this tool ALSO whenever you've just built or registered an app that needs a provider and the user hasn't connected it. `pending_integrations` in the response of `workspace_apps_register` / `workspace_apps_ensure_running` is the explicit signal — one `propose_connect` per provider in that array, same turn. Do NOT ship a 'safe mode' / 'manual mode' / 'no real recipient' fallback to avoid asking.",
       "Do NOT call `workspace_apps_scaffold` / `workspace_apps_build` to satisfy a 'connect X' request. Integrations and apps are separate concepts: integrations are user OAuth accounts, apps are user-built tools that consume those accounts.",
       "Pass `toolkit_slug` as a lowercase canonical slug (`gmail`, `notion`, `linear`, etc.) from the workspace integration store catalog. If unsure whether a service is in scope, name it; the runtime will reject unknown slugs and the user can clarify.",
       "Pass an optional one-line `reason` only when you actually have one ('to read your unread mail', 'to log this task in your Linear project'). Skip `reason` for bare 'connect X' requests.",
       "After this tool returns, do not also write '请去 Settings 连接' or similar manual instructions — the chat UI already renders a Connect card. Reply with one or two short lines: why you need it, then wait. The user will click Connect; a system message will tell you when the toolkit is ready.",
+      "When you hit a `not_connected` / 401 from any MCP toolkit tool, the correct response is to propose_connect that provider — NOT to conclude the API is unavailable, switch to a fake-only mode, or quietly drop the feature.",
     ];
   }
   if (toolId === "workspace_apps_scaffold") {
@@ -1212,6 +1214,18 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "This tool builds a brand-new user-facing app (TanStack Start project, dashboard, vibe-coded internal tool). It is NOT how a user connects an integration.",
       "If the user wants to connect, authorize, or otherwise gain OAuth access to a known third-party service, call `holaboss_workspace_integrations_propose_connect` instead — building an app for that is a category error.",
       "Use this only when the user actually asked for a new app, dashboard, tool, surface, internal product, or other UI/persistence/schedule-bearing capability.",
+    ];
+  }
+  if (
+    toolId === "workspace_apps_register" ||
+    toolId === "workspace_apps_build" ||
+    toolId === "workspace_apps_ensure_running"
+  ) {
+    return [
+      "If the response includes a `pending_integrations` array, the app declares providers (Gmail / Twitter / Linear / etc.) that the user has not yet connected. You MUST call `holaboss_workspace_integrations_propose_connect` once per unique `provider_id` in that array — same turn is correct — before you can claim the app is ready.",
+      "Do NOT interpret a `pending_integrations` non-empty response as 'the API is unavailable' or 'this provider doesn't expose what I need'. It means exactly one thing: the user hasn't completed OAuth for that toolkit yet. Propose connect and wait for the gate to re-dispatch your input.",
+      "Do NOT report the app as 'done', 'in safe mode', 'manual mode', 'logging-only', 'preview mode', or any variant that means the app does not actually do what the user asked for. If a provider is still unconnected, the correct outcome is a Connect card in chat, not a shipped non-functional app.",
+      "After you propose connects, stop. Do not retry the tool, do not call MCP tools that need those connections, do not poll. The runtime parks the input and re-dispatches it the moment every required connection is active.",
     ];
   }
   return [];

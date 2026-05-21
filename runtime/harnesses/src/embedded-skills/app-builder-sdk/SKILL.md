@@ -484,13 +484,26 @@ If no row → user has not connected this provider yet; tell them to use the des
 
 The PUT triggers `refreshAppsForIntegrationBinding` which restarts the app process, so the new env propagates within a few seconds.
 
-### Pending-integration gate: wait for the user, don't outrun them
+### Propose connect for every required integration BEFORE declaring the app done
 
-When you emit one or more `holaboss_workspace_integrations_propose_connect` cards (or when `workspace_apps_ensure_running` returns `pending_integrations`), the runtime parks the next queued input until **every** proposed connection lands as `active` in the user pool. The session emits a `waiting_on_pending_integrations` event and the chat shows a paused banner. Concretely this means:
+The single biggest failure mode in vibe-coded apps is **shipping a non-functional app and rationalizing it as "safe mode" / "access not available yet" instead of asking the user to connect**. That rationalization is wrong every time. Read this carefully.
 
-- Do not chain "now call gmail_get_profile to verify" after a propose_connect in the same turn — the call will hit the broker with `integration_not_connected` and you'll waste the user's time on a noisy failure.
-- Do not propose the same toolkit twice "in case the first one didn't take". The gate de-dupes by slug; double-proposing only multiplies the banners.
-- After you propose, stop. The system will re-dispatch your input the moment the last required connection completes; that's your signal to continue. You don't need to poll.
+**The required loop:**
+
+1. App declares `integrations: [...]` in `app.runtime.yaml` for every provider it uses. (See section 4 below — this is mandatory whenever the app calls any provider; the alternative is not "skip the declaration", it is "you do not need this provider in your app".)
+2. `workspace_apps_register` / `workspace_apps_ensure_running` returns a `pending_integrations` array listing every declared provider that does not yet have an active connection.
+3. For **each** entry in `pending_integrations`, you call `holaboss_workspace_integrations_propose_connect({ toolkit_slug })`. One card per provider. Same turn is fine.
+4. You stop. The runtime emits a `waiting_on_pending_integrations` event, parks your next input, and re-dispatches it the moment all required connections land as `active`. You do not poll, do not retry, do not chain "let me also call gmail_get_profile to verify" — that hits 401 noise.
+5. When the system re-dispatches you, every required provider is connected, the dashboard's `getIntegrationStatus()` will return `ready: true`, and the app actually works.
+
+**The trap you must NOT fall into:**
+
+- Do not catch a 401 / `integration_not_connected` from an MCP tool and conclude "this API is not available" or "Composio doesn't expose this". That error means **the user hasn't connected yet**, NOT that the action is missing. Propose connect and try again after the user authorizes.
+- Do not skip declaring `integrations` in the manifest because "then the gate will pause my turn". The gate IS the contract — being paused is the correct outcome when the user needs to do an OAuth step. Skipping the declaration to dodge the gate is shipping a broken app.
+- Do not invent "safe mode", "manual mode", "logging-only mode", "preview mode", or any other phrase that means "the app I just shipped doesn't actually work". Those are agent rationalizations of the same underlying bug: you did not propose_connect when you should have.
+- Do not double-propose the same toolkit "in case the first one didn't take" — the gate de-dupes by slug.
+
+**Concrete heuristic:** if your final message would contain any of "isn't available yet", "doesn't expose", "safe mode", "manual mode", "logging-only", "no real recipient", or "shows blockers instead of pretending to send" — stop, go back to step 3, and propose_connect the missing providers. Then re-evaluate.
 
 ## Verification checklist
 
