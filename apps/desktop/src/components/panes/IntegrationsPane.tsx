@@ -1639,7 +1639,7 @@ function ComposioRuntimeDebugRow() {
         </div>
       ) : null}
       {result !== null ? (
-        <pre className="mt-3 max-h-80 overflow-auto rounded-md bg-background px-2 py-1.5 text-[11px] leading-5 text-foreground">
+        <pre className="mt-3 max-h-80 w-full max-w-full overflow-auto whitespace-pre-wrap break-all rounded-md bg-background px-2 py-1.5 text-[11px] leading-5 text-foreground">
           {JSON.stringify(result, null, 2)}
         </pre>
       ) : null}
