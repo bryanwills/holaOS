@@ -10477,6 +10477,40 @@ async function composioListConnections(): Promise<{
   );
 }
 
+// Extracts the raw session_token value out of a Better-Auth cookie
+// string. The bearer plugin we enabled on Hono accepts this exact
+// value as `Authorization: Bearer <token>`, so the runtime can use it
+// to call /composio/internal/* without carrying a cookie jar. Verified
+// end-to-end by the cookie/bearer probe.
+function extractSessionTokenFromCookieHeader(cookie: string): string | null {
+  if (!cookie) return null;
+  for (const segment of cookie.split(/;\s*/)) {
+    const idx = segment.indexOf("=");
+    if (idx < 0) continue;
+    const name = segment.slice(0, idx).trim();
+    if (!name) continue;
+    if (
+      name === "better-auth.session_token" ||
+      name === "__Secure-better-auth.session_token"
+    ) {
+      const value = segment.slice(idx + 1).trim();
+      if (!value) continue;
+      try {
+        return decodeURIComponent(value);
+      } catch {
+        return value;
+      }
+    }
+  }
+  return null;
+}
+
+function authBearerToken(): string {
+  const cookie = authCookieHeader();
+  if (!cookie) return "";
+  return extractSessionTokenFromCookieHeader(cookie) ?? "";
+}
+
 // Single entry point for "desktop directly calls a Composio action via
 // the new /api/composio/internal/tools/execute surface."
 //
@@ -17028,6 +17062,14 @@ async function startEmbeddedRuntime() {
           PYTHONDONTWRITEBYTECODE: "1",
           HOLABOSS_AUTH_BASE_URL: AUTH_BASE_URL,
           HOLABOSS_AUTH_COOKIE: authCookieHeader() ?? "",
+          // Bearer-form of the same Better-Auth session, used by
+          // ComposioApiClient (runtime/api-server/src/composio-api-client.ts)
+          // to call /api/composio/internal/* without a cookie jar. Same
+          // session, transported differently. If empty (user not signed
+          // in yet), createComposioApiClientFromEnv() returns null and
+          // dependent features stay quietly disabled until the runtime
+          // is restarted after sign-in.
+          HOLABOSS_AUTH_BEARER_TOKEN: authBearerToken(),
         },
         stdio: "pipe",
         windowsHide: process.platform === "win32",
