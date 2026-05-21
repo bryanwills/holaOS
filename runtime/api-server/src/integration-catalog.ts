@@ -1,3 +1,5 @@
+import { isInStoreCatalog, listStoreCatalog } from "./integration-store-catalog.js";
+
 export interface IntegrationCatalogProviderRecord {
   provider_id: string;
   display_name: string;
@@ -94,33 +96,93 @@ export function integrationCatalogProviderIds(): string[] {
   return INTEGRATION_CATALOG_PROVIDERS.map((provider) => provider.provider_id);
 }
 
+// Union of the locally hosted OSS provider catalog (this file) and the
+// curated Composio store catalog (integration-store-catalog.ts). Either
+// one is a legitimate provider_id for an installed app.
+function supportedProviderIds(): string[] {
+  const set = new Set<string>(integrationCatalogProviderIds());
+  for (const entry of listStoreCatalog()) {
+    set.add(entry.slug.toLowerCase());
+  }
+  return [...set].sort();
+}
+
+function isProviderIdSupported(normalized: string): boolean {
+  if (integrationCatalogProviderIds().includes(normalized)) return true;
+  return isInStoreCatalog(normalized);
+}
+
 export function resolveIntegrationProviderAlias(providerId: string): string | null {
   const normalized = normalizeIntegrationProviderId(providerId);
   if (!normalized) {
     return null;
   }
-  const providerIds = new Set(integrationCatalogProviderIds());
-  if (providerIds.has(normalized)) {
+  if (isProviderIdSupported(normalized)) {
     return normalized;
   }
   const alias = PROVIDER_ALIASES[normalized];
-  return alias && providerIds.has(alias) ? alias : null;
+  return alias && isProviderIdSupported(alias) ? alias : null;
+}
+
+// Cheap Levenshtein distance for nearest-match suggestion. Small N (catalog
+// is ~75 entries, slug length < 30) so straight DP is fine; pulling in a
+// dependency for this is overkill.
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const prev = new Array<number>(b.length + 1);
+  const curr = new Array<number>(b.length + 1);
+  for (let j = 0; j <= b.length; j += 1) prev[j] = j;
+  for (let i = 1; i <= a.length; i += 1) {
+    curr[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        (curr[j - 1] ?? 0) + 1,
+        (prev[j] ?? 0) + 1,
+        (prev[j - 1] ?? 0) + cost,
+      );
+    }
+    for (let j = 0; j <= b.length; j += 1) prev[j] = curr[j] ?? 0;
+  }
+  return prev[b.length] ?? 0;
+}
+
+function nearestSupportedProviderId(providerId: string): string | null {
+  const target = providerId.trim().toLowerCase();
+  if (!target) return null;
+  let best: { slug: string; distance: number } | null = null;
+  for (const slug of supportedProviderIds()) {
+    const distance = levenshtein(target, slug);
+    if (best === null || distance < best.distance) {
+      best = { slug, distance };
+    }
+  }
+  // Threshold: tolerate up to 2 edits, or 1/3 of slug length, whichever is
+  // larger. Avoids surfacing wildly unrelated suggestions for typos like
+  // "foo" → "github" (distance 6).
+  const tolerance = Math.max(2, Math.floor(target.length / 3));
+  if (!best || best.distance > tolerance) return null;
+  return best.slug;
 }
 
 export function validateCanonicalIntegrationProviderId(providerId: string): string {
   const normalized = normalizeIntegrationProviderId(providerId);
-  const providerIds = integrationCatalogProviderIds();
-  if (providerIds.includes(normalized)) {
+  if (isProviderIdSupported(normalized)) {
     return normalized;
   }
   const alias = PROVIDER_ALIASES[normalized];
-  const validList = providerIds.join(", ");
-  if (alias && providerIds.includes(alias)) {
+  if (alias && isProviderIdSupported(alias)) {
     throw new Error(
-      `unknown integration provider '${providerId}'. Use canonical provider_id '${alias}' from the integration catalog. Valid provider_ids: ${validList}`,
+      `unknown integration provider '${providerId}'. Use canonical provider_id '${alias}' from the integration store catalog.`,
     );
   }
+  const suggestion = nearestSupportedProviderId(normalized);
+  const tail = suggestion
+    ? ` Did you mean '${suggestion}'?`
+    : " Call workspace_integrations_list_catalog to see supported provider_ids.";
   throw new Error(
-    `unknown integration provider '${providerId}'. Call workspace_integrations_list_catalog and use one of its canonical provider_id values. Valid provider_ids: ${validList}`,
+    `unknown integration provider '${providerId}'.${tail}`,
   );
 }

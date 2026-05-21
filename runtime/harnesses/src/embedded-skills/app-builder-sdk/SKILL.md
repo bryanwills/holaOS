@@ -57,13 +57,16 @@ There is ONE provider identifier; the same value flows through every layer of th
 - Google Drive: **`googledrive`**
 - Slack / GitHub / Gmail / Notion / Stripe / Linear / Figma / Calendly / Mailchimp / Reddit / Twitter / Instagram / YouTube / LinkedIn: **lowercase brand name** (verify in catalog).
 
-If unsure, verify against Composio's catalog BEFORE writing `provider.ts`:
+If unsure, verify against the **integration store catalog** BEFORE writing `provider.ts` — the runtime will reject `workspace_apps_register` on any `provider` that isn't in this list with a "did you mean '<x>'?" suggestion. The store catalog is the curated subset of Composio toolkits we explicitly support; Composio has 1000+ toolkits but only the ones in `runtime/api-server/src/integration-store-catalog.ts` (Hero + Supported tiers) are accepted.
 
 ```bash
-curl -sS https://backend.composio.dev/api/v3/toolkits \
-  -H "x-api-key: $COMPOSIO_API_KEY" \
-  | jq -r '.items[] | select(.slug | test("(?i)<keyword>")) | .slug + " — " + .name'
+# Look up supported slugs from the runtime (preferred — single source of truth):
+curl -sS http://127.0.0.1:8080/api/v1/capabilities/runtime-tools/integrations/catalog | jq '.provider_ids'
+
+# Or grep the catalog file directly if you have the repo open.
 ```
+
+Composio's own catalog (`https://backend.composio.dev/api/v3/toolkits`) is a useful reference for slug spelling but is **not** the source of truth — a slug existing on Composio does NOT mean we support it. If you want to add a new toolkit, the workflow is: add a row to `integration-store-catalog.ts`, not bake the unsupported slug into your app.
 
 The legacy `composioToolkit` field on `ProviderRegistry` is **deprecated**. Do not set it. If a reference still does, replace `id` with the same value and drop `composioToolkit`. Splitting them was a misreading of the runtime — the broker proxy uses ONLY `provider` (= `cfg.id`); `composioToolkit` is dead code, currently used only by `manifest.ts` as a fallback that should never trigger when `id` is correct.
 

@@ -1495,6 +1495,74 @@ test("workspace app registration rejects non-canonical integration providers", a
   );
 });
 
+test("workspace app registration rejects providers outside the store catalog with a nearest-match suggestion", async () => {
+  await harness.service.scaffoldWorkspaceApp({
+    workspaceId: harness.workspaceId,
+    appId: "typo-demo",
+    name: "Typo Demo",
+  });
+  fs.appendFileSync(
+    path.join(harness.workspaceDir, "apps", "typo-demo", "app.runtime.yaml"),
+    [
+      "",
+      "integrations:",
+      "  - key: primary",
+      "    provider: gmial",
+      "    capability: api",
+      "    required: true",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  await assert.rejects(
+    () =>
+      harness.service.registerWorkspaceApp({
+        workspaceId: harness.workspaceId,
+        appId: "typo-demo",
+      }),
+    (error) => {
+      assert.equal(error instanceof RuntimeAgentToolsServiceError, true);
+      assert.equal((error as RuntimeAgentToolsServiceError).statusCode, 400);
+      assert.match(
+        (error as RuntimeAgentToolsServiceError).message,
+        /unknown integration provider 'gmial'.*Did you mean 'gmail'/,
+      );
+      return true;
+    },
+  );
+});
+
+test("workspace app registration accepts store-catalog providers beyond the OSS provider list", async () => {
+  // 'notion' is in the store catalog (hero tier) but not in the legacy
+  // integration-catalog.ts OSS provider list. Pre-fix, this would have
+  // been rejected as unknown.
+  await harness.service.scaffoldWorkspaceApp({
+    workspaceId: harness.workspaceId,
+    appId: "notion-demo",
+    name: "Notion Demo",
+  });
+  fs.appendFileSync(
+    path.join(harness.workspaceDir, "apps", "notion-demo", "app.runtime.yaml"),
+    [
+      "",
+      "integrations:",
+      "  - key: primary",
+      "    provider: notion",
+      "    capability: api",
+      "    required: true",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const result = (await harness.service.registerWorkspaceApp({
+    workspaceId: harness.workspaceId,
+    appId: "notion-demo",
+  })) as { registered: boolean };
+  assert.equal(result.registered, true);
+});
+
 test("listIntegrationCatalog exposes canonical provider ids for app builders", () => {
   const catalog = harness.service.listIntegrationCatalog({
     workspaceId: harness.workspaceId,
