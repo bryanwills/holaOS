@@ -518,36 +518,11 @@ test("composeAgentPrompt requires subagent outputs to stay self-contained", () =
   );
 });
 
-test("composeAgentPrompt teaches subagents to prefer workspace app catalog install over scaffolding", () => {
-  const capabilityManifest = buildAgentCapabilityManifest({
-    defaultTools: ["read"],
-    extraTools: ["workspace_apps_find", "workspace_apps_install", "workspace_apps_scaffold"],
-    runtimeToolIds: ["workspace_apps_find", "workspace_apps_install", "workspace_apps_scaffold"],
-    workspaceSkillIds: [],
-    resolvedMcpToolRefs: [],
-    toolServerIdMap: {},
-  });
-
-  const prompt = composeAgentPrompt("You are concise.", {
-    defaultTools: ["read"],
-    extraTools: ["workspace_apps_find", "workspace_apps_install", "workspace_apps_scaffold"],
-    workspaceSkillIds: [],
-    resolvedMcpToolRefs: [],
-    sessionKind: "subagent",
-    sessionMode: "code",
-    harnessId: "pi",
-    capabilityManifest,
-  });
-
-  assert.match(
-    prompt.systemPrompt,
-    /When `workspace_apps_find` and `workspace_apps_install` are surfaced and the task could match an existing workspace app, call `workspace_apps_find` before scaffolding a new app/i,
-  );
-  assert.match(
-    prompt.systemPrompt,
-    /If `workspace_apps_find` returns an exact or clearly suitable catalog match, prefer `workspace_apps_install`/i,
-  );
-});
+// Removed: the workspace_apps_find / workspace_apps_install marketplace
+// path is deprecated (community apps now scaffolded via
+// workspace_apps_scaffold; toolkit access happens via propose_connect).
+// The corresponding subagent prompt guideline was removed alongside
+// those tool defs; nothing to assert here.
 
 test("composeAgentPrompt makes integration catalog lookup mandatory for provider-backed app work", () => {
   const capabilityManifest = buildAgentCapabilityManifest({

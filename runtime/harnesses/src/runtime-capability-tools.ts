@@ -771,39 +771,8 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         required: ["terminal_id"],
         additionalProperties: false,
       };
-    case "workspace_apps_find":
-      return {
-        type: "object",
-        properties: {
-          query: {
-            type: "string",
-            description:
-              "Optional case-insensitive substring filter applied to app id, name, and description.",
-          },
-          source: {
-            type: "string",
-            enum: ["marketplace", "local", "installed", "all"],
-            description:
-              "Optional source filter. `marketplace` and `local` only return catalog candidates from those sources. `installed` only returns apps already in `workspace.yaml`. `all` (default) merges everything and dedupes by app_id.",
-          },
-        },
-        additionalProperties: false,
-      };
     case "workspace_integrations_list_catalog":
       return { type: "object", properties: {}, additionalProperties: false };
-    case "workspace_apps_install":
-      return {
-        type: "object",
-        properties: {
-          app_id: {
-            type: "string",
-            description:
-              "Catalog app id to install. Must exist in the marketplace or local catalog (call `workspace_apps_find` first if unsure).",
-          },
-        },
-        required: ["app_id"],
-        additionalProperties: false,
-      };
     case "workspace_apps_scaffold":
       return {
         type: "object",
@@ -1232,17 +1201,17 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
   if (toolId === "holaboss_workspace_integrations_propose_connect") {
     return [
       "When the user expresses intent to connect or use a known third-party service (Gmail, Slack, Notion, Linear, GitHub, HubSpot, Stripe, …) and there is NO matching `<toolkit>_<verb>` tool already in your tool list, call this tool. Connecting an integration is one OAuth click for the user, not an engineering task.",
-      "Do NOT call `workspace_apps_scaffold` / `workspace_apps_install` / `workspace_apps_build` to satisfy a 'connect X' request. Integrations and apps are separate concepts: integrations are user OAuth accounts, apps are user-built tools that consume those accounts.",
+      "Do NOT call `workspace_apps_scaffold` / `workspace_apps_build` to satisfy a 'connect X' request. Integrations and apps are separate concepts: integrations are user OAuth accounts, apps are user-built tools that consume those accounts.",
       "Pass `toolkit_slug` as a lowercase canonical slug (`gmail`, `notion`, `linear`, etc.) from the workspace integration store catalog. If unsure whether a service is in scope, name it; the runtime will reject unknown slugs and the user can clarify.",
       "Pass an optional one-line `reason` only when you actually have one ('to read your unread mail', 'to log this task in your Linear project'). Skip `reason` for bare 'connect X' requests.",
       "After this tool returns, do not also write '请去 Settings 连接' or similar manual instructions — the chat UI already renders a Connect card. Reply with one or two short lines: why you need it, then wait. The user will click Connect; a system message will tell you when the toolkit is ready.",
     ];
   }
-  if (toolId === "workspace_apps_install" || toolId === "workspace_apps_scaffold") {
+  if (toolId === "workspace_apps_scaffold") {
     return [
-      "These tools build user-facing apps (TanStack Start projects, dashboards, vibe-coded internal tools). They are NOT how a user connects an integration.",
+      "This tool builds a brand-new user-facing app (TanStack Start project, dashboard, vibe-coded internal tool). It is NOT how a user connects an integration.",
       "If the user wants to connect, authorize, or otherwise gain OAuth access to a known third-party service, call `holaboss_workspace_integrations_propose_connect` instead — building an app for that is a category error.",
-      "Use these only when the user actually asked for a new app, dashboard, tool, surface, internal product, or other UI/persistence/schedule-bearing capability.",
+      "Use this only when the user actually asked for a new app, dashboard, tool, surface, internal product, or other UI/persistence/schedule-bearing capability.",
     ];
   }
   return [];

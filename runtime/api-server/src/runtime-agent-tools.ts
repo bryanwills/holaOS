@@ -1196,22 +1196,10 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     description: runtimeToolBaseDefinition("terminal_session_close").description
   },
   {
-    id: runtimeToolBaseDefinition("workspace_apps_find").id,
-    method: "POST",
-    path: "/api/v1/capabilities/runtime-tools/workspace-apps/find",
-    description: runtimeToolBaseDefinition("workspace_apps_find").description
-  },
-  {
     id: runtimeToolBaseDefinition("workspace_integrations_list_catalog").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/workspace-integrations/catalog",
     description: runtimeToolBaseDefinition("workspace_integrations_list_catalog").description
-  },
-  {
-    id: runtimeToolBaseDefinition("workspace_apps_install").id,
-    method: "POST",
-    path: "/api/v1/capabilities/runtime-tools/workspace-apps/install",
-    description: runtimeToolBaseDefinition("workspace_apps_install").description
   },
   {
     id: runtimeToolBaseDefinition("workspace_apps_scaffold").id,

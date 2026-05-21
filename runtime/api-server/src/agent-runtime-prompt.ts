@@ -195,11 +195,6 @@ function hasWorkspaceInstructionUpdateTool(request: ComposeBaseAgentPromptReques
   return available.has("holaboss_update_workspace_instructions");
 }
 
-function hasWorkspaceAppCatalogInstallTools(request: ComposeBaseAgentPromptRequest): boolean {
-  const available = collectAvailableToolNames(request);
-  return available.has("workspace_apps_find") && available.has("workspace_apps_install");
-}
-
 function hasWorkspaceIntegrationCatalogTool(request: ComposeBaseAgentPromptRequest): boolean {
   const available = collectAvailableToolNames(request);
   return available.has("workspace_integrations_list_catalog");
@@ -251,12 +246,6 @@ function sessionPolicyPromptSection(request: ComposeBaseAgentPromptRequest): str
         "If the task is blocked by a recoverable user action such as login, authorization, MFA, CAPTCHA, permission, account selection, confirmation, credentials, or missing context, use the `question` tool with the exact unblock request instead of finishing with a limitation.",
         "For browser tasks, if you reach a login or access wall, leave the browser where it is, ask the user to complete the required step, and wait for the main session to resume you."
       );
-      if (hasWorkspaceAppCatalogInstallTools(request)) {
-        lines.push(
-          "When `workspace_apps_find` and `workspace_apps_install` are surfaced and the task could match an existing workspace app, call `workspace_apps_find` before scaffolding a new app, downloading a native installer, or doing manual marketplace inspection.",
-          "If `workspace_apps_find` returns an exact or clearly suitable catalog match, prefer `workspace_apps_install`; only scaffold a new workspace app or install a native desktop app when no suitable catalog app exists, the install route fails, or the user explicitly asked for a custom app or OS-level client."
-        );
-      }
       if (hasWorkspaceIntegrationCatalogTool(request)) {
         lines.push(
           "Hard requirement: before adding any `integrations:` entry to `app.runtime.yaml` or using `createIntegrationClient(...)`, call `workspace_integrations_list_catalog` and use the exact returned canonical `provider_id` for both the manifest `key` and `provider`, and for `createIntegrationClient(...)`. Do not invent provider names or aliases from product branding."

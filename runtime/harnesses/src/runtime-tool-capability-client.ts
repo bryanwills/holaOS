@@ -749,23 +749,11 @@ function requestPlan(
         requestPath: `${terminalSessionPath(isRecord(toolParams) ? toolParams.terminal_id : undefined)}/close`,
         body: {},
       };
-    case "workspace_apps_find":
-      return {
-        method: "POST",
-        requestPath: `${RUNTIME_TOOLS_WORKSPACE_APPS_PATH}/find`,
-        body: createWorkspaceAppFindBody(toolParams),
-      };
     case "workspace_integrations_list_catalog":
       return {
         method: "POST",
         requestPath: `${RUNTIME_TOOLS_WORKSPACE_INTEGRATIONS_PATH}/catalog`,
         body: {},
-      };
-    case "workspace_apps_install":
-      return {
-        method: "POST",
-        requestPath: `${RUNTIME_TOOLS_WORKSPACE_APPS_PATH}/install`,
-        body: createWorkspaceAppInstallBody(toolParams),
       };
     case "workspace_apps_scaffold":
       return {
