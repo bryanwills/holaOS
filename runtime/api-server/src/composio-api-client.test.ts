@@ -67,12 +67,12 @@ function makeHarness() {
 function makeClient(fetchImpl: typeof fetch): ComposioApiClient {
   return new ComposioApiClient({
     honoBaseUrl: "https://hono.example.com",
-    serviceToken: "svc-token",
+    bearerToken: "ba_session_token",
     fetchImpl,
   });
 }
 
-test("executeAction posts to /internal/tools/execute with X-API-Key and the canonical body", async () => {
+test("executeAction posts to /internal/tools/execute with Bearer + body has no owner_user_id", async () => {
   const { captured, scripted, fetchImpl } = makeHarness();
   scripted.push({
     status: 200,
@@ -81,7 +81,6 @@ test("executeAction posts to /internal/tools/execute with X-API-Key and the cano
   const client = makeClient(fetchImpl);
   const result = await client.executeAction({
     toolSlug: "GMAIL_GET_PROFILE",
-    ownerUserId: "user-1",
     connectedAccountId: "ca_abc",
     arguments: { user_id: "me" },
   });
@@ -92,16 +91,15 @@ test("executeAction posts to /internal/tools/execute with X-API-Key and the cano
     "https://hono.example.com/api/composio/internal/tools/execute",
   );
   assert.equal(captured[0]!.method, "POST");
-  assert.equal(captured[0]!.headers["X-API-Key"], "svc-token");
-  assert.equal(
-    captured[0]!.body,
-    JSON.stringify({
-      tool_slug: "GMAIL_GET_PROFILE",
-      owner_user_id: "user-1",
-      connected_account_id: "ca_abc",
-      arguments: { user_id: "me" },
-    }),
-  );
+  // Bearer auth — NOT X-API-Key. There is no org-wide service token.
+  assert.equal(captured[0]!.headers.Authorization, "Bearer ba_session_token");
+  assert.equal(captured[0]!.headers["X-API-Key"], undefined);
+  // Body must not carry owner_user_id; Hono derives it from session.
+  const parsedBody = JSON.parse(captured[0]!.body ?? "{}") as Record<string, unknown>;
+  assert.equal(parsedBody.tool_slug, "GMAIL_GET_PROFILE");
+  assert.equal(parsedBody.connected_account_id, "ca_abc");
+  assert.deepEqual(parsedBody.arguments, { user_id: "me" });
+  assert.equal(parsedBody.owner_user_id, undefined);
 });
 
 test("executeAction surfaces typed error info when Hono returns ok=false", async () => {
@@ -124,7 +122,6 @@ test("executeAction surfaces typed error info when Hono returns ok=false", async
     () =>
       client.executeAction({
         toolSlug: "GMAIL_GET_PROFILE",
-        ownerUserId: "user-1",
         connectedAccountId: "ca_abc",
       }),
     (error) => {
@@ -139,7 +136,7 @@ test("executeAction surfaces typed error info when Hono returns ok=false", async
   );
 });
 
-test("proxyRequest forwards method+endpoint+body to /internal/proxy", async () => {
+test("proxyRequest forwards method+endpoint+body to /internal/proxy without owner_user_id", async () => {
   const { captured, scripted, fetchImpl } = makeHarness();
   scripted.push({
     status: 200,
@@ -152,7 +149,6 @@ test("proxyRequest forwards method+endpoint+body to /internal/proxy", async () =
   });
   const client = makeClient(fetchImpl);
   const result = await client.proxyRequest({
-    ownerUserId: "user-1",
     connectedAccountId: "ca_abc",
     endpoint: "/api/v2/users/me",
     method: "GET",
@@ -165,32 +161,40 @@ test("proxyRequest forwards method+endpoint+body to /internal/proxy", async () =
     "https://hono.example.com/api/composio/internal/proxy",
   );
   const parsed = JSON.parse(captured[0]!.body ?? "{}") as Record<string, unknown>;
-  assert.equal(parsed.owner_user_id, "user-1");
   assert.equal(parsed.connected_account_id, "ca_abc");
   assert.equal(parsed.endpoint, "/api/v2/users/me");
   assert.equal(parsed.method, "GET");
+  assert.equal(parsed.owner_user_id, undefined);
 });
 
-test("listConnections passes owner_user_id and optional provider_id as query params", async () => {
+test("listConnections passes optional provider_id as query param; owner_user_id not sent", async () => {
   const { captured, scripted, fetchImpl } = makeHarness();
   scripted.push({
     status: 200,
     body: { ok: true, connections: [{ id: "ca_1" }, { id: "ca_2" }] },
   });
   const client = makeClient(fetchImpl);
-  const result = await client.listConnections({
-    ownerUserId: "user-1",
-    providerId: "gmail",
-  });
+  const result = await client.listConnections({ providerId: "gmail" });
   assert.equal(result.connections.length, 2);
   assert.equal(captured[0]!.method, "GET");
   assert.match(
     captured[0]!.url,
-    /\/api\/composio\/internal\/connections\?owner_user_id=user-1&provider_id=gmail$/,
+    /\/api\/composio\/internal\/connections\?provider_id=gmail$/,
   );
 });
 
-test("getConnection passes connection id through encoded URL", async () => {
+test("listConnections without providerId uses the bare path (no orphan ? char)", async () => {
+  const { captured, scripted, fetchImpl } = makeHarness();
+  scripted.push({ status: 200, body: { ok: true, connections: [] } });
+  const client = makeClient(fetchImpl);
+  await client.listConnections();
+  assert.match(
+    captured[0]!.url,
+    /\/api\/composio\/internal\/connections$/,
+  );
+});
+
+test("getConnection encodes connection id in URL", async () => {
   const { captured, scripted, fetchImpl } = makeHarness();
   scripted.push({
     status: 200,
@@ -218,7 +222,7 @@ test("constructor rejects missing config", () => {
     () =>
       new ComposioApiClient({
         honoBaseUrl: "",
-        serviceToken: "svc",
+        bearerToken: "ba_x",
       }),
     /honoBaseUrl/,
   );
@@ -226,17 +230,14 @@ test("constructor rejects missing config", () => {
     () =>
       new ComposioApiClient({
         honoBaseUrl: "https://hono.example",
-        serviceToken: "",
+        bearerToken: "",
       }),
-    /serviceToken/,
+    /bearerToken/,
   );
 });
 
 test("createComposioApiClientFromEnv returns null when env is missing pieces", () => {
-  assert.equal(
-    createComposioApiClientFromEnv({} as NodeJS.ProcessEnv),
-    null,
-  );
+  assert.equal(createComposioApiClientFromEnv({} as NodeJS.ProcessEnv), null);
   assert.equal(
     createComposioApiClientFromEnv({
       HOLABOSS_AUTH_BASE_URL: "https://hono.example",
@@ -245,7 +246,7 @@ test("createComposioApiClientFromEnv returns null when env is missing pieces", (
   );
   assert.equal(
     createComposioApiClientFromEnv({
-      AGENT_SERVICE_API_KEY: "svc",
+      HOLABOSS_AUTH_BEARER_TOKEN: "ba_x",
     } as NodeJS.ProcessEnv),
     null,
   );
@@ -254,7 +255,7 @@ test("createComposioApiClientFromEnv returns null when env is missing pieces", (
 test("createComposioApiClientFromEnv returns a configured client when both env vars are set", () => {
   const client = createComposioApiClientFromEnv({
     HOLABOSS_AUTH_BASE_URL: "https://hono.example",
-    AGENT_SERVICE_API_KEY: "svc",
+    HOLABOSS_AUTH_BEARER_TOKEN: "ba_x",
   } as NodeJS.ProcessEnv);
   assert.ok(client);
   assert.equal(client?.honoBaseUrl, "https://hono.example");

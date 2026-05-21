@@ -1,35 +1,37 @@
-// Server-side client for Composio's curated API surface, exposed for any
-// runtime caller that needs Composio access without a logged-in user
-// session attached. This is the runtime counterpart to the
-// `/api/composio/internal/*` route family on Hono.
+// Server-side client for Composio's curated API surface, used by the
+// runtime when it needs to talk to Composio outside the context of an
+// active browser session (cron tasks, onboarding context prefetch,
+// background data harvesting). Pairs with the `/api/composio/internal/*`
+// route family on the Hono worker.
 //
-// Why this exists separately from `ComposioService`:
+// Security model (read this before changing anything):
 //
-//   ComposioService (existing) — runtime → Hono /api/composio/{execute,proxy}
-//     → user-session-bound, charges quota, used by the chat-driven MCP
-//     sidecar where every request is on behalf of the logged-in user.
+//   - Auth is a Better-Auth bearer token. There is NO org-wide service
+//     token, no symmetric API key, no impersonation surface — by design,
+//     because holaOS ships open source and any such secret would be
+//     extractable from a published build.
 //
-//   ComposioApiClient (this file) — runtime → Hono /api/composio/internal/*
-//     → service-token auth (X-API-Key), no session, no quota. Used by
-//     cron workers, onboarding context prefetch, background data
-//     harvesting, training-set collection. Caller passes ownerUserId
-//     explicitly on each call; Hono still verifies the connected
-//     account upstream-matches that owner before forwarding.
+//   - The token IS the Better-Auth session token for a real user. The
+//     desktop captures it when the user signs in (Better-Auth's bearer
+//     plugin returns it via the `set-auth-token` response header) and
+//     injects it into the runtime as HOLABOSS_AUTH_BEARER_TOKEN.
 //
-// The COMPOSIO_API_KEY itself never reaches the runtime — Hono holds
-// it, runtime only holds the symmetric service token shared with Hono
-// (env: AGENT_SERVICE_API_KEY).
+//   - The runtime never declares "owner_user_id" — Hono derives it from
+//     the resolved session user. A misbehaving runtime cannot lie about
+//     which user it represents; the worst it can do is exhaust its own
+//     user's Composio quota.
+//
+//   - Connection ownership is still re-verified upstream at Composio:
+//     the session user can only act on connected accounts whose
+//     user_id matches their own.
 
 export interface ComposioApiClientConfig {
-  /** Hono base URL (no trailing slash). Same shape as
-   *  ComposioService.honoBaseUrl — the env var on the runtime side is
-   *  HOLABOSS_AUTH_BASE_URL. Reused here so callers don't carry two
-   *  copies of the same URL. */
+  /** Hono base URL (no trailing slash). Env: HOLABOSS_AUTH_BASE_URL. */
   honoBaseUrl: string;
-  /** Symmetric service-to-service token. Sent as `X-API-Key`. Must
-   *  match Hono's `AGENT_SERVICE_API_KEY`. Read from
-   *  `process.env.AGENT_SERVICE_API_KEY` on the runtime side. */
-  serviceToken: string;
+  /** Better-Auth session token for the real user this runtime represents.
+   *  Env: HOLABOSS_AUTH_BEARER_TOKEN. Sent as `Authorization: Bearer <token>`.
+   *  Issued to the desktop via Better-Auth's bearer() plugin on login. */
+  bearerToken: string;
   /** Override for tests. */
   fetchImpl?: typeof fetch;
 }
@@ -45,10 +47,7 @@ export interface ComposioApiClientErrorInfo {
 }
 
 /** Thrown when a Composio internal call did not return ok=true. Carries
- *  the structured error from Hono so callers can branch on `info.code`
- *  (e.g. "connection_expired" → re-prompt user; "forbidden" → wrong
- *  owner). HTTP-layer failures (network, 5xx without JSON) come through
- *  as a regular Error. */
+ *  the structured error from Hono so callers can branch on `info.code`. */
 export class ComposioApiClientError extends Error {
   readonly info: ComposioApiClientErrorInfo;
   readonly httpStatus: number;
@@ -63,7 +62,6 @@ export class ComposioApiClientError extends Error {
 
 export interface ExecuteActionParams {
   toolSlug: string;
-  ownerUserId: string;
   connectedAccountId: string;
   arguments?: Record<string, unknown>;
 }
@@ -74,7 +72,6 @@ export interface ExecuteActionResponse<TData = unknown> {
 }
 
 export interface ProxyRequestParams {
-  ownerUserId: string;
   connectedAccountId: string;
   endpoint: string;
   method?: string;
@@ -89,7 +86,6 @@ export interface ProxyRequestResponse<TData = unknown> {
 }
 
 export interface ListConnectionsParams {
-  ownerUserId: string;
   providerId?: string;
 }
 
@@ -129,30 +125,28 @@ function asErrorInfo(raw: unknown, fallbackCode: string): ComposioApiClientError
 
 export class ComposioApiClient {
   readonly honoBaseUrl: string;
-  private readonly serviceToken: string;
+  private readonly bearerToken: string;
   private readonly fetchImpl: typeof fetch;
 
   constructor(config: ComposioApiClientConfig) {
     if (!config.honoBaseUrl) {
       throw new Error("ComposioApiClient: honoBaseUrl is required");
     }
-    if (!config.serviceToken) {
-      throw new Error("ComposioApiClient: serviceToken is required");
+    if (!config.bearerToken) {
+      throw new Error("ComposioApiClient: bearerToken is required");
     }
     this.honoBaseUrl = config.honoBaseUrl.replace(/\/+$/, "");
-    this.serviceToken = config.serviceToken;
+    this.bearerToken = config.bearerToken;
     this.fetchImpl = config.fetchImpl ?? fetch;
   }
 
-  /** Execute a Composio cataloged tool by slug for a specific user. The
-   *  most general-purpose call — drives data fetches, posts, sends,
-   *  searches, etc., across every toolkit Composio supports. */
+  /** Execute a Composio cataloged tool by slug on behalf of the session
+   *  user. Generic — covers any of Composio's curated tool slugs. */
   async executeAction<TData = unknown>(
     params: ExecuteActionParams,
   ): Promise<ExecuteActionResponse<TData>> {
     const response = await this.postJson("/api/composio/internal/tools/execute", {
       tool_slug: params.toolSlug,
-      owner_user_id: params.ownerUserId,
       connected_account_id: params.connectedAccountId,
       arguments: params.arguments ?? {},
     });
@@ -175,15 +169,12 @@ export class ComposioApiClient {
   }
 
   /** Forward an arbitrary upstream HTTP request through Composio's
-   *  /tools/execute/proxy endpoint. Use this when the action you want
-   *  isn't in Composio's curated tool catalog but the toolkit's
-   *  underlying REST API exposes it. Composio still attaches the
-   *  user's OAuth credentials to the request. */
+   *  /tools/execute/proxy endpoint. Use when the action isn't in
+   *  Composio's curated catalog but the toolkit's REST API exposes it. */
   async proxyRequest<TData = unknown>(
     params: ProxyRequestParams,
   ): Promise<ProxyRequestResponse<TData>> {
     const response = await this.postJson("/api/composio/internal/proxy", {
-      owner_user_id: params.ownerUserId,
       connected_account_id: params.connectedAccountId,
       endpoint: params.endpoint,
       method: params.method ?? "GET",
@@ -210,19 +201,20 @@ export class ComposioApiClient {
     };
   }
 
-  /** List Composio connected accounts for a given user, optionally
-   *  filtered by toolkit. Returns the raw Composio account payloads so
-   *  the caller decides which fields to keep. */
+  /** List the session user's Composio connected accounts, optionally
+   *  filtered by toolkit. */
   async listConnections(
-    params: ListConnectionsParams,
+    params: ListConnectionsParams = {},
   ): Promise<ListConnectionsResponse> {
-    const search = new URLSearchParams({ owner_user_id: params.ownerUserId });
+    const search = new URLSearchParams();
     if (params.providerId) {
       search.set("provider_id", params.providerId);
     }
-    const response = await this.getJson(
-      `/api/composio/internal/connections?${search.toString()}`,
-    );
+    const qs = search.toString();
+    const path = qs
+      ? `/api/composio/internal/connections?${qs}`
+      : "/api/composio/internal/connections";
+    const response = await this.getJson(path);
     const payload = (await response.json()) as {
       ok?: boolean;
       connections?: Array<Record<string, unknown>>;
@@ -256,9 +248,7 @@ export class ComposioApiClient {
     return { connection: payload.connection ?? {} };
   }
 
-  /** Enumerate the catalog of executable tools for a toolkit (the
-   *  shapes you can feed to executeAction). Composio's tool catalog
-   *  per toolkit is the source of truth for "what actions exist". */
+  /** Enumerate the catalog of executable tools for a toolkit. */
   async listToolkitTools(toolkitSlug: string): Promise<ListToolkitToolsResponse> {
     const response = await this.getJson(
       `/api/composio/internal/toolkits/${encodeURIComponent(toolkitSlug)}/tools`,
@@ -281,7 +271,7 @@ export class ComposioApiClient {
     return this.fetchImpl(`${this.honoBaseUrl}${path}`, {
       method: "POST",
       headers: {
-        "X-API-Key": this.serviceToken,
+        Authorization: `Bearer ${this.bearerToken}`,
         "Content-Type": "application/json",
         Accept: "application/json",
       },
@@ -293,7 +283,7 @@ export class ComposioApiClient {
     return this.fetchImpl(`${this.honoBaseUrl}${path}`, {
       method: "GET",
       headers: {
-        "X-API-Key": this.serviceToken,
+        Authorization: `Bearer ${this.bearerToken}`,
         Accept: "application/json",
       },
     });
@@ -302,15 +292,15 @@ export class ComposioApiClient {
 
 /** Build a `ComposioApiClient` from the runtime's standard env vars.
  *  Returns `null` when either env is missing so the caller can branch on
- *  "Composio internal access not configured in this deployment" without
- *  throwing during boot. Matches the pattern used for ComposioService. */
+ *  "no signed-in user available in this process" without throwing at
+ *  boot. */
 export function createComposioApiClientFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): ComposioApiClient | null {
   const honoBaseUrl = (env.HOLABOSS_AUTH_BASE_URL ?? "").trim();
-  const serviceToken = (env.AGENT_SERVICE_API_KEY ?? "").trim();
-  if (!honoBaseUrl || !serviceToken) {
+  const bearerToken = (env.HOLABOSS_AUTH_BEARER_TOKEN ?? "").trim();
+  if (!honoBaseUrl || !bearerToken) {
     return null;
   }
-  return new ComposioApiClient({ honoBaseUrl, serviceToken });
+  return new ComposioApiClient({ honoBaseUrl, bearerToken });
 }
