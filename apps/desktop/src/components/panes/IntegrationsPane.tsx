@@ -1168,6 +1168,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
           open={Boolean(pendingDisconnect)}
           title="Disconnect this account?"
         />
+        <ComposioInternalDebugRow />
       </div>
     );
   }
