@@ -3904,14 +3904,32 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         continue;
       }
 
-      await appLifecycleExecutor.stopApp({
-        appId,
-        appDir: resolved.appDir,
-        workspaceId: params.workspaceId,
-        resolvedApp: resolved.resolvedApp
-      });
-      store.upsertAppBuild({ workspaceId: params.workspaceId, appId, status: "stopped" });
-      await ensureAppRunning(params.workspaceId, appId);
+      // Restart is best-effort: the binding itself has already been
+      // persisted by the caller. A slow/broken app start should not be
+      // surfaced to the user as "binding failed" — they'd lose the
+      // mental model that the connection is now saved. Log and move on
+      // so the PUT endpoint can return the binding payload cleanly; the
+      // user can retry start from chat or from the apps panel.
+      try {
+        await appLifecycleExecutor.stopApp({
+          appId,
+          appDir: resolved.appDir,
+          workspaceId: params.workspaceId,
+          resolvedApp: resolved.resolvedApp
+        });
+        store.upsertAppBuild({ workspaceId: params.workspaceId, appId, status: "stopped" });
+        await ensureAppRunning(params.workspaceId, appId);
+      } catch (error) {
+        app.log.warn(
+          {
+            workspaceId: params.workspaceId,
+            appId,
+            integrationKey: params.integrationKey,
+            error: error instanceof Error ? error.message : String(error)
+          },
+          "app restart after integration binding refresh failed; binding is still saved"
+        );
+      }
     }
   }
 
