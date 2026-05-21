@@ -228,6 +228,28 @@ vibe coding's biggest failure mode is destructive migrations. Rules:
 
 Each schema change is a version; the user must be able to roll back.
 
+### Dashboard widget recipes (what to reach for, by intent)
+
+Most "vibe-coded dashboard looks off" failures aren't taste problems — they're "agent didn't know which primitive to grab." Read this table BEFORE writing JSX. If your need isn't on the table, default to `@holaboss/ui` primitives; never hand-roll.
+
+| You want | Use | Don't do |
+|---|---|---|
+| A row of 3-6 small headline numbers at the top (KPIs) | `StatPill` inside `<div className="grid grid-cols-2 gap-2 sm:grid-cols-4">` | Full-width 80px-tall cards stacked vertically. KPIs are summaries, they should fit in one glance — never one-per-row. |
+| "No data yet" state on a chart, list, or section | `EmptyState` with a tight prompt + optional CTA | A 200px placeholder div with greyed text. `EmptyState` is already tight, themed, and tells the user the next action. |
+| Sub-section heading inside a dashboard ("Overview", "Metric lines", "Post cards") | `Section` (from `@holaboss/ui` layouts) — handles label + description + spacing | Bare `<h2>` + `<p>` with no hierarchy. Bare headings make every section feel equal-weight; `Section` encodes the spacing rhythm. |
+| "Twitter: needs connection" / "Gmail: connected" badges | A single `StatusDot` row at the top of `PageHeader` actions, ONE source of truth | A `StatusDot` row at the top AND a full-width "Integration binding required" banner below — same signal, two surfaces, user reads it twice and trusts neither. |
+| Search + filter row above a list | `FilterBar` + `Input` | Hand-rolled flex with a search icon you styled yourself. |
+| A loading skeleton while you fetch | `LoadingState` | A grey rectangle with a CSS pulse. |
+| Tabular data (rows of posts, runs, events) | `DataTable` | A bullet `<ul>` or hand-rolled `<table>`. |
+| Whole-page scaffold (page header + actions + body) | `DashboardShell` + `PageHeader` | Custom flex column with manual padding. |
+
+### Density rules of thumb
+
+- **KPI row**: max ~80px tall total. If you find yourself sizing one KPI card to 80px individually, you're doing it wrong.
+- **Section spacing**: between sections, ~`gap-6`; inside a section, ~`gap-3`. Don't reinvent this.
+- **Status pills**: there is exactly one place in the layout where each piece of status appears. If the same word ("needs connection") is rendered twice in the same viewport, delete one.
+- **Empty states**: never larger than the populated state would be. An empty chart slot shouldn't take more vertical room than the chart-with-data would.
+
 ### UI anti-patterns (failure modes the user flagged)
 
 - **Generating a `components/ui/` directory or running `shadcn add`** — that path is gone. Import primitives from `@holaboss/ui` instead.
