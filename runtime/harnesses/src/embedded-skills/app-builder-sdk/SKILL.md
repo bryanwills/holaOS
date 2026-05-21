@@ -67,6 +67,28 @@ curl -sS https://backend.composio.dev/api/v3/toolkits \
 
 The legacy `composioToolkit` field on `ProviderRegistry` is **deprecated**. Do not set it. If a reference still does, replace `id` with the same value and drop `composioToolkit`. Splitting them was a misreading of the runtime — the broker proxy uses ONLY `provider` (= `cfg.id`); `composioToolkit` is dead code, currently used only by `manifest.ts` as a fallback that should never trigger when `id` is correct.
 
+### Connection readiness: ask the runtime, never the upstream host
+
+If your app needs a "connected / needs connection" UI affordance, **call `getIntegrationStatus()` from `@holaboss/app-builder-sdk`**. Do not fetch `https://api.<provider>.com/<some-me-endpoint>` to detect connectivity. Upstream API hosts move (`api.twitter.com` → `api.x.com`, GitHub OAuth shape changes, Discord scope-only slug), and "ping the upstream" is the failure mode that surfaces as the dashboard reading "needs connection" even though the connection is bound and active.
+
+```ts
+// src/client/lib/integration-status.ts (TanStack Start server function)
+import { getIntegrationStatus } from "@holaboss/app-builder-sdk"
+
+export const integrationStatus = createServerFn().handler(async () => {
+  return getIntegrationStatus()
+})
+
+// or narrow to one provider for a per-toolkit badge:
+export const twitterStatus = createServerFn().handler(async () => {
+  return getIntegrationStatus({ provider: "twitter" })
+})
+```
+
+The helper reads `HOLABOSS_APP_GRANT` + `WORKSPACE_API_URL` (both injected by the runtime when your app starts) and calls the runtime's `/api/v1/integrations/readiness` endpoint. Response shape: `{ ready: boolean, issues: [{ provider, integrationKey, code, message }] }`. `code` is one of `ready | integration_not_bound | integration_not_connected | integration_needs_reauth` — let the UI pick the affordance from that code (e.g. show "Connect" for `integration_not_connected` and "Reconnect" for `integration_needs_reauth`).
+
+There is **no legitimate reason** for an SDK app to ping the upstream API host as a connectivity test. If something looks like it needs that, you want `getIntegrationStatus` instead.
+
 ## Dashboard / workspace-pane UI (vibe-coded apps)
 
 The SDK's default `startMcpServer({ httpPort, ... })` ships a one-screen "headless module" placeholder on the http port. That placeholder is **only acceptable for integration-only modules** (Slack-style MCP-driven flows). The moment the user asks for a dashboard / list view / kanban / calendar / "let me see my X", you must replace the placeholder with a real dashboard built on `@holaboss/ui`.
