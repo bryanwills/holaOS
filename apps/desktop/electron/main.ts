@@ -10511,6 +10511,31 @@ function authBearerToken(): string {
   return extractSessionTokenFromCookieHeader(cookie) ?? "";
 }
 
+// Temporary diagnostic — hits the runtime's /api/v1/debug/composio-
+// runtime-test endpoint, which exercises ComposioApiClient end-to-end
+// (runtime env-injected bearer token → Hono /internal/tools/execute →
+// Composio). Wired to a button in IntegrationsPane so we can confirm
+// the full server-side stack before any product consumer lands. Safe
+// to delete with the matching runtime endpoint once a real consumer
+// is in place.
+async function debugComposioRuntimeTest(
+  params: {
+    providerSlug?: string;
+    toolSlug?: string;
+    arguments?: Record<string, unknown>;
+  } = {},
+): Promise<unknown> {
+  return requestRuntimeJson<unknown>({
+    method: "POST",
+    path: "/api/v1/debug/composio-runtime-test",
+    payload: {
+      ...(params.providerSlug ? { provider_slug: params.providerSlug } : {}),
+      ...(params.toolSlug ? { tool_slug: params.toolSlug } : {}),
+      ...(params.arguments ? { arguments: params.arguments } : {}),
+    },
+  });
+}
+
 // Single entry point for "desktop directly calls a Composio action via
 // the new /api/composio/internal/tools/execute surface."
 //
@@ -23734,6 +23759,21 @@ app.whenReady().then(async () => {
         arguments?: Record<string, unknown>;
       },
     ) => composioExecute(params),
+  );
+  // Temporary diagnostic — runtime end-to-end probe through the new
+  // ComposioApiClient. Button in IntegrationsPane fires this; remove
+  // alongside the runtime endpoint once a real consumer lands.
+  handleTrustedIpc(
+    "workspace:debugComposioRuntimeTest",
+    ["main"],
+    async (
+      _event,
+      params?: {
+        providerSlug?: string;
+        toolSlug?: string;
+        arguments?: Record<string, unknown>;
+      },
+    ) => debugComposioRuntimeTest(params ?? {}),
   );
   handleTrustedIpc(
     "workspace:composioConnect",

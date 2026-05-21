@@ -10840,5 +10840,110 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     return reply.send(stream);
   });
 
+  // Temporary diagnostic route — exercises the full runtime → Hono →
+  // Composio path through ComposioApiClient using the env-injected
+  // HOLABOSS_AUTH_BEARER_TOKEN. Called by the IntegrationsPane debug
+  // button so we can confirm desktop-side env injection + runtime SDK
+  // + Hono /internal/* + bearer plugin all line up end-to-end. Safe to
+  // delete once a real consumer (cron worker / data harvester / first-
+  // run prefetch) is in product and we have a real smoke test.
+  app.post("/api/v1/debug/composio-runtime-test", async (request, reply) => {
+    const { createComposioApiClientFromEnv, ComposioApiClientError } =
+      await import("./composio-api-client.js");
+    const body = (isRecord(request.body) ? request.body : {}) as Record<
+      string,
+      unknown
+    >;
+    const providerSlug =
+      typeof body.provider_slug === "string"
+        ? body.provider_slug.trim().toLowerCase()
+        : "gmail";
+    const toolSlug =
+      typeof body.tool_slug === "string"
+        ? body.tool_slug.trim()
+        : "GMAIL_FETCH_EMAILS";
+    const actionArgs = isRecord(body.arguments)
+      ? (body.arguments as Record<string, unknown>)
+      : { max_results: 5 };
+
+    const composio = createComposioApiClientFromEnv();
+    if (!composio) {
+      return reply.code(503).send({
+        ok: false,
+        stage: "client_init",
+        error:
+          "HOLABOSS_AUTH_BEARER_TOKEN and/or HOLABOSS_AUTH_BASE_URL not set — desktop hasn't injected the session token yet (sign in first, then restart the runtime).",
+      });
+    }
+
+    let connections: Array<Record<string, unknown>> = [];
+    try {
+      const result = await composio.listConnections({ providerId: providerSlug });
+      connections = result.connections;
+    } catch (error) {
+      if (error instanceof ComposioApiClientError) {
+        return reply.code(error.httpStatus).send({
+          ok: false,
+          stage: "list_connections",
+          error: error.info,
+        });
+      }
+      return reply.code(502).send({
+        ok: false,
+        stage: "list_connections",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (connections.length === 0) {
+      return reply.code(404).send({
+        ok: false,
+        stage: "list_connections",
+        error: `No active ${providerSlug} connection for this user.`,
+      });
+    }
+    const connectedAccountId = (() => {
+      const candidate = connections[0];
+      if (!candidate) return null;
+      const id = (candidate as { id?: unknown }).id;
+      return typeof id === "string" ? id : null;
+    })();
+    if (!connectedAccountId) {
+      return reply.code(502).send({
+        ok: false,
+        stage: "list_connections",
+        error: "Connection row missing an id field.",
+      });
+    }
+
+    try {
+      const result = await composio.executeAction({
+        toolSlug,
+        connectedAccountId,
+        arguments: actionArgs,
+      });
+      return reply.send({
+        ok: true,
+        provider_slug: providerSlug,
+        tool_slug: toolSlug,
+        connected_account_id: connectedAccountId,
+        log_id: result.logId,
+        data: result.data,
+      });
+    } catch (error) {
+      if (error instanceof ComposioApiClientError) {
+        return reply.code(error.httpStatus).send({
+          ok: false,
+          stage: "execute_action",
+          error: error.info,
+        });
+      }
+      return reply.code(502).send({
+        ok: false,
+        stage: "execute_action",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
   return app;
 }

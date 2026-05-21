@@ -2007,6 +2007,11 @@ interface RuntimeNotificationListOptionsPayload {
         toolSlug: string;
         arguments?: Record<string, unknown>;
       }) => Promise<unknown>;
+      debugComposioRuntimeTest: (params?: {
+        providerSlug?: string;
+        toolSlug?: string;
+        arguments?: Record<string, unknown>;
+      }) => Promise<unknown>;
       restartApp: (workspaceId: string, appId: string) => Promise<{
         workspace_id: string;
         app_id: string;

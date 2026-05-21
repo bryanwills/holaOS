@@ -16,6 +16,7 @@ import {
 } from "@/components/settings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
 import { accountDisplayLabel } from "@/lib/integrationDisplay";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
@@ -1168,6 +1169,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
           open={Boolean(pendingDisconnect)}
           title="Disconnect this account?"
         />
+        <ComposioRuntimeDebugRow />
       </div>
     );
   }
@@ -1521,6 +1523,125 @@ function WorkspaceScopeSection({
             </div>
           ) : null}
         </div>
+      ) : null}
+    </div>
+  );
+}
+
+// Temporary diagnostic — hits runtime POST /api/v1/debug/composio-
+// runtime-test, which uses ComposioApiClient end-to-end (env-injected
+// HOLABOSS_AUTH_BEARER_TOKEN → Hono /internal/tools/execute → Composio).
+// Exposes a one-click "fetch 5 Gmail messages via runtime" probe so we
+// can confirm the full server-side path is alive before any product
+// feature lands. Editable provider + tool slug + args via small inputs;
+// defaults are the canonical Gmail fetch case. Safe to delete alongside
+// the runtime endpoint once a real consumer is in product.
+function ComposioRuntimeDebugRow() {
+  const [providerSlug, setProviderSlug] = useState("gmail");
+  const [toolSlug, setToolSlug] = useState("GMAIL_FETCH_EMAILS");
+  const [argsText, setArgsText] = useState(
+    JSON.stringify({ max_results: 5 }, null, 2),
+  );
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<unknown>(null);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  async function handleRun() {
+    setBusy(true);
+    setErrorMessage("");
+    setResult(null);
+    let parsedArgs: Record<string, unknown> = {};
+    try {
+      const raw = argsText.trim();
+      parsedArgs = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    } catch (parseError) {
+      setBusy(false);
+      setErrorMessage(
+        `arguments must be valid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+      );
+      return;
+    }
+    try {
+      const response = await window.electronAPI.workspace.debugComposioRuntimeTest(
+        {
+          providerSlug: providerSlug.trim() || undefined,
+          toolSlug: toolSlug.trim() || undefined,
+          arguments: parsedArgs,
+        },
+      );
+      setResult(response);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-dashed border-border bg-muted/30 px-4 py-3 text-xs">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-medium text-foreground">
+            Debug — runtime → Composio via ComposioApiClient
+          </div>
+          <div className="text-muted-foreground">
+            Hits <code>POST /api/v1/debug/composio-runtime-test</code> on
+            the embedded runtime. Exercises the full path: env-injected
+            bearer token → ComposioApiClient → Hono{" "}
+            <code>/internal/tools/execute</code> → Composio. Defaults
+            fetch your 5 most recent Gmail messages.
+          </div>
+        </div>
+        <Button
+          className="h-7 px-3 text-xs"
+          disabled={busy}
+          onClick={() => void handleRun()}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          {busy ? "Running…" : "Run probe"}
+        </Button>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] text-muted-foreground">
+            provider_slug
+          </span>
+          <Input
+            className="h-7 text-xs"
+            onChange={(e) => setProviderSlug(e.target.value)}
+            value={providerSlug}
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] text-muted-foreground">tool_slug</span>
+          <Input
+            className="h-7 text-xs"
+            onChange={(e) => setToolSlug(e.target.value)}
+            value={toolSlug}
+          />
+        </label>
+      </div>
+      <label className="mt-2 flex flex-col gap-1">
+        <span className="text-[11px] text-muted-foreground">
+          arguments (JSON)
+        </span>
+        <textarea
+          className="h-20 w-full resize-y rounded-md border border-border bg-background px-2 py-1 font-mono text-[11px] leading-4 text-foreground focus:outline-none"
+          onChange={(e) => setArgsText(e.target.value)}
+          value={argsText}
+        />
+      </label>
+      {errorMessage ? (
+        <div className="mt-3 rounded-md bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
+          {errorMessage}
+        </div>
+      ) : null}
+      {result !== null ? (
+        <pre className="mt-3 max-h-80 overflow-auto rounded-md bg-background px-2 py-1.5 text-[11px] leading-5 text-foreground">
+          {JSON.stringify(result, null, 2)}
+        </pre>
       ) : null}
     </div>
   );

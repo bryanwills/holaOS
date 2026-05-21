@@ -1644,6 +1644,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
       arguments?: Record<string, unknown>;
     }) =>
       ipcRenderer.invoke("workspace:composioExecute", params) as Promise<unknown>,
+    debugComposioRuntimeTest: (params?: {
+      providerSlug?: string;
+      toolSlug?: string;
+      arguments?: Record<string, unknown>;
+    }) =>
+      ipcRenderer.invoke("workspace:debugComposioRuntimeTest", params) as Promise<unknown>,
     composioConnect: (payload: {
       provider: string;
       owner_user_id: string;
