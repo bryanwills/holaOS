@@ -10477,6 +10477,136 @@ async function composioListConnections(): Promise<{
   );
 }
 
+// Temporary diagnostic for the new /api/composio/internal/* surface +
+// Better-Auth bearer plugin. Probes the internal route twice from the
+// desktop main process:
+//
+//   1. Cookie path — uses the desktop's existing Better-Auth session
+//      cookie. Confirms /internal/* still resolves c.get("user") when
+//      the caller carries a cookie jar (i.e. the legacy desktop path).
+//
+//   2. Bearer path — extracts the raw session_token value out of the
+//      same cookie string and resends it as `Authorization: Bearer`.
+//      This is the exact shape the runtime will use once
+//      HOLABOSS_AUTH_BEARER_TOKEN injection is wired in; verifying it
+//      from desktop today lets us validate Hono + bearer() without
+//      shipping the runtime plumbing first.
+//
+// Returns both attempts so the renderer can show "cookie OK / bearer
+// OK" or which one failed. Strictly a debug helper — caller is the
+// integrations debug panel button, not a product surface.
+function extractSessionTokenFromCookieHeader(cookie: string): string | null {
+  if (!cookie) return null;
+  for (const segment of cookie.split(/;\s*/)) {
+    const idx = segment.indexOf("=");
+    if (idx < 0) continue;
+    const name = segment.slice(0, idx).trim();
+    if (!name) continue;
+    if (
+      name === "better-auth.session_token" ||
+      name === "__Secure-better-auth.session_token"
+    ) {
+      const value = segment.slice(idx + 1).trim();
+      if (!value) continue;
+      // Better-Auth cookies are url-encoded; raw token comes back after
+      // decode. The bearer plugin compares against the raw session token.
+      try {
+        return decodeURIComponent(value);
+      } catch {
+        return value;
+      }
+    }
+  }
+  return null;
+}
+
+export interface ComposioInternalDebugProbe {
+  ok: boolean;
+  status: number;
+  /** Raw response body (truncated to ~600 chars) — shown verbatim to
+   *  the user in the debug dialog so we can read upstream error
+   *  payloads without re-deriving them. */
+  bodyExcerpt: string;
+  durationMs: number;
+}
+
+export interface ComposioInternalDebugReport {
+  endpoint: string;
+  cookieProbe: ComposioInternalDebugProbe | { ok: false; error: string };
+  bearerProbe:
+    | ComposioInternalDebugProbe
+    | { ok: false; error: string; tokenAvailable: boolean };
+}
+
+async function debugComposioInternal(): Promise<ComposioInternalDebugReport> {
+  if (!AUTH_BASE_URL) {
+    throw new Error(
+      "Backend is not configured (HOLABOSS_AUTH_BASE_URL missing)",
+    );
+  }
+  const endpoint = `${AUTH_BASE_URL}/api/composio/internal/connections`;
+  const cookieHeader = authCookieHeader();
+
+  const runProbe = async (
+    headers: Record<string, string>,
+  ): Promise<ComposioInternalDebugProbe> => {
+    const startedAt = Date.now();
+    const response = await fetchWithNetworkRetry(endpoint, {
+      method: "GET",
+      headers: { ...headers, Accept: "application/json" },
+    });
+    const text = await response.text();
+    return {
+      ok: response.ok,
+      status: response.status,
+      bodyExcerpt: text.slice(0, 600),
+      durationMs: Date.now() - startedAt,
+    };
+  };
+
+  let cookieProbe: ComposioInternalDebugReport["cookieProbe"];
+  try {
+    if (!cookieHeader) {
+      cookieProbe = { ok: false, error: "No session cookie (sign in first)" };
+    } else {
+      cookieProbe = await runProbe({ Cookie: cookieHeader });
+    }
+  } catch (error) {
+    cookieProbe = {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const sessionToken = cookieHeader
+    ? extractSessionTokenFromCookieHeader(cookieHeader)
+    : null;
+
+  let bearerProbe: ComposioInternalDebugReport["bearerProbe"];
+  if (!sessionToken) {
+    bearerProbe = {
+      ok: false,
+      error:
+        "No session_token found in cookie — Better-Auth may not have a live session, or the cookie name moved. Cookie path may still work; this only blocks the bearer probe.",
+      tokenAvailable: false,
+    };
+  } else {
+    try {
+      bearerProbe = await runProbe({
+        Authorization: `Bearer ${sessionToken}`,
+      });
+    } catch (error) {
+      bearerProbe = {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        tokenAvailable: true,
+      };
+    }
+  }
+
+  return { endpoint, cookieProbe, bearerProbe };
+}
+
 async function composioAccountStatus(
   connectedAccountId: string,
 ): Promise<ComposioAccountStatus> {
@@ -23607,6 +23737,13 @@ app.whenReady().then(async () => {
   );
   handleTrustedIpc("workspace:composioListConnections", ["main"], async () =>
     composioListConnections(),
+  );
+  // Temporary diagnostic IPC for the new /api/composio/internal/* + bearer
+  // plugin. Triggered by a small debug button in IntegrationsPane; safe to
+  // remove once HOLABOSS_AUTH_BEARER_TOKEN injection is wired into the
+  // runtime and we have a real end-to-end smoke test.
+  handleTrustedIpc("workspace:debugComposioInternal", ["main"], async () =>
+    debugComposioInternal(),
   );
   handleTrustedIpc(
     "workspace:composioConnect",

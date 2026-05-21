@@ -1582,6 +1582,23 @@ interface RuntimeNotificationListOptionsPayload {
     expires_at: string | null;
   }
 
+  interface ComposioInternalDebugProbePayload {
+    ok: boolean;
+    status: number;
+    bodyExcerpt: string;
+    durationMs: number;
+  }
+
+  interface ComposioInternalDebugReportPayload {
+    endpoint: string;
+    cookieProbe:
+      | ComposioInternalDebugProbePayload
+      | { ok: false; error: string };
+    bearerProbe:
+      | ComposioInternalDebugProbePayload
+      | { ok: false; error: string; tokenAvailable: boolean };
+  }
+
   interface ComposioAccountStatus {
     id: string;
     status: string;
@@ -2002,6 +2019,7 @@ interface RuntimeNotificationListOptionsPayload {
       startOAuthFlow: (provider: string) => Promise<OAuthAuthorizeResponsePayload>;
       composioListToolkits: () => Promise<{ toolkits: Array<{ slug: string; name: string; description: string; logo: string | null; auth_schemes: string[]; categories: string[] }> }>;
       composioListConnections: () => Promise<{ connections: Array<{ id: string; toolkitSlug: string; toolkitName: string; toolkitLogo: string | null; userId: string; createdAt: string }> }>;
+      debugComposioInternal: () => Promise<ComposioInternalDebugReportPayload>;
       restartApp: (workspaceId: string, appId: string) => Promise<{
         workspace_id: string;
         app_id: string;
