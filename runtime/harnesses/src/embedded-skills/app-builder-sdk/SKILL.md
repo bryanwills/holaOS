@@ -123,6 +123,10 @@ When in doubt: open Linear in your head, locate the closest pane (issue list →
 
 ### The rule: import `@holaboss/ui`, do not redefine primitives
 
+**Enforced at register time.** `workspace_apps_register` scans `src/client/` and rejects any dashboard app that doesn't import at least one of `DashboardShell` / `PageHeader` / `Section` / `StatPill` / `DataTable` / `EmptyState` / `LoadingState` / `ErrorState` / `FilterBar` from `@holaboss/ui`. Hand-rolled `<div className="flex flex-col gap-2">` stacks of `<Card>`s do NOT pass — the lint exists exactly because that's the shape that ships looking broken (KPIs stacked full-width, no hierarchy) no matter what this doc says about it. Reach for the platform primitives or your `register` call will 400.
+
+
+
 `@holaboss/ui` is a public npm package. It provides every primitive, layout, and CSS token your dashboard needs. **Do not generate shadcn primitives, copy a `components/ui/` directory, write your own Card, or import any other component library**. If `@holaboss/ui` is missing something, surface it to the SDK team instead of inventing a local replacement — visual drift is the failure mode the library exists to prevent.
 
 Install:

@@ -70,6 +70,10 @@ import {
   findForbiddenUpstreamHosts,
   formatHostLintError,
 } from "./workspace-app-host-lint.js";
+import {
+  formatDashboardUiLintError,
+  inspectDashboardUiUsage,
+} from "./workspace-app-ui-lint.js";
 
 const SESSION_REFRESH_NOTE =
   "New MCP servers became available in this turn. Their tools will be visible to you starting from the next user message — please end this turn (do not call the new tools yet) and let the user trigger the next one.";
@@ -5375,6 +5379,15 @@ export class RuntimeAgentToolsService {
         400,
         "workspace_app_upstream_host_hardcoded",
         formatHostLintError(hostViolations),
+      );
+    }
+
+    const uiUsage = inspectDashboardUiUsage(appDir);
+    if (uiUsage.hasClientDir && !uiUsage.usesHolabossUiLayout) {
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "workspace_app_missing_holaboss_ui_layout",
+        formatDashboardUiLintError(uiUsage),
       );
     }
 

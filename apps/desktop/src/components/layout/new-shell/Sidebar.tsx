@@ -23,6 +23,7 @@ import type { WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 import { resolveAppDisplay, useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { AnimatePresence, motion } from "motion/react";
 import {
   ChevronDown,
   ChevronRight,
@@ -173,16 +174,24 @@ function SidebarExpanded() {
       <WorkspaceSwitcher />
       <SidebarSectionNav />
       <div className="relative flex min-h-0 flex-1 flex-col">
-        <div
-          key={section}
-          className="absolute inset-0 flex flex-col animate-in fade-in-0 slide-in-from-bottom-1 duration-snappy"
-          style={{ animationTimingFunction: "var(--ease-emphasized)" }}
-        >
-          {section === "home" ? <SidebarHomeSection /> : null}
-          {section === "inbox" ? <SidebarInboxSection /> : null}
-          {section === "artifacts" ? <SidebarArtifactsSection /> : null}
-          {section === "automations" ? <SidebarAutomationsSection /> : null}
-        </div>
+        <AnimatePresence initial={false}>
+          <motion.div
+            key={section}
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{
+              opacity: { duration: 0.12, ease: [0.16, 1, 0.3, 1] },
+              y: { duration: 0.16, ease: [0.16, 1, 0.3, 1] },
+            }}
+            className="absolute inset-0 flex flex-col"
+          >
+            {section === "home" ? <SidebarHomeSection /> : null}
+            {section === "inbox" ? <SidebarInboxSection /> : null}
+            {section === "artifacts" ? <SidebarArtifactsSection /> : null}
+            {section === "automations" ? <SidebarAutomationsSection /> : null}
+          </motion.div>
+        </AnimatePresence>
       </div>
     </aside>
   );
@@ -199,6 +208,16 @@ const SECTION_NAV_ITEMS: Array<{
   { key: "automations", label: "Automations", icon: <Zap /> },
 ];
 
+// One shared spring for the pill slide and the button width morph.
+// stiffness 380 + damping 32 lands without overshoot but keeps the
+// motion lively — Linear-style.
+const SECTION_NAV_SPRING = {
+  type: "spring" as const,
+  stiffness: 380,
+  damping: 32,
+  mass: 0.6,
+};
+
 function SidebarSectionNav() {
   const [section, setSection] = useAtom(sidebarSectionAtom);
   const { selectedWorkspaceId } = useWorkspaceSelection();
@@ -211,46 +230,69 @@ function SidebarSectionNav() {
         const active = section === item.key;
         const badge = item.key === "inbox" && unreadInbox > 0 ? unreadInbox : 0;
         return (
-          <button
+          <motion.button
             key={item.key}
             type="button"
             aria-label={item.label}
             aria-pressed={active}
             title={item.label}
             onClick={() => setSection(item.key)}
+            // `layout="position"` only animates the button's position
+            // (its x shifts as siblings resize). The size itself snaps
+            // instantly — that's fine because the visible morph is the
+            // shared layoutId pill, not the button's bg. Avoids the
+            // FLIP scale-transform that was making the label look like
+            // it flew in from the right.
+            layout="position"
+            transition={SECTION_NAV_SPRING}
             className={cn(
-              "group/sec-nav relative flex h-7 shrink-0 items-center rounded-md text-foreground/55 transition-colors duration-snappy ease-emphasized hover:bg-foreground/[0.05] hover:text-foreground",
-              "[&_svg]:size-4",
-              // Inactive = true 28×28 square: w-7 (28) - px-1.5 (6+6) =
-              // 16px inner; size-4 icon (16) fits exactly, centered.
-              // No gap when inactive — gap would push the icon left of
-              // center because the collapsed label is still a flex sibling.
+              // `isolate` so the layoutId pill `motion.div` (z-0 absolute)
+              // doesn't escape; icon + label sit on z-10 above it.
+              "group/sec-nav relative isolate flex h-7 shrink-0 items-center rounded-md text-foreground/55 transition-colors duration-150 ease-out hover:text-foreground",
+              "[&_svg]:relative [&_svg]:z-10 [&_svg]:size-4",
               active
-                ? "gap-1.5 bg-foreground/[0.1] pr-2 pl-1.5 text-foreground"
-                : "w-7 px-1.5",
+                ? "gap-1.5 pr-2 pl-1.5 text-foreground"
+                : "w-7 px-1.5 hover:bg-foreground/[0.05]",
             )}
           >
+            {active ? (
+              <motion.span
+                aria-hidden
+                layoutId="sidebar-section-pill"
+                transition={SECTION_NAV_SPRING}
+                className="absolute inset-0 z-0 rounded-md bg-foreground/[0.1]"
+              />
+            ) : null}
             {item.icon}
-            <span
-              className={cn(
-                "overflow-hidden whitespace-nowrap text-[12px] font-medium leading-none transition-[max-width,opacity] duration-base ease-emphasized",
-                active ? "max-w-[140px] opacity-100" : "max-w-0 opacity-0",
-              )}
-            >
-              {item.label}
-            </span>
+            <AnimatePresence initial={false} mode="popLayout">
+              {active ? (
+                <motion.span
+                  key="label"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{
+                    duration: 0.18,
+                    ease: [0.16, 1, 0.3, 1],
+                  }}
+                  className="relative z-10 whitespace-nowrap text-[12px] font-medium leading-none"
+                >
+                  {item.label}
+                </motion.span>
+              ) : null}
+            </AnimatePresence>
             {badge > 0 ? (
               <span
                 aria-hidden
                 className={cn(
-                  "grid h-3 min-w-3 shrink-0 place-items-center rounded-full bg-primary px-0.5 text-[9px] font-medium leading-none text-primary-foreground transition-[margin] duration-base ease-emphasized",
+                  "relative z-10 grid h-3 min-w-3 shrink-0 place-items-center rounded-full bg-primary px-0.5 text-[9px] font-medium leading-none text-primary-foreground",
                   active ? "-mr-0.5 ml-0" : "absolute top-0.5 right-0.5",
                 )}
               >
                 {badge > 9 ? "9+" : badge}
               </span>
             ) : null}
-          </button>
+          </motion.button>
         );
       })}
     </div>

@@ -1620,6 +1620,108 @@ test("workspace app registration accepts store-catalog providers beyond the OSS 
   assert.equal(result.registered, true);
 });
 
+test("workspace app registration rejects a dashboard app whose src/client doesn't import any @holaboss/ui layout", async () => {
+  await harness.service.scaffoldWorkspaceApp({
+    workspaceId: harness.workspaceId,
+    appId: "naked-dash",
+    name: "Naked Dashboard",
+  });
+  const clientDir = path.join(
+    harness.workspaceDir,
+    "apps",
+    "naked-dash",
+    "src",
+    "client",
+  );
+  fs.mkdirSync(clientDir, { recursive: true });
+  // A dashboard component that does the exact failure mode: stack of
+  // hand-rolled cards, no @holaboss/ui layout primitive in sight.
+  fs.writeFileSync(
+    path.join(clientDir, "Dashboard.tsx"),
+    [
+      "export function Dashboard() {",
+      "  return (",
+      "    <div className=\"flex flex-col gap-2\">",
+      "      <div className=\"rounded border p-3\">Likes 0</div>",
+      "      <div className=\"rounded border p-3\">Replies 0</div>",
+      "    </div>",
+      "  );",
+      "}",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  await assert.rejects(
+    () =>
+      harness.service.registerWorkspaceApp({
+        workspaceId: harness.workspaceId,
+        appId: "naked-dash",
+      }),
+    (error) => {
+      assert.equal(error instanceof RuntimeAgentToolsServiceError, true);
+      assert.equal((error as RuntimeAgentToolsServiceError).statusCode, 400);
+      assert.match(
+        (error as RuntimeAgentToolsServiceError).message,
+        /does not import any layout primitives from `@holaboss\/ui`/,
+      );
+      const msg = (error as RuntimeAgentToolsServiceError).message;
+      assert.ok(msg.includes("StatPill"), `expected StatPill in error, got: ${msg}`);
+      assert.ok(msg.includes("DataTable"), `expected DataTable in error, got: ${msg}`);
+      assert.ok(msg.includes("Section"), `expected Section in error, got: ${msg}`);
+      return true;
+    },
+  );
+});
+
+test("workspace app registration accepts a dashboard app that uses any @holaboss/ui layout", async () => {
+  await harness.service.scaffoldWorkspaceApp({
+    workspaceId: harness.workspaceId,
+    appId: "real-dash",
+    name: "Real Dashboard",
+  });
+  const clientDir = path.join(
+    harness.workspaceDir,
+    "apps",
+    "real-dash",
+    "src",
+    "client",
+  );
+  fs.mkdirSync(clientDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(clientDir, "Dashboard.tsx"),
+    [
+      "import { StatPill } from \"@holaboss/ui\";",
+      "export function Dashboard() {",
+      "  return <StatPill label=\"Likes\" value={0} />;",
+      "}",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const result = (await harness.service.registerWorkspaceApp({
+    workspaceId: harness.workspaceId,
+    appId: "real-dash",
+  })) as { registered: boolean };
+  assert.equal(result.registered, true);
+});
+
+test("workspace app registration ignores ui lint for integration-only apps without src/client", async () => {
+  await harness.service.scaffoldWorkspaceApp({
+    workspaceId: harness.workspaceId,
+    appId: "headless-mod",
+    name: "Headless Module",
+  });
+  // No src/client; the scaffold default is integration-only. Register
+  // must not demand @holaboss/ui imports from these.
+  const result = (await harness.service.registerWorkspaceApp({
+    workspaceId: harness.workspaceId,
+    appId: "headless-mod",
+  })) as { registered: boolean };
+  assert.equal(result.registered, true);
+});
+
 test("listIntegrationCatalog exposes canonical provider ids for app builders", () => {
   const catalog = harness.service.listIntegrationCatalog({
     workspaceId: harness.workspaceId,
