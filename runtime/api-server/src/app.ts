@@ -4856,11 +4856,31 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         connectionId,
         isDefault: optionalBoolean((request.body as Record<string, unknown>).is_default, false)
       });
-      await refreshAppsForIntegrationBinding({
+      // Refresh is fire-and-forget. Apps that consume this binding need to
+      // be stop+restarted to pick up the new grant — that's a stopApp +
+      // ensureAppRunning + waitHealthy chain that routinely takes 30s+ for
+      // cold-start vibe-coded apps. Awaiting it inside the PUT response
+      // path blew past the desktop client's HTTP timeout and surfaced as
+      // "Runtime request timed out" even though the binding itself was
+      // already persisted. The binding row is the source of truth; refresh
+      // is just a UX optimization, so let it run in the background and log
+      // failures rather than couple them to the user's bind action.
+      void refreshAppsForIntegrationBinding({
         workspaceId: binding.workspace_id,
         integrationKey: binding.integration_key,
         targetType: binding.target_type,
         targetId: binding.target_id
+      }).catch((error) => {
+        app.log.warn(
+          {
+            workspaceId: binding.workspace_id,
+            integrationKey: binding.integration_key,
+            targetType: binding.target_type,
+            targetId: binding.target_id,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          "background app refresh after integration binding failed; binding is still saved",
+        );
       });
       return binding;
     } catch (error) {
