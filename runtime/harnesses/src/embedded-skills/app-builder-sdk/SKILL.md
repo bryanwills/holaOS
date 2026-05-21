@@ -72,7 +72,7 @@ The legacy `composioToolkit` field on `ProviderRegistry` is **deprecated**. Do n
 
 ### Connection readiness: ask the runtime, never the upstream host
 
-If your app needs a "connected / needs connection" UI affordance, **call `getIntegrationStatus()` from `@holaboss/app-builder-sdk`**. Do not fetch `https://api.<provider>.com/<some-me-endpoint>` to detect connectivity. Upstream API hosts move (`api.twitter.com` → `api.x.com`, GitHub OAuth shape changes, Discord scope-only slug), and "ping the upstream" is the failure mode that surfaces as the dashboard reading "needs connection" even though the connection is bound and active.
+If your app needs to show "connected / needs connection" status in the UI, you **MUST** call `getIntegrationStatus()` from `@holaboss/app-builder-sdk` on mount (via a TanStack Start server function or loader), and re-call it after the user finishes any Connect flow. There is **no other supported way** to detect connectivity. Pinging the upstream host (`https://api.twitter.com/...`, `https://api.notion.com/...`) is not just suboptimal — it is the exact failure mode that left every previous vibe-coded dashboard stuck on "needs connection" the moment Composio rerouted the toolkit (api.twitter.com → api.x.com, Discord scope-only slug, etc.). The register-time lint rejects hardcoded upstream hosts; `getIntegrationStatus()` is the only way through.
 
 ```ts
 // src/client/lib/integration-status.ts (TanStack Start server function)
@@ -261,6 +261,15 @@ Most "vibe-coded dashboard looks off" failures aren't taste problems — they're
 - **A single-page dashboard with 3+ deeply nested `div`s of custom flexbox.** Use `Section` + `Card` + `Tabs` — they encode the platform's spacing rhythm.
 - **Per-app dark mode toggle / theme picker.** Theme is workspace-level; the app inherits via CSS variables and does nothing.
 
+### App-level anti-patterns (not UI — code shape)
+
+- **Hand-rolled polling / `setInterval` / `setTimeout(retry, N)` / custom backoff loops.** All scheduling and retry lives in the workspace automations layer. The SDK's `sync(name, { schedule, ... })` is a **declarative** statement of intent — Holaboss runs it on the declared cadence; you do not. Putting an interval in client or server code creates duplicate fetches, fights workspace pause/resume, and ignores user-level rate budgets.
+- **Custom OAuth, token storage, or refresh logic.** The runtime broker via Composio owns the OAuth lifecycle, token rotation, scope negotiation, and re-auth detection end-to-end. Your app's only credential primitive is `createRuntimeBrokerTransport({ provider })`. If you find yourself reading a token, you are off-path; route through the broker instead. To branch on "needs reauth", use `getIntegrationStatus()` and inspect `code === "integration_needs_reauth"`.
+- **Hardcoded user identity in code** — usernames, email addresses, account ids, workspace names. These are mutable + per-workspace. Read identity from `getIntegrationStatus()` issues (handle/email come back enriched), from app row state, or from a server-function parameter. Never bake "@jotyy" or "user@example.com" into source.
+- **Layering a second ORM / entity abstraction on top of `resource` + `action` + `sync`.** The five primitives are the whole storage contract; the MCP tool surface and the dashboard reads derive from them. If you need a field, a state, or an action that doesn't exist in your `resource`, extend the resource — don't wrap it in your own `class Repository`. A parallel model silently desynchronizes from the tools the agent gets.
+- **All-or-nothing dashboard rendering.** Don't block the entire page on a `Promise.all` of every server fetch. Each `StatPill`, table, and chart should render the moment its own data lands, with a `LoadingState` skeleton during fetch and an `EmptyState` if the data is empty. A 0.5s skeleton beats a 4s blank page even when the slow query is just one card.
+- **Forgetting the `integration:` block when the app uses a Composio provider.** If you call `createRuntimeBrokerTransport({ provider: "gmail" })` anywhere in the app, `app.runtime.yaml` MUST declare a matching `integrations:` entry. Otherwise the binding step has no key to bind, `getIntegrationStatus()` reports `integration_not_bound`, and the dashboard is stuck. See section 4 below.
+
 ### Reviewer pass
 
 After writing the dashboard, eyeball it against an existing healthy holaOS pane (e.g. the marketplace pane, the integrations pane). It should feel like the same product. If it doesn't, you've imported something from outside `@holaboss/ui` or redefined a primitive — re-check.
@@ -382,12 +391,21 @@ env_contract:
 
 If you're not sure, write the app, `bun run server.ts` once locally, and read the "Tools registered: N" log line.
 
-### 4. `integration` block in app.runtime.yaml
+### 4. `integration` block in app.runtime.yaml — REQUIRED if the app calls any provider
+
+If your app uses `createRuntimeBrokerTransport({ provider })` or otherwise consumes a Composio toolkit, you **must** declare a matching `integrations:` entry. Without it:
+- The runtime binding lookup has no key to match, so `upsertIntegrationBinding` succeeds at the row level but `getIntegrationStatus()` reports `integration_not_bound` forever.
+- The Connect card the chat renders never resolves, the multi-card gate keeps the agent paused, and the user sees a dashboard stuck on "needs connection" no matter how many times they click Connect.
+
+Skip this block only when the app is purely internal (no upstream calls).
 
 ```yaml
-integration:
-  destination: "<provider_id>"     # matches ProviderRegistry.id
-  credential_source: "platform"     # always; uses Composio via runtime broker
+integrations:
+  - key: <integration_key>          # local handle the app uses; usually same as provider_id
+    provider: <provider_id>         # MUST be a Composio store catalog slug (see section above)
+    capability: <api | messaging | files | ...>
+    required: true                  # block startup if not bound
+    credential_source: platform     # always; uses Composio via runtime broker
 ```
 
 ### 5. Register in `workspace.yaml`
@@ -405,7 +423,7 @@ mcp_registry:
       type: remote
       url: http://localhost:<MCP_PORT>/mcp/sse
       enabled: true
-      timeout_ms: 30000
+      timeout_ms: 120000   # vibe-coded apps cold-start slowly: first npm install + first build + boot easily blow past 30s; 120s is the runtime default for the same reason
 applications:
   - app_id: <app_id>
     config_path: apps/<app_id>/app.runtime.yaml
@@ -438,6 +456,14 @@ sqlite3 ~/.holaboss-desktop/sandbox-host/state/control-plane.db \
 If no row → user has not connected this provider yet; tell them to use the desktop integrations panel before continuing. Don't try to mint a Composio connection from the agent — that's an OAuth flow that requires user consent in the desktop UI.
 
 The PUT triggers `refreshAppsForIntegrationBinding` which restarts the app process, so the new env propagates within a few seconds.
+
+### Pending-integration gate: wait for the user, don't outrun them
+
+When you emit one or more `holaboss_workspace_integrations_propose_connect` cards (or when `workspace_apps_ensure_running` returns `pending_integrations`), the runtime parks the next queued input until **every** proposed connection lands as `active` in the user pool. The session emits a `waiting_on_pending_integrations` event and the chat shows a paused banner. Concretely this means:
+
+- Do not chain "now call gmail_get_profile to verify" after a propose_connect in the same turn — the call will hit the broker with `integration_not_connected` and you'll waste the user's time on a noisy failure.
+- Do not propose the same toolkit twice "in case the first one didn't take". The gate de-dupes by slug; double-proposing only multiplies the banners.
+- After you propose, stop. The system will re-dispatch your input the moment the last required connection completes; that's your signal to continue. You don't need to poll.
 
 ## Verification checklist
 
