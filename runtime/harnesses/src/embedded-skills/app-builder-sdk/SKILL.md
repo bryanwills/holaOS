@@ -98,6 +98,29 @@ The runtime enforces this at `workspace_apps_register` time: a source-tree scan 
 
 The SDK's default `startMcpServer({ httpPort, ... })` ships a one-screen "headless module" placeholder on the http port. That placeholder is **only acceptable for integration-only modules** (Slack-style MCP-driven flows). The moment the user asks for a dashboard / list view / kanban / calendar / "let me see my X", you must replace the placeholder with a real dashboard built on `@holaboss/ui`.
 
+### Visual design language: anchor on Linear
+
+When laying out a holaOS dashboard, **target the Linear aesthetic** (linear.app). Linear is the canonical reference for a holaOS pane. If your output doesn't feel like it could ship inside Linear, you took a wrong turn.
+
+What "Linear" concretely means here:
+
+- **Density first, breathing room second.** Table rows ~32–36px tall. Sections separated by `gap-6`, items inside a section by `gap-2` to `gap-3`. KPI rows fit in one viewport line — never one KPI per row. If your dashboard requires scrolling past 1.5 screens to see the headline numbers, it's wrong.
+- **Neutral palette + one accent.** Chrome (borders, headings, secondary text) is `border-border` / `text-muted-foreground`. Primary text is `text-foreground`. The brand orange is reserved for: the primary CTA on a page, the active section indicator, the occasional badge or focus ring. **No** decorative gradients, **no** multi-color status tagging, **no** full-bleed colored hero rows.
+- **One font, three sizes.** Inter (already provided). Page title: `text-base font-semibold` or `text-lg font-semibold`. Section labels: `text-sm font-medium`. Body: `text-sm` regular. Captions / labels-on-fields: `text-xs text-muted-foreground`. **Never** use `text-2xl` / `text-3xl` on a dashboard — that's marketing-page typography, not product UI.
+- **Hairline borders, no shadows.** `border border-border`, never `border-2`. Default cards have no shadow; reserve shadow strictly for floating layers (popovers, dialogs, dropdowns).
+- **Tables, not card stacks, when listing things.** A list of issues / posts / messages / drafts is a tight `DataTable`. Cards are for *one-off* objects (a single profile page, a single proposal preview). Never render 5 things as 5 stacked full-width cards.
+- **Status as a `StatusDot` inline with the row**, not a colored full-width banner. "Twitter/X: ready" lives as one dot + label in the page header chrome, exactly once.
+- **One primary action top-right of a section.** Secondary actions are ghost buttons or icon buttons. **Never** two equal-weight orange buttons side by side; pick which one is the answer to "what is the user trying to do on this screen" and demote the other.
+
+Anti-references — if your output starts resembling any of these, you've left the path:
+
+- **Notion** — too rounded, too playful, decorative cover images, color emoji icons.
+- **Stripe Dashboard** — marketing-grade hero numbers, gradient banners, oversized typography.
+- **Material Design** — color-coded everything, drop shadows on every card, FAB.
+- **Generic shadcn marketing examples** — over-padded cards, decorative dividers, `text-3xl` headers.
+
+When in doubt: open Linear in your head, locate the closest pane (issue list → list view; cycle overview → KPI strip + table; project page → header + sections), and copy that layout. "What would Linear do" is the visual prior to fall back on.
+
 ### The rule: import `@holaboss/ui`, do not redefine primitives
 
 `@holaboss/ui` is a public npm package. It provides every primitive, layout, and CSS token your dashboard needs. **Do not generate shadcn primitives, copy a `components/ui/` directory, write your own Card, or import any other component library**. If `@holaboss/ui` is missing something, surface it to the SDK team instead of inventing a local replacement — visual drift is the failure mode the library exists to prevent.
