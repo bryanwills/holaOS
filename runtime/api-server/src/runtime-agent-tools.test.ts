@@ -1533,6 +1533,63 @@ test("workspace app registration rejects providers outside the store catalog wit
   );
 });
 
+test("workspace app registration rejects source that hardcodes an upstream toolkit host", async () => {
+  await harness.service.scaffoldWorkspaceApp({
+    workspaceId: harness.workspaceId,
+    appId: "host-bake-demo",
+    name: "Host Bake Demo",
+  });
+  fs.appendFileSync(
+    path.join(harness.workspaceDir, "apps", "host-bake-demo", "app.runtime.yaml"),
+    [
+      "",
+      "integrations:",
+      "  - key: primary",
+      "    provider: twitter",
+      "    capability: api",
+      "    required: true",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  fs.mkdirSync(
+    path.join(harness.workspaceDir, "apps", "host-bake-demo", "src"),
+    { recursive: true },
+  );
+  fs.writeFileSync(
+    path.join(harness.workspaceDir, "apps", "host-bake-demo", "src", "client.ts"),
+    [
+      "// vibe-coded probe — exactly the bug class this lint is meant to catch.",
+      "export async function probe() {",
+      "  return await fetch(\"https://api.twitter.com/2/users/me\");",
+      "}",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  await assert.rejects(
+    () =>
+      harness.service.registerWorkspaceApp({
+        workspaceId: harness.workspaceId,
+        appId: "host-bake-demo",
+      }),
+    (error) => {
+      assert.equal(error instanceof RuntimeAgentToolsServiceError, true);
+      assert.equal((error as RuntimeAgentToolsServiceError).statusCode, 400);
+      assert.match(
+        (error as RuntimeAgentToolsServiceError).message,
+        /api\.twitter\.com/,
+      );
+      assert.match(
+        (error as RuntimeAgentToolsServiceError).message,
+        /createRuntimeBrokerTransport/,
+      );
+      return true;
+    },
+  );
+});
+
 test("workspace app registration accepts store-catalog providers beyond the OSS provider list", async () => {
   // 'notion' is in the store catalog (hero tier) but not in the legacy
   // integration-catalog.ts OSS provider list. Pre-fix, this would have

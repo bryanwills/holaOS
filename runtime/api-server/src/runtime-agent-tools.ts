@@ -66,6 +66,10 @@ import {
   INTEGRATION_CATALOG_PROVIDERS,
   integrationCatalogProviderIds,
 } from "./integration-catalog.js";
+import {
+  findForbiddenUpstreamHosts,
+  formatHostLintError,
+} from "./workspace-app-host-lint.js";
 
 const SESSION_REFRESH_NOTE =
   "New MCP servers became available in this turn. Their tools will be visible to you starting from the next user message — please end this turn (do not call the new tools yet) and let the user trigger the next one.";
@@ -571,7 +575,12 @@ function scaffoldWorkspaceAppManifest(params: { appId: string; name: string }): 
       healthchecks: {
         mcp: {
           path: "/mcp/health",
-          timeout_s: 30,
+          // 120s covers a cold-start vibe-coded app: first-time
+          // npm install (40-60s) + first vite build (20-40s) + boot
+          // (5-10s). 30s was the historical default and routinely
+          // surfaced as "did not become healthy within 30s" on second
+          // binding upserts where the app needed a full restart.
+          timeout_s: 120,
           interval_s: 5,
         },
       },
@@ -5368,6 +5377,16 @@ export class RuntimeAgentToolsService {
         400,
         "workspace_app_manifest_invalid",
         error instanceof Error ? error.message : "invalid app.runtime.yaml",
+      );
+    }
+
+    const appDir = path.dirname(manifestPath);
+    const hostViolations = findForbiddenUpstreamHosts(appDir);
+    if (hostViolations.length > 0) {
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "workspace_app_upstream_host_hardcoded",
+        formatHostLintError(hostViolations),
       );
     }
 

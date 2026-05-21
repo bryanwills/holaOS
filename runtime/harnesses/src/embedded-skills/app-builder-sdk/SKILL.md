@@ -92,6 +92,8 @@ The helper reads `HOLABOSS_APP_GRANT` + `WORKSPACE_API_URL` (both injected by th
 
 There is **no legitimate reason** for an SDK app to ping the upstream API host as a connectivity test. If something looks like it needs that, you want `getIntegrationStatus` instead.
 
+The runtime enforces this at `workspace_apps_register` time: a source-tree scan rejects any app whose `src/` contains hardcoded toolkit hosts like `api.twitter.com`, `api.x.com`, `api.github.com`, `slack.com/api`, `api.notion.com`, `api.linear.app`, `gmail.googleapis.com`, etc. The error names the file, line, and the provider you should be routing through instead. The right shape is **always** `createRuntimeBrokerTransport({ provider })` — no upstream host belongs in your app code.
+
 ## Dashboard / workspace-pane UI (vibe-coded apps)
 
 The SDK's default `startMcpServer({ httpPort, ... })` ships a one-screen "headless module" placeholder on the http port. That placeholder is **only acceptable for integration-only modules** (Slack-style MCP-driven flows). The moment the user asks for a dashboard / list view / kanban / calendar / "let me see my X", you must replace the placeholder with a real dashboard built on `@holaboss/ui`.

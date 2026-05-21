@@ -310,7 +310,7 @@ export function parseResolvedAppRuntime(
       timeoutS:
         preferredHealthcheck && preferredHealthcheck.timeout_s !== undefined && !Number.isNaN(Number(preferredHealthcheck.timeout_s))
           ? Number(preferredHealthcheck.timeout_s)
-          : 60,
+          : 120,
       intervalS:
         preferredHealthcheck && preferredHealthcheck.interval_s !== undefined && !Number.isNaN(Number(preferredHealthcheck.interval_s))
           ? Number(preferredHealthcheck.interval_s)

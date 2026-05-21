@@ -6530,7 +6530,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
         mcpTools: [],
         healthCheck: {
           path: "/health",
-          timeoutS: 60,
+          timeoutS: 120,
           intervalS: 5,
           target: "mcp"
         },
@@ -6553,7 +6553,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
         mcpTools: [],
         healthCheck: {
           path: "/health",
-          timeoutS: 60,
+          timeoutS: 120,
           intervalS: 5,
           target: "mcp"
         },
@@ -6576,7 +6576,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
         mcpTools: [],
         healthCheck: {
           path: "/health",
-          timeoutS: 60,
+          timeoutS: 120,
           intervalS: 5,
           target: "mcp"
         },
