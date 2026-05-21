@@ -1638,6 +1638,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:composioListToolkits") as Promise<{ toolkits: Array<{ slug: string; name: string; description: string; logo: string | null; auth_schemes: string[]; categories: string[] }> }>,
     composioListConnections: () =>
       ipcRenderer.invoke("workspace:composioListConnections") as Promise<{ connections: Array<{ id: string; toolkitSlug: string; toolkitName: string; toolkitLogo: string | null; userId: string; createdAt: string }> }>,
+    gmailFetchRecent: (options?: { maxResults?: number; query?: string }) =>
+      ipcRenderer.invoke("workspace:gmailFetchRecent", options) as Promise<unknown>,
     composioConnect: (payload: {
       provider: string;
       owner_user_id: string;

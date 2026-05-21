@@ -2002,6 +2002,7 @@ interface RuntimeNotificationListOptionsPayload {
       startOAuthFlow: (provider: string) => Promise<OAuthAuthorizeResponsePayload>;
       composioListToolkits: () => Promise<{ toolkits: Array<{ slug: string; name: string; description: string; logo: string | null; auth_schemes: string[]; categories: string[] }> }>;
       composioListConnections: () => Promise<{ connections: Array<{ id: string; toolkitSlug: string; toolkitName: string; toolkitLogo: string | null; userId: string; createdAt: string }> }>;
+      gmailFetchRecent: (options?: { maxResults?: number; query?: string }) => Promise<unknown>;
       restartApp: (workspaceId: string, appId: string) => Promise<{
         workspace_id: string;
         app_id: string;
