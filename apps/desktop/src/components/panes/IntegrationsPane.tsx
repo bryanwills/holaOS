@@ -1168,7 +1168,6 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
           open={Boolean(pendingDisconnect)}
           title="Disconnect this account?"
         />
-        <ComposioInternalDebugRow />
       </div>
     );
   }
@@ -1181,75 +1180,9 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
             Integrations
           </h1>
           {integrationContent}
-          <ComposioInternalDebugRow />
         </div>
       </div>
     </section>
-  );
-}
-
-// Temporary debug widget for the new /api/composio/internal/* surface +
-// Better-Auth bearer plugin. Fires both auth paths (cookie + bearer) so
-// we can verify which side of the change is working before the runtime
-// HOLABOSS_AUTH_BEARER_TOKEN injection lands. Remove once the end-to-end
-// runtime smoke test is in place.
-function ComposioInternalDebugRow() {
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<
-    ComposioInternalDebugReportPayload | null
-  >(null);
-  const [errorMessage, setErrorMessage] = useState("");
-
-  async function handleRun() {
-    setBusy(true);
-    setErrorMessage("");
-    try {
-      const report = await window.electronAPI.workspace.debugComposioInternal();
-      setResult(report);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="mt-10 rounded-xl border border-dashed border-border bg-muted/30 px-4 py-3 text-xs">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="font-medium text-foreground">
-            Debug — Composio /internal/* probe
-          </div>
-          <div className="text-muted-foreground">
-            Hits <code>GET /api/composio/internal/connections</code> twice:
-            once with the existing session cookie, once with the same
-            session token sent as <code>Authorization: Bearer</code>. Lets
-            you verify Hono's bearer plugin + /internal/* routes before
-            the runtime token injection lands. Safe to delete.
-          </div>
-        </div>
-        <Button
-          className="h-7 px-3 text-xs"
-          disabled={busy}
-          onClick={() => void handleRun()}
-          size="sm"
-          type="button"
-          variant="outline"
-        >
-          {busy ? "Probing…" : "Run probe"}
-        </Button>
-      </div>
-      {errorMessage ? (
-        <div className="mt-3 rounded-md bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
-          {errorMessage}
-        </div>
-      ) : null}
-      {result ? (
-        <pre className="mt-3 max-h-72 overflow-auto rounded-md bg-background px-2 py-1.5 text-[11px] leading-5 text-foreground">
-          {JSON.stringify(result, null, 2)}
-        </pre>
-      ) : null}
-    </div>
   );
 }
 
