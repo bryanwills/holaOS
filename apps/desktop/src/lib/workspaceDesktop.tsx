@@ -1278,14 +1278,20 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
         throwIfAborted();
         const status = (accountStatus.status ?? "").toUpperCase();
         if (status === "ACTIVE") {
-          await window.electronAPI.workspace.composioFinalize({
+          // Composio's connected_account_id (ca_xxx) is NOT the runtime's
+          // connection_id. composioFinalize writes a runtime row whose
+          // connection_id is a fresh randomUUID; that's the id callers need
+          // to pass to upsertIntegrationBinding. Returning ca_xxx here led
+          // to "integration connection ca_xxx not found" 404s the moment
+          // anyone tried to bind the result.
+          const finalized = await window.electronAPI.workspace.composioFinalize({
             connected_account_id: newConnection.id,
             provider,
             owner_user_id: userId,
             account_label: accountLabel ?? `${provider} (Managed)`,
           });
           throwIfAborted();
-          return { connectionId: newConnection.id };
+          return { connectionId: finalized.connection_id };
         }
         if (
           status === "FAILED" ||
