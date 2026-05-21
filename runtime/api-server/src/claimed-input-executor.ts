@@ -3339,8 +3339,10 @@ type SubagentPendingIntegration = {
   // Opaque whoami config emitted by the runtime; forwarded verbatim to the
   // chat UI and then to Hono's /composio/connect. Shape lives in
   // integration-types.ts (WhoamiConfig). Treated as unknown here to keep
-  // this module free of Hono-specific knowledge.
-  whoami: Record<string, unknown> | null;
+  // this module free of Hono-specific knowledge. Omitted when the runtime
+  // didn't emit a whoami descriptor — downstream consumers treat missing
+  // and null identically, and omitting keeps the lifecycle payload tight.
+  whoami?: Record<string, unknown>;
 };
 
 function parseSubagentPendingIntegrationsFromText(
@@ -3378,7 +3380,7 @@ function parseSubagentPendingIntegrationsFromText(
       provider_id: provider,
       credential_source:
         typeof entry.credential_source === "string" ? entry.credential_source : null,
-      whoami: isRecord(entry.whoami) ? entry.whoami : null,
+      ...(isRecord(entry.whoami) ? { whoami: entry.whoami } : {}),
     });
   }
   return out;
@@ -4732,7 +4734,7 @@ export async function processClaimedInput(params: {
               currentPreRunCompaction.projected_total_tokens,
             compaction_changed_branch: compactionResult.merged,
           };
-          if (finalPreRunDecision.decision !== "fit") {
+          if (finalPreRunDecision.decision === "would_overflow") {
             preRunCompaction = {
               ...preRunCompaction,
               final_decision: "reset_required",

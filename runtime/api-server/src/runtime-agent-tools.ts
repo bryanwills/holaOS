@@ -84,7 +84,20 @@ function buildSessionRefreshFields(newMcpServers: string[]): JsonObject {
 function pendingIntegrationsFromAppManifests(params: {
   workspaceDir: string;
   appIds: string[];
+  store?: RuntimeStateStore;
+  workspaceId?: string;
 }): JsonObject[] {
+  const boundKeys = new Set<string>();
+  if (params.store && params.workspaceId) {
+    for (const binding of params.store.listIntegrationBindings({
+      workspaceId: params.workspaceId,
+    })) {
+      if (binding.targetType !== "app") continue;
+      boundKeys.add(
+        `${binding.targetId.toLowerCase()}|${binding.integrationKey.toLowerCase()}`,
+      );
+    }
+  }
   const seen = new Set<string>();
   const out: JsonObject[] = [];
   for (const appId of params.appIds) {
@@ -102,7 +115,9 @@ function pendingIntegrationsFromAppManifests(params: {
     }
     for (const integration of parsed.integrations ?? []) {
       if (!integration.required) continue;
-      const key = `${appId}|${integration.provider.toLowerCase()}`;
+      const providerLower = integration.provider.toLowerCase();
+      if (boundKeys.has(`${appId.toLowerCase()}|${providerLower}`)) continue;
+      const key = `${appId}|${providerLower}`;
       if (seen.has(key)) continue;
       seen.add(key);
       out.push({
@@ -2763,19 +2778,21 @@ export class RuntimeAgentToolsService {
               notes: params.notes ?? null,
             } satisfies OnboardingAlignmentQuestionAnswer,
           ];
-    const answerLines = questions.map((currentQuestion, index) => {
+    const answerLines: Array<{
+      payload: Record<string, unknown>;
+      text: string;
+    }> = [];
+    for (const [index, currentQuestion] of questions.entries()) {
       const answer =
         normalizedAnswers.find(
           (item) =>
             normalizedString(item.question_id) === currentQuestion.id,
         ) ?? (index === 0 ? normalizedAnswers[0] ?? null : null);
-      if (!answer) {
-        throw new RuntimeAgentToolsServiceError(
-          400,
-          "alignment_question_answer_missing",
-          `an answer is required for ${currentQuestion.id}`,
-        );
-      }
+      // No matching answer for this question. When the UI submits a
+      // single-question answer against a multi-question deck (the common
+      // case), the remaining questions stay unanswered and roll back to
+      // the agent on the next turn. Skip rather than throwing.
+      if (!answer) continue;
       const optionId = normalizedString(answer.option_id);
       const option =
         optionId
@@ -2818,7 +2835,7 @@ export class RuntimeAgentToolsService {
       if (noteText) {
         lines.push(`Additional notes: ${noteText}`);
       }
-      return {
+      answerLines.push({
         payload: {
           question_id: currentQuestion.id,
           question_prompt: currentQuestion.prompt,
@@ -2828,8 +2845,8 @@ export class RuntimeAgentToolsService {
           notes: noteText || null,
         },
         text: lines.join("\n"),
-      };
-    });
+      });
+    }
     const queuedText = answerLines.map((entry) => entry.text).join("\n\n");
     this.store.ensureRuntimeState({
       workspaceId: scope.lab.id,
@@ -3028,7 +3045,7 @@ export class RuntimeAgentToolsService {
         docs_url: provider.docs_url,
       })),
       requirement:
-        "Use the exact canonical provider_id from this catalog in app.runtime.yaml integrations and createIntegrationClient(...). For X, use 'twitter'.",
+        "Use the exact canonical provider_id from this catalog in app.runtime.yaml integrations and createIntegrationClient(...). E.g. use 'twitter' for X.",
     };
   }
 
@@ -3059,7 +3076,7 @@ export class RuntimeAgentToolsService {
   }
 
   createCronjob(params: RuntimeAgentToolsCreateCronjobParams): JsonObject {
-    this.requireWorkspace(params.workspaceId);
+    const workspace = this.requireWorkspace(params.workspaceId);
     const cron = normalizedString(params.cron);
     const description = normalizedString(params.description);
     const instruction = normalizedString(params.instruction ?? params.description);
@@ -3072,6 +3089,29 @@ export class RuntimeAgentToolsService {
     if (!instruction) {
       throw new RuntimeAgentToolsServiceError(400, "cronjob_instruction_required", "instruction is required");
     }
+    const isDraftLab = workspace.workspaceRole === "draft_lab";
+    const requestedEnabled = params.enabled !== false;
+    // Cronjobs inside a draft lab are design context only — the lab is a
+    // throwaway scratch space, so its cronjobs must not actually fire.
+    // Remember the author's intent on the metadata so it can be restored
+    // verbatim when the lab merges back into the source workspace.
+    const effectiveEnabled = isDraftLab ? false : requestedEnabled;
+    const effectiveNextRunAt = isDraftLab
+      ? null
+      : cronjobNextRunAt(cron, new Date());
+    const baseMetadata = metadataWithCronjobDefaults({
+      metadata: params.metadata,
+      holabossUserId: params.holabossUserId,
+      selectedModel: params.selectedModel,
+      sourceSessionId: params.sessionId,
+    });
+    const metadata: JsonObject = isDraftLab
+      ? {
+          ...baseMetadata,
+          author_recommended_enabled: requestedEnabled,
+          lab_execution_disabled: true,
+        }
+      : baseMetadata;
     const created = this.store.createCronjob({
       workspaceId: params.workspaceId,
       initiatedBy: normalizedString(params.initiatedBy) || "workspace_agent",
@@ -3079,25 +3119,21 @@ export class RuntimeAgentToolsService {
       cron,
       description,
       instruction,
-      enabled: params.enabled !== false,
+      enabled: effectiveEnabled,
       delivery: normalizeDelivery({
         channel: normalizedString(params.delivery?.channel ?? "session_run") || "session_run",
         mode: params.delivery?.mode ?? "announce",
         to: params.delivery?.to
       }),
-      metadata: metadataWithCronjobDefaults({
-        metadata: params.metadata,
-        holabossUserId: params.holabossUserId,
-        selectedModel: params.selectedModel,
-        sourceSessionId: params.sessionId,
-      }),
-      nextRunAt: cronjobNextRunAt(cron, new Date())
+      metadata,
+      nextRunAt: effectiveNextRunAt,
     });
     return cronjobPayload(created);
   }
 
   updateCronjob(params: RuntimeAgentToolsUpdateCronjobParams): JsonObject {
     const workspaceId = this.requireWorkspaceId(params.workspaceId);
+    const workspace = this.requireWorkspace(workspaceId);
     const existing = this.requireCronjob({
       workspaceId,
       jobId: params.jobId,
@@ -3115,6 +3151,37 @@ export class RuntimeAgentToolsService {
     if (params.instruction !== undefined && !instruction) {
       throw new RuntimeAgentToolsServiceError(400, "cronjob_instruction_required", "instruction is required");
     }
+    const isDraftLab = workspace.workspaceRole === "draft_lab";
+    const effectiveEnabled =
+      params.enabled === undefined
+        ? undefined
+        : isDraftLab
+          ? false
+          : params.enabled;
+    const baseMetadata =
+      params.metadata === undefined
+        ? undefined
+        : metadataWithCronjobDefaults({
+            metadata: params.metadata,
+            holabossUserId: null,
+          });
+    let effectiveMetadata = baseMetadata;
+    if (isDraftLab && params.enabled !== undefined) {
+      // Carry the author's requested enabled state forward in metadata so
+      // a later lab-merge can restore intent; the row itself stays disabled.
+      const existingMetadata = isRecord(existing.metadata) ? existing.metadata : {};
+      effectiveMetadata = {
+        ...((baseMetadata ?? existingMetadata) as JsonObject),
+        author_recommended_enabled: params.enabled,
+        lab_execution_disabled: true,
+      };
+    }
+    const effectiveNextRunAt =
+      cron === null
+        ? undefined
+        : isDraftLab
+          ? null
+          : cronjobNextRunAt(cron, new Date());
     const updated = this.store.updateCronjob({
       workspaceId,
       jobId: params.jobId,
@@ -3122,7 +3189,7 @@ export class RuntimeAgentToolsService {
       cron,
       description,
       instruction: resolvedInstructionForCronjobUpdate({ existing, description, instruction }),
-      enabled: params.enabled === undefined ? undefined : params.enabled,
+      enabled: effectiveEnabled,
       delivery:
         params.delivery === undefined || params.delivery === null
           ? undefined
@@ -3131,14 +3198,8 @@ export class RuntimeAgentToolsService {
               mode: params.delivery.mode,
               to: params.delivery.to
             }),
-      metadata:
-        params.metadata === undefined
-          ? undefined
-          : metadataWithCronjobDefaults({
-              metadata: params.metadata,
-              holabossUserId: null,
-            }),
-      nextRunAt: cron === null ? undefined : cronjobNextRunAt(cron, new Date())
+      metadata: effectiveMetadata,
+      nextRunAt: effectiveNextRunAt,
     });
     if (!updated) {
       throw new RuntimeAgentToolsServiceError(404, "cronjob_not_found", "cronjob not found");
@@ -4891,6 +4952,8 @@ export class RuntimeAgentToolsService {
     return pendingIntegrationsFromAppManifests({
       workspaceDir: path.join(this.options.workspaceRoot, workspaceId),
       appIds: resolvedIds,
+      store: this.store,
+      workspaceId,
     });
   }
 
@@ -5574,6 +5637,8 @@ export class RuntimeAgentToolsService {
     const pendingIntegrations = pendingIntegrationsFromAppManifests({
       workspaceDir,
       appIds: targetAppIds,
+      store: this.store,
+      workspaceId: params.workspaceId,
     });
 
     const statusResult = this.getWorkspaceAppStatus({
