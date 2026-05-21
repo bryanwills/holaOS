@@ -3216,6 +3216,9 @@ export function ChatPane({
   const [isSubmittingMessage, setIsSubmittingMessage] = useState(false);
   const [isPausePending, setIsPausePending] = useState(false);
   const [chatErrorMessage, setChatErrorMessage] = useState("");
+  const [pendingIntegrationsWait, setPendingIntegrationsWait] = useState<
+    { unresolvedSlugs: string[] } | null
+  >(null);
   const [backgroundDeliveryStatusMessage, setBackgroundDeliveryStatusMessage] =
     useState("");
   const [attachmentGateMessage, setAttachmentGateMessage] = useState("");
@@ -5347,6 +5350,20 @@ export function ChatPane({
           action: "received",
           detail: `active=${currentStreamId || "-"} pending=${pendingInputId || "-"}`,
         });
+
+        if (eventType === "waiting_on_pending_integrations") {
+          const rawUnresolved = eventPayload.unresolved_slugs;
+          const unresolvedSlugs = Array.isArray(rawUnresolved)
+            ? rawUnresolved.filter((slug): slug is string => typeof slug === "string" && slug.trim().length > 0)
+            : [];
+          setPendingIntegrationsWait({ unresolvedSlugs });
+          setIsResponding(false);
+          return;
+        }
+        if (eventType === "run_started" || eventType === "assistant_text") {
+          // Agent picked the input back up — clear the paused banner.
+          setPendingIntegrationsWait(null);
+        }
 
         if (payload.type === "error") {
           if (!currentStreamId || payload.streamId !== currentStreamId) {
@@ -8616,11 +8633,23 @@ export function ChatPane({
         backgroundDeliveryStatusMessage ||
         attachmentGateMessage ||
         pendingImageInputUnsupportedMessage ||
+        pendingIntegrationsWait ||
         verboseTelemetryEnabled ? (
           <div className="shrink-0 px-4 pt-3 sm:px-5">
             {chatErrorMessage ? (
               <div className="theme-chat-system-bubble rounded-xl border px-3 py-2 text-xs">
                 {chatErrorMessage}
+              </div>
+            ) : null}
+
+            {pendingIntegrationsWait ? (
+              <div className="theme-chat-system-bubble mt-3 rounded-xl border px-3 py-2 text-xs">
+                <span className="font-medium">Waiting for you to connect:</span>
+                {" "}
+                {pendingIntegrationsWait.unresolvedSlugs.length > 0
+                  ? pendingIntegrationsWait.unresolvedSlugs.join(", ")
+                  : "the integrations the agent proposed above"}
+                . The next message resumes automatically once all are connected.
               </div>
             ) : null}
 

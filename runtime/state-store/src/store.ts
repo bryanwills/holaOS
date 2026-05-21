@@ -3944,6 +3944,28 @@ export class RuntimeStateStore {
     });
   }
 
+  // Returns every QUEUED input across visible workspace runtime dbs whose
+  // available_at is still in the future — i.e. inputs that were deferred
+  // by a gate (waiting on user OAuth, throttle, etc.). Used by the
+  // integration-proposal gate's wake-up sweep to find rows that can now
+  // be re-promoted to available.
+  listDeferredQueuedInputs(): SessionInputRecord[] {
+    const nowIso = new Date().toISOString();
+    const rows = this.listReadableWorkspaceRuntimeDbs().flatMap(({ db }) => {
+      return db
+        .prepare<[string], Record<string, unknown>>(`
+          SELECT *
+          FROM agent_session_inputs
+          WHERE status = 'QUEUED'
+            AND datetime(available_at) > datetime(?)
+        `)
+        .all(nowIso);
+    });
+    return rows
+      .map((row) => this.rowToInput(row))
+      .filter((record): record is SessionInputRecord => record !== null);
+  }
+
   claimInputs(params: {
     limit: number;
     claimedBy: string;

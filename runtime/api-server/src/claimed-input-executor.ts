@@ -55,6 +55,7 @@ import {
 } from "./session-checkpoint.js";
 import type { TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
 import { runEvolveTasks } from "./evolve-tasks.js";
+import { evaluatePendingIntegrationProposals } from "./integration-proposal-gate.js";
 import { promoteAcceptedSkillCandidate } from "./evolve-skill-review.js";
 import {
   collectWorkspaceFileManifest,
@@ -4135,6 +4136,64 @@ export async function processClaimedInput(params: {
   });
 
   const executeClaimedInput = async (): Promise<void> => {
+    // Before doing any real work for this turn, hold the input if the
+    // agent has open propose_connect cards that the user has not yet
+    // resolved. Letting a turn run with partial integrations leads to
+    // half-done work + the agent reporting "done" while the dashboard
+    // still says "needs connection". Release the claim, requeue with a
+    // deferred available_at so the worker doesn't spin, and emit a
+    // waiting event the chat UI can render as a paused banner. The
+    // input gets re-claimed when OAuth finalize wakes the queue.
+    const proposalGate = evaluatePendingIntegrationProposals({
+      store,
+      workspaceId: record.workspaceId,
+      sessionId: record.sessionId,
+    });
+    if (proposalGate.blocked) {
+      const deferUntil = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+      const latestEvent = store
+        .listOutputEvents({
+          workspaceId: record.workspaceId,
+          sessionId: record.sessionId,
+          includeHistory: true,
+        })
+        .reduce((max, event) => Math.max(max, event.sequence ?? 0), 0);
+      store.appendOutputEvent({
+        workspaceId: record.workspaceId,
+        sessionId: record.sessionId,
+        inputId: record.inputId,
+        sequence: latestEvent + 1,
+        eventType: "waiting_on_pending_integrations",
+        payload: {
+          proposed_slugs: proposalGate.proposedSlugs,
+          unresolved_slugs: proposalGate.unresolvedSlugs,
+          message:
+            "Waiting for the user to finish connecting required integrations.",
+        },
+      });
+      store.updateInput({
+        workspaceId: record.workspaceId,
+        inputId: record.inputId,
+        fields: {
+          status: "QUEUED",
+          claimedBy: null,
+          claimedUntil: null,
+          availableAt: deferUntil,
+        },
+      });
+      store.updateRuntimeState({
+        workspaceId: record.workspaceId,
+        sessionId: record.sessionId,
+        status: "WAITING_ON_USER",
+        currentInputId: record.inputId,
+        currentWorkerId: null,
+        leaseUntil: null,
+        heartbeatAt: null,
+        lastError: null,
+      });
+      return;
+    }
+
     const harness = normalizeHarnessId(workspace.harness ?? selectedHarness());
     const workspaceDir = store.workspaceDir(record.workspaceId);
     const session = store.getSession({

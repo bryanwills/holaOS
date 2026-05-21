@@ -152,11 +152,20 @@ function toIntegrationBindingPayload(record: {
   };
 }
 
+export interface IntegrationServiceHooks {
+  /** Called whenever a connection becomes (or stays) active. Used by the
+   *  api-server to wake inputs that were parked waiting for this provider
+   *  to be connected via a propose_connect card. */
+  onConnectionActive?: (params: { providerId: string }) => void;
+}
+
 export class RuntimeIntegrationService {
   readonly store: RuntimeStateStore;
+  readonly hooks: IntegrationServiceHooks;
 
-  constructor(store: RuntimeStateStore) {
+  constructor(store: RuntimeStateStore, hooks: IntegrationServiceHooks = {}) {
     this.store = store;
+    this.hooks = hooks;
   }
 
   getCatalog(): { providers: IntegrationCatalogProviderRecord[] } {
@@ -298,7 +307,17 @@ export class RuntimeIntegrationService {
       accountEmail: params.accountEmail ?? existing?.accountEmail ?? null
     });
 
+    this.notifyConnectionActive(record.providerId, record.status);
     return toIntegrationConnectionPayload(record);
+  }
+
+  private notifyConnectionActive(providerId: string, status: string): void {
+    if (status.trim().toLowerCase() !== "active") return;
+    try {
+      this.hooks.onConnectionActive?.({ providerId });
+    } catch {
+      // Hook is best-effort — never block the connection write.
+    }
   }
 
   updateConnection(connectionId: string, params: {
@@ -336,9 +355,10 @@ export class RuntimeIntegrationService {
       accountHandle:
         params.accountHandle !== undefined ? params.accountHandle : existing.accountHandle,
       accountEmail:
-        params.accountEmail !== undefined ? params.accountEmail : existing.accountEmail
+        params.accountEmail !== undefined ? params.accountEmail : existing.accountEmail,
     });
 
+    this.notifyConnectionActive(record.providerId, record.status);
     return toIntegrationConnectionPayload(record);
   }
 

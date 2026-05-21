@@ -110,6 +110,7 @@ import {
   RuntimeIntegrationService
 } from "./integrations.js";
 import { BrokerError, IntegrationBrokerService } from "./integration-broker.js";
+import { resumePendingIntegrationInputs } from "./integration-proposal-gate.js";
 import { OAuthService } from "./oauth-service.js";
 import { ComposioService } from "./composio-service.js";
 import { ComposioMcpManager } from "./composio-mcp-manager.js";
@@ -3396,7 +3397,26 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         captureRuntimeException,
       })
       : options.terminalSessionManager;
-  const integrationService = new RuntimeIntegrationService(store);
+  // Deferred holder: the queue worker isn't constructed until after
+  // composio + workspace integration setup, but RuntimeIntegrationService
+  // needs to call into it from onConnectionActive. We pass a closure
+  // that reads the holder at call time — by then the worker is set.
+  const queueWorkerHolder: { worker: { wake: () => void } | null } = { worker: null };
+  const integrationService = new RuntimeIntegrationService(store, {
+    onConnectionActive: () => {
+      try {
+        const woken = resumePendingIntegrationInputs(store);
+        if (woken > 0) {
+          queueWorkerHolder.worker?.wake();
+        }
+      } catch (error) {
+        app.log.warn(
+          { error: error instanceof Error ? error.message : String(error) },
+          "resumePendingIntegrationInputs failed",
+        );
+      }
+    },
+  });
   // workspaceIntegrationsService initialized after composioService below.
   const honoBaseUrl = process.env.HOLABOSS_AUTH_BASE_URL ?? "";
   const authCookie = process.env.HOLABOSS_AUTH_COOKIE ?? "";
@@ -3421,6 +3441,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
   const durableMemoryWorker = resolveDurableMemoryWorker(options, app, store, memoryService);
   const queueWorker = resolveQueueWorker(options, app, store, memoryService, durableMemoryWorker);
+  queueWorkerHolder.worker = queueWorker;
   const cronWorker = resolveCronWorker(options, app, store, queueWorker);
   const mainSessionEventWorker = resolveMainSessionEventWorker(
     options,
