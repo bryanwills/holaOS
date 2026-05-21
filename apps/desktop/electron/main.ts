@@ -10477,48 +10477,67 @@ async function composioListConnections(): Promise<{
   );
 }
 
-// Reference example for calling the new /api/composio/internal/* surface
-// from desktop. Goes:
+// Single entry point for "desktop directly calls a Composio action via
+// the new /api/composio/internal/tools/execute surface."
 //
-//   composioListConnections() → find Gmail's connected_account_id
-//   composioFetch(POST /internal/tools/execute) → run GMAIL_FETCH_EMAILS
+// The helper does the two steps every Composio action call shares:
+//   1. Resolve the user's connected_account_id for the requested
+//      provider (`providerSlug`), via the existing /composio/connections
+//      list — which already carries Better-Auth session via cookie.
+//   2. POST /api/composio/internal/tools/execute with the resolved
+//      connected_account_id, the action's `tool_slug`, and the
+//      action-specific `arguments` map.
 //
 // Cookie is attached automatically by composioFetch; Hono accepts the
-// session via the same Better-Auth pathway whether the caller sends
-// Cookie or Authorization: Bearer (we verified both with the debug
-// probe). Pattern is the model for any new "desktop directly calls a
-// Composio action via the curated internal route" feature.
-async function gmailFetchRecent(
-  options: { maxResults?: number; query?: string } = {},
-): Promise<unknown> {
-  const { connections } = await composioListConnections();
-  const gmail = connections.find(
-    (entry) => entry.toolkitSlug.toLowerCase() === "gmail",
-  );
-  if (!gmail) {
-    throw new Error(
-      "No Gmail connection found — the user needs to connect Gmail first.",
-    );
+// session whether the caller sends Cookie or Authorization: Bearer
+// (the same `c.get("user")` pathway resolves both).
+//
+// Example — fetch the user's 5 most recent Gmail messages:
+//
+//   const data = await composioExecute({
+//     providerSlug: "gmail",
+//     toolSlug: "GMAIL_FETCH_EMAILS",
+//     arguments: { max_results: 5 },
+//   });
+//   // → { messages: [{ id, threadId, subject, sender, snippet, date, ... }], ... }
+//
+// To swap to another toolkit (Linear, GitHub, Notion, …) change three
+// fields only: providerSlug, toolSlug, arguments. Curated action slugs
+// live at GET /api/composio/internal/toolkits/<slug>/tools.
+async function composioExecute<TData = unknown>(params: {
+  providerSlug: string;
+  toolSlug: string;
+  arguments?: Record<string, unknown>;
+}): Promise<TData | null> {
+  const normalizedProvider = params.providerSlug.trim().toLowerCase();
+  if (!normalizedProvider) {
+    throw new Error("composioExecute: providerSlug is required");
+  }
+  if (!params.toolSlug.trim()) {
+    throw new Error("composioExecute: toolSlug is required");
   }
 
-  const args: Record<string, unknown> = {
-    max_results: options.maxResults ?? 10,
-  };
-  if (options.query) {
-    args.query = options.query;
+  const { connections } = await composioListConnections();
+  const connection = connections.find(
+    (entry) => entry.toolkitSlug.toLowerCase() === normalizedProvider,
+  );
+  if (!connection) {
+    throw new Error(
+      `No active ${normalizedProvider} connection — the user needs to connect ${normalizedProvider} first.`,
+    );
   }
 
   const result = await composioFetch<{
     ok: boolean;
-    data: unknown;
+    data: TData | null;
     log_id: string | null;
   }>("/api/composio/internal/tools/execute", "POST", {
-    tool_slug: "GMAIL_FETCH_EMAILS",
-    connected_account_id: gmail.id,
-    arguments: args,
+    tool_slug: params.toolSlug,
+    connected_account_id: connection.id,
+    arguments: params.arguments ?? {},
   });
 
-  return result.data;
+  return result.data ?? null;
 }
 
 async function composioAccountStatus(
@@ -23652,19 +23671,27 @@ app.whenReady().then(async () => {
   handleTrustedIpc("workspace:composioListConnections", ["main"], async () =>
     composioListConnections(),
   );
-  // Reference example — desktop → new /api/composio/internal/tools/execute.
-  // Invoke from the renderer dev console with:
-  //   await window.electronAPI.workspace.gmailFetchRecent({ maxResults: 5 })
-  // Pattern is reusable for any other curated Composio action; copy the
-  // gmailFetchRecent() helper, swap GMAIL_FETCH_EMAILS for the target
-  // tool_slug, and change the arguments shape.
+  // Unified entry point for any curated Composio action from the
+  // desktop. Resolves the user's connection for `providerSlug`, then
+  // POSTs /api/composio/internal/tools/execute with `toolSlug` and the
+  // action-specific `arguments`. Invoke from the renderer dev console:
+  //
+  //   await window.electronAPI.workspace.composioExecute({
+  //     providerSlug: "gmail",
+  //     toolSlug: "GMAIL_FETCH_EMAILS",
+  //     arguments: { max_results: 5 },
+  //   })
   handleTrustedIpc(
-    "workspace:gmailFetchRecent",
+    "workspace:composioExecute",
     ["main"],
     async (
       _event,
-      options?: { maxResults?: number; query?: string },
-    ) => gmailFetchRecent(options ?? {}),
+      params: {
+        providerSlug: string;
+        toolSlug: string;
+        arguments?: Record<string, unknown>;
+      },
+    ) => composioExecute(params),
   );
   handleTrustedIpc(
     "workspace:composioConnect",
