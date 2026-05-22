@@ -3950,10 +3950,19 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   async function refreshAppsForIntegrationBinding(params: {
     workspaceId: string;
     integrationKey: string;
-    targetType: "workspace" | "app" | "agent";
+    targetType: "workspace" | "app" | "agent" | "workspace_default" | "conversation_pin";
     targetId: string;
   }): Promise<void> {
-    if (params.targetType === "agent") {
+    // Agent bindings + the two new account-routing target types
+    // (workspace_default chooses default account per provider;
+    // conversation_pin is session-scoped) don't affect per-app
+    // readiness — they're routing decisions, not declarations that an
+    // app's required integration just became bound.
+    if (
+      params.targetType === "agent" ||
+      params.targetType === "workspace_default" ||
+      params.targetType === "conversation_pin"
+    ) {
       return;
     }
 
