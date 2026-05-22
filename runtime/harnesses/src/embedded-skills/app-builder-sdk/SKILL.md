@@ -151,9 +151,11 @@ The app-builder-sdk itself still installs via `file:` because it's lockstep-vers
 ```json
 "dependencies": {
   "@holaboss/app-builder-sdk": "file:/absolute/path/to/<app-builder-sdk-skill-dir>/sdk-package",
-  "@holaboss/ui": "^0.1.0"
+  "@holaboss/ui": "^0.3.0"
 }
 ```
+
+**Pin the major.minor explicitly.** Pre-1.0 caret semver is special — `^0.1.0` only matches `0.1.x`, NOT `0.2.x` or `0.3.x`. Writing `"^0.1.0"` locks the app to the layouts-era release that this skill no longer matches. Always use the current major.minor (currently `^0.3.0`) in fresh apps.
 
 ### Mount the styles — one import, done
 
