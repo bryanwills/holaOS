@@ -6690,6 +6690,76 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     },
   );
 
+  // ---------------------------------------------------------------------
+  // Workspace-default account selection (Layer 2 in the four-layer
+  // account-resolution model). When the user has multiple accounts
+  // active for the same provider, this records which one this workspace
+  // prefers by default. composio-mcp host reads this on next restart to
+  // pick the right tools.
+  // ---------------------------------------------------------------------
+
+  app.get(
+    "/api/v1/workspaces/:workspaceId/integrations/:providerId/default-account",
+    (request, _reply) => {
+      const params = request.params as { workspaceId: string; providerId: string };
+      const workspaceId = requiredString(params.workspaceId, "workspaceId");
+      const providerId = requiredString(params.providerId, "providerId");
+      return workspaceIntegrationsService.getWorkspaceDefaultAccount({
+        workspaceId,
+        providerId,
+      });
+    },
+  );
+
+  app.put(
+    "/api/v1/workspaces/:workspaceId/integrations/:providerId/default-account",
+    async (request, reply) => {
+      const params = request.params as { workspaceId: string; providerId: string };
+      const workspaceId = requiredString(params.workspaceId, "workspaceId");
+      const providerId = requiredString(params.providerId, "providerId");
+      const body = isRecord(request.body) ? request.body : {};
+      const connectionId = optionalString(body.connection_id);
+      if (!connectionId) {
+        return sendError(reply, 400, "connection_id is required");
+      }
+      try {
+        const result = workspaceIntegrationsService.setWorkspaceDefaultAccount({
+          workspaceId,
+          providerId,
+          connectionId,
+        });
+        // Restart so the new default takes effect on the next agent turn.
+        if (composioMcpManager) {
+          await composioMcpManager.restart(workspaceId).catch(() => undefined);
+        }
+        return result;
+      } catch (error) {
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "set workspace default account failed",
+        );
+      }
+    },
+  );
+
+  app.delete(
+    "/api/v1/workspaces/:workspaceId/integrations/:providerId/default-account",
+    async (request, _reply) => {
+      const params = request.params as { workspaceId: string; providerId: string };
+      const workspaceId = requiredString(params.workspaceId, "workspaceId");
+      const providerId = requiredString(params.providerId, "providerId");
+      const result = workspaceIntegrationsService.clearWorkspaceDefaultAccount({
+        workspaceId,
+        providerId,
+      });
+      if (composioMcpManager) {
+        await composioMcpManager.restart(workspaceId).catch(() => undefined);
+      }
+      return result;
+    },
+  );
+
   app.post(
     "/api/v1/capabilities/runtime-tools/workspace-apps/:appId/build",
     async (request, reply) => {
@@ -7061,6 +7131,40 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
           error instanceof Error
             ? error.message
             : "holaboss_workspace_integrations_propose_connect failed",
+        );
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/capabilities/runtime-tools/workspace-integrations/set-default-account",
+    async (request, reply) => {
+      const body = isRecord(request.body) ? request.body : {};
+      try {
+        const workspaceId = requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body,
+        });
+        const result = workspaceIntegrationsService.setWorkspaceDefaultAccount({
+          workspaceId,
+          providerId: requiredString(body.provider_id, "provider_id"),
+          connectionId: requiredString(body.connection_id, "connection_id"),
+        });
+        if (composioMcpManager) {
+          await composioMcpManager.restart(workspaceId).catch(() => undefined);
+        }
+        return {
+          provider_id: requiredString(body.provider_id, "provider_id").toLowerCase(),
+          connection_id: result.connection_id,
+          note: "Workspace default updated. The composio-mcp host has restarted; the new account's tools become available to the agent starting from the next user turn.",
+        };
+      } catch (error) {
+        return sendError(
+          reply,
+          400,
+          error instanceof Error
+            ? error.message
+            : "holaboss_workspace_integrations_set_default_account failed",
         );
       }
     },

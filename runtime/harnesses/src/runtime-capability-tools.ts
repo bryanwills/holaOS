@@ -1036,6 +1036,24 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         required: ["toolkit_slug"],
         additionalProperties: false,
       };
+    case "holaboss_workspace_integrations_set_default_account":
+      return {
+        type: "object",
+        properties: {
+          provider_id: {
+            type: "string",
+            description:
+              "Lowercase Composio provider slug, e.g. 'gmail', 'github', 'notion'.",
+          },
+          connection_id: {
+            type: "string",
+            description:
+              "The integration_connections.connection_id of the account to make this workspace's default for the provider. Obtain from `workspace_integrations_list_catalog` — the entries list connected accounts per toolkit.",
+          },
+        },
+        required: ["provider_id", "connection_id"],
+        additionalProperties: false,
+      };
   }
 }
 
