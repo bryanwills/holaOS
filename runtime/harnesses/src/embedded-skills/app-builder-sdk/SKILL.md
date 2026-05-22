@@ -98,17 +98,27 @@ The runtime enforces this at `workspace_apps_register` time: a source-tree scan 
 
 The SDK's default `startMcpServer({ httpPort, ... })` ships a one-screen "headless module" placeholder on the http port. That placeholder is **only acceptable for integration-only modules** (Slack-style MCP-driven flows). The moment the user asks for a dashboard / list view / kanban / calendar / "let me see my X", you must replace the placeholder with a real dashboard built on `@holaboss/ui`.
 
-### Mandatory: invoke `interface-design` before writing JSX
+### Mandatory: `interface-design` design pass AFTER the app is built
 
-**This is a hard gate, not a suggestion.** Before writing the first line of code under `src/client/` for a dashboard-shape app, invoke `skill({ name: "interface-design" })` exactly once. Read its full output and apply it.
+**This is a hard gate, not a suggestion.** After `workspace_apps_build` succeeds and `workspace_apps_ensure_running` reports `ready: true`, and BEFORE telling the user the dashboard is done, you MUST:
 
-Why this is mandatory:
+1. Invoke `skill({ name: "interface-design" })` once. Read its full output.
+2. Re-read every file you wrote under `src/client/` (route files, layout files, any component files).
+3. Apply the skill's rules as a refactor pass to those files. Fix every concrete violation — `text-3xl` headers, full-width stacked KPI cards, sparse row padding, hand-rolled empty/loading states, weight stacking, decorative card borders, anything else the skill calls out.
+4. Re-run `workspace_apps_build` + `workspace_apps_restart_and_wait_ready` to verify the refactor compiles and runs.
+5. Only then tell the user the app is ready.
 
-- Without it, agent-authored dashboards consistently ship with the same failure mode the user has flagged repeatedly: stacked full-width KPI cards, no information density, generic shadcn marketing-page aesthetics, weight stacking via `text-3xl` headers and `font-bold`. The `@holaboss/ui` primitives alone don't prevent this — agents reach for them and still hand-roll bad compositions.
-- `interface-design` is purpose-built for the exact category of work this skill triggers: dashboards, admin panels, internal SaaS tools, data-dense interactive products. Its rules (anti-generic-output, density, hierarchy, restraint) compose cleanly on top of the Linear aesthetic + `@holaboss/ui` density rules below.
-- Token cost is real but bounded: the skill is small (one SKILL.md + 4 reference files, ~40KB). The cost of a single dashboard that ships looking broken is much higher — the user has rejected output enough times that re-invoking app-builder-sdk to redo the UI dwarfs the up-front cost of chaining interface-design.
+Why the timing changed (from "before writing JSX" to "after it's running"):
 
-Do not skip on the grounds that "I already have app-builder-sdk loaded" or "I know the Linear aesthetic". This skill exists because aesthetic intuition alone is not load-bearing for this category of work; the explicit rules are. Do not invoke `frontend-design` instead — that one targets marketing pages / landing pages / posters and will drift the output the wrong way. For integration-only modules (no `src/client/`), skip this step entirely; it applies only when you are about to author dashboard JSX.
+- When invoked before writing JSX, the skill content sits in context for the ~80 tool calls it takes to actually write all the JSX. By the time JSX is being written, attention has moved on; observed sessions show the agent calls the skill, then writes the same generic stacked-KPI / sparse-table dashboards as if it never read it. The "Dense" word ends up in the agent's self-summary while the actual output is sparse.
+- When invoked after the JSX exists, the skill output and the actual JSX you wrote are both in working context at the same time. The agent can do a concrete diff: "rule says ≤36px rows; my Table has `py-4` which is ~56px; fix to `py-1.5`". That's the kind of mechanical comparison this skill is good for, and it's only possible after the code exists.
+
+What this gate is NOT:
+
+- Not a substitute for following the density / anti-pattern guidance below while writing the first draft. Aim for the right shape from the start; the skill is a refinement pass, not a complete rewrite ticket.
+- Not optional for dashboard apps. Integration-only modules (no `src/client/`) skip this step entirely.
+- Not satisfied by invoking the skill and then writing "dashboard reviewed, looks good" without an actual file-by-file refactor pass. The user will check the rendered output; if the skill's rules don't manifest in the JSX, this gate failed.
+- Not replaced by `frontend-design` — that one targets marketing pages and will drift the output the wrong way.
 
 ### Visual design language: anchor on Linear
 
