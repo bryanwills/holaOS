@@ -3397,11 +3397,14 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         captureRuntimeException,
       })
       : options.terminalSessionManager;
-  // Deferred holder: the queue worker isn't constructed until after
-  // composio + workspace integration setup, but RuntimeIntegrationService
-  // needs to call into it from onConnectionActive. We pass a closure
-  // that reads the holder at call time — by then the worker is set.
+  // Deferred holders: queue worker + composio MCP manager are both
+  // constructed after the integration service, but onConnectionActive
+  // needs to call into both. We pass closures that read the holders
+  // at call time — by then the dependents are set.
   const queueWorkerHolder: { worker: { wake: () => void } | null } = { worker: null };
+  const composioMcpManagerHolder: {
+    manager: { restart: (workspaceId: string) => Promise<unknown> } | null;
+  } = { manager: null };
   const integrationService = new RuntimeIntegrationService(store, {
     onConnectionActive: () => {
       try {
@@ -3414,6 +3417,36 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
           { error: error instanceof Error ? error.message : String(error) },
           "resumePendingIntegrationInputs failed",
         );
+      }
+
+      // When a new connection becomes active, the composio-mcp host for
+      // every workspace has the OLD connection set cached and won't pick
+      // up the new toolkit's tools on its own — ensureRunning is
+      // memoized per-workspace. Restart each known workspace's host so
+      // the next agent turn sees the new tools surfaced. Failures are
+      // best-effort; the agent can still invoke direct app tools.
+      const manager = composioMcpManagerHolder.manager;
+      if (manager) {
+        try {
+          for (const workspace of store.listWorkspaces({ includeDeleted: false })) {
+            manager
+              .restart(workspace.id)
+              .catch((error) => {
+                app.log.warn(
+                  {
+                    err: error instanceof Error ? error.message : String(error),
+                    workspaceId: workspace.id,
+                  },
+                  "composio-mcp manager restart on new connection failed",
+                );
+              });
+          }
+        } catch (error) {
+          app.log.warn(
+            { error: error instanceof Error ? error.message : String(error) },
+            "iterating workspaces for composio-mcp restart failed",
+          );
+        }
       }
     },
   });
@@ -3436,6 +3469,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         },
       })
     : null;
+  composioMcpManagerHolder.manager = composioMcpManager;
   const brokerService = new IntegrationBrokerService(store, composioService);
   const oauthService = new OAuthService(store);
   const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
