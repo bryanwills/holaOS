@@ -15,6 +15,7 @@ import {
 import { Center } from "./Center";
 import { ChatPanel } from "./ChatPanel";
 import { NewTabDialog } from "./NewTabDialog";
+import { NotificationStack } from "./NotificationStack";
 import { Overlays } from "./Overlays";
 import { SearchDialog } from "./SearchDialog";
 import { Sidebar } from "./Sidebar";
@@ -95,6 +96,7 @@ function NewAppShellContent() {
       <NewTabDialog />
       <SearchDialog />
       <Overlays />
+      <NotificationStack />
       {selectedWorkspaceId ? (
         <PublishScreen
           open={publishOpen}

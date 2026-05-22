@@ -551,8 +551,6 @@ function AppsSection() {
   } = useWorkspaceDesktop();
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const [expanded, setExpanded] = useAtom(appsExpandedAtom);
-  const setSettingsOpen = useSetAtom(settingsOpenAtom);
-  const setSettingsSection = useSetAtom(settingsSectionAtom);
 
   const openApp = async (appId: string) => {
     if (!selectedWorkspaceId) return;
@@ -644,18 +642,6 @@ function AppsSection() {
                 />
               );
             })}
-            <button
-              type="button"
-              onClick={() => {
-                setSettingsSection("integrations");
-                setSettingsOpen(true);
-              }}
-              tabIndex={expanded ? 0 : -1}
-              className="flex items-center gap-2 rounded-[6px] px-2 py-[5px] pl-6 text-left text-xs text-foreground/55 transition-colors hover:bg-foreground/[0.04] hover:text-foreground"
-            >
-              <Link2 className="size-3.5 shrink-0" />
-              <span className="truncate">Manage integrations…</span>
-            </button>
           </div>
         </div>
       </div>
@@ -1216,6 +1202,7 @@ function WorkspaceSwitcher() {
 
   const [query, setQuery] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [popoverOpen, setPopoverOpen] = useState(false);
 
   const filtered = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
@@ -1240,7 +1227,7 @@ function WorkspaceSwitcher() {
 
   return (
     <div className="window-drag flex h-10 shrink-0 items-center px-2 pl-20">
-      <Popover>
+      <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
         <PopoverTrigger
           render={
             <Button
@@ -1324,7 +1311,10 @@ function WorkspaceSwitcher() {
                     <button
                       type="button"
                       disabled={isDeleting}
-                      onClick={() => setSelectedWorkspaceId(w.id)}
+                      onClick={() => {
+                        setSelectedWorkspaceId(w.id);
+                        setPopoverOpen(false);
+                      }}
                       className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-sm disabled:cursor-not-allowed"
                     >
                       <span className="truncate">{w.name}</span>
@@ -1359,7 +1349,10 @@ function WorkspaceSwitcher() {
             {selectedWorkspaceId ? (
               <button
                 type="button"
-                onClick={() => setPublishOpen(true)}
+                onClick={() => {
+                  setPopoverOpen(false);
+                  setPublishOpen(true);
+                }}
                 className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-foreground/[0.04]"
               >
                 <Upload className="size-3.5 text-foreground/60" />
@@ -1368,7 +1361,10 @@ function WorkspaceSwitcher() {
             ) : null}
             <button
               type="button"
-              onClick={() => setCreateWorkspaceOpen(true)}
+              onClick={() => {
+                setPopoverOpen(false);
+                setCreateWorkspaceOpen(true);
+              }}
               className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-foreground/[0.04]"
             >
               <Plus className="size-3.5 text-foreground/60" />

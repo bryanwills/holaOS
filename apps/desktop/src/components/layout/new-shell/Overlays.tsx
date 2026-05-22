@@ -1,8 +1,8 @@
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
-import { useAtom, useSetAtom, type PrimitiveAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom, type PrimitiveAtom } from "jotai";
 import { X } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { OperationsInboxPane } from "@/components/layout/OperationsDrawer";
 import { SettingsScreenRoot } from "@/components/layout/SettingsScreenRoot";
 import { ArtifactsPane } from "@/components/panes/ArtifactsPane";
@@ -112,11 +112,34 @@ function PaneOverlay({
 
 function ArtifactsOverlay() {
   const { selectedWorkspaceId } = useWorkspaceSelection();
+  const refreshSignal = useOverlayOpenTick(artifactsOpenAtom);
   return (
     <PaneOverlay openAtom={artifactsOpenAtom} title="Artifacts">
-      <ArtifactsPane workspaceId={selectedWorkspaceId || null} />
+      <ArtifactsPane
+        workspaceId={selectedWorkspaceId || null}
+        refreshSignal={refreshSignal}
+      />
     </PaneOverlay>
   );
+}
+
+/**
+ * Returns a monotonically increasing number that bumps each time the overlay
+ * transitions from closed to open. PaneOverlay keeps its children mounted
+ * across open/close, so panes that fetch data on mount won't see fresh data
+ * on reopen without an explicit signal.
+ */
+function useOverlayOpenTick(openAtom: PrimitiveAtom<boolean>) {
+  const open = useAtomValue(openAtom);
+  const [tick, setTick] = useState(0);
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    if (open && !wasOpenRef.current) {
+      setTick((value) => value + 1);
+    }
+    wasOpenRef.current = open;
+  }, [open]);
+  return tick;
 }
 
 function AutomationsOverlay() {
