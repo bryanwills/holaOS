@@ -47,9 +47,6 @@ export const publishOpenAtom = atom(false);
 /** Is the create-new-workspace panel open? */
 export const createWorkspaceOpenAtom = atom(false);
 
-/** Is the Inbox overlay open? */
-export const inboxOpenAtom = atom(false);
-
 /** Is the Automations overlay open? */
 export const automationsOpenAtom = atom(false);
 
@@ -82,7 +79,6 @@ export const browserViewSuspendedAtom = atom(
     get(searchOpenAtom) ||
     get(publishOpenAtom) ||
     get(createWorkspaceOpenAtom) ||
-    get(inboxOpenAtom) ||
     get(automationsOpenAtom) ||
     get(sessionsOpenAtom) ||
     get(settingsOpenAtom) ||
