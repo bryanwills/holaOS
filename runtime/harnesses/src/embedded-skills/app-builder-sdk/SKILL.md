@@ -98,56 +98,44 @@ The runtime enforces this at `workspace_apps_register` time: a source-tree scan 
 
 The SDK's default `startMcpServer({ httpPort, ... })` ships a one-screen "headless module" placeholder on the http port. That placeholder is **only acceptable for integration-only modules** (Slack-style MCP-driven flows). The moment the user asks for a dashboard / list view / kanban / calendar / "let me see my X", you must replace the placeholder with a real dashboard built on `@holaboss/ui`.
 
-### Mandatory: `interface-design` design pass AFTER the app is built
+### Polish pass: handled by a separate auto-queued turn
 
-**This is a hard gate, not a suggestion.** After `workspace_apps_build` succeeds and `workspace_apps_ensure_running` reports `ready: true`, and BEFORE telling the user the dashboard is done, you MUST:
+For dashboard apps (those with `src/client/`), the runtime auto-queues a polish-only input on the main session after `workspace_apps_ensure_running` returns `ready: true`. You do **not** have to invoke `interface-design` or refactor `src/client/` inside the same turn as the build. The response from `workspace_apps_ensure_running` includes a `polish_pass_queued` array listing the queued input(s); the polish turn dispatches automatically as the next turn on the user's chat.
 
-1. Invoke `skill({ name: "interface-design" })` once. Read its full output.
-2. Re-read every file you wrote under `src/client/` (route files, layout files, any component files).
-3. Apply the skill's rules as a refactor pass to those files. Fix every concrete violation — `text-3xl` headers, full-width stacked KPI cards, sparse row padding, hand-rolled empty/loading states, weight stacking, decorative card borders, anything else the skill calls out.
-4. Re-run `workspace_apps_build` + `workspace_apps_restart_and_wait_ready` to verify the refactor compiles and runs.
-5. Only then tell the user the app is ready.
+In this build turn: finish wrapping up cleanly — tell the user the app is built, mention that a polish pass will run next. That's it.
 
-Why the timing changed (from "before writing JSX" to "after it's running"):
+In the auto-queued polish turn (you'll see a `text` payload starting with `[Auto-queued post-build polish pass]`):
 
-- When invoked before writing JSX, the skill content sits in context for the ~80 tool calls it takes to actually write all the JSX. By the time JSX is being written, attention has moved on; observed sessions show the agent calls the skill, then writes the same generic stacked-KPI / sparse-table dashboards as if it never read it. The "Dense" word ends up in the agent's self-summary while the actual output is sparse.
-- When invoked after the JSX exists, the skill output and the actual JSX you wrote are both in working context at the same time. The agent can do a concrete diff: "rule says ≤36px rows; my Table has `py-4` which is ~56px; fix to `py-1.5`". That's the kind of mechanical comparison this skill is good for, and it's only possible after the code exists.
+1. Invoke `skill({ name: "interface-design" })` and read its full output.
+2. For each `.tsx` / `.css` file under `apps/<app_id>/src/client/`: **REWRITE the whole file via `bash` heredoc** (`cat > path/to/file <<'EOF' ... EOF`), NOT via `edit`. Whole-file rewrite is mandatory for this pass — incremental edits repeatedly produce checkbox-compliant no-changes.
+3. Re-run `workspace_apps_build` + `workspace_apps_restart_and_wait_ready`.
+4. Take a `browser_screenshot` of the rendered dashboard. Compare it against the `interface-design` rules you just loaded. If the rendered output doesn't match those rules, return to step 2 and rewrite again.
+5. Only after the screenshot is right, declare the polish pass done.
+
+Why this is a separate auto-queued turn and not part of the build turn:
+
+- Doing both in one turn consistently produced "skill invoked, 1 trivial edit, ready" — the agent's task-complete mindset and ~80-tool-call context fatigue defeated every prompt-strength escalation we tried. Forensic at `holaOS/docs/plans/2026-05-22-interface-design-skill-noop-forensic.md`.
+- A separate turn restores fresh context, narrow scope, and no build-time inertia. Empirically this matches the one observed successful polish, which the user manually triggered as a second turn.
 
 What this gate is NOT:
 
-- Not a substitute for following the density / anti-pattern guidance below while writing the first draft. Aim for the right shape from the start; the skill is a refinement pass, not a complete rewrite ticket.
-- Not optional for dashboard apps. Integration-only modules (no `src/client/`) skip this step entirely.
-- Not satisfied by invoking the skill and then writing "dashboard reviewed, looks good" without an actual file-by-file refactor pass. The user will check the rendered output; if the skill's rules don't manifest in the JSX, this gate failed.
-- Not replaced by `frontend-design` — that one targets marketing pages and will drift the output the wrong way.
+- Not optional for dashboard apps — the input is queued mechanically; you can't skip it. Integration-only modules (no `src/client/`) get no queued input.
+- Not satisfied by ceremony — the runtime can verify file mtimes / screenshot, and the user checks the rendered UI either way.
+- Not replaced by `frontend-design` — that one targets marketing pages and drifts the output the wrong way.
 
-### Visual design language: anchor on Linear
+### Visual decisions belong to `interface-design`, not here
 
-When laying out a holaOS dashboard, **target the Linear aesthetic** (linear.app). Linear is the canonical reference for a holaOS pane. If your output doesn't feel like it could ship inside Linear, you took a wrong turn.
+Every visual decision — density, hierarchy, typography, color usage, layout shape — is delegated to the `interface-design` skill that runs in the auto-queued polish turn. This file deliberately does NOT prescribe what a dashboard should look like.
 
-What "Linear" concretely means here:
+The reasoning is empirical: previous versions of this skill listed concrete visual rules and named the failure modes to avoid. Observed output consistently reproduced the named failure modes — naming an anti-pattern is enough to anchor on it. Removing them from this file leaves `interface-design` as the sole authority on look-and-feel.
 
-- **Density first, breathing room second.** Table rows ~32–36px tall. Sections separated by `gap-6`, items inside a section by `gap-2` to `gap-3`. KPI rows fit in one viewport line — never one KPI per row. If your dashboard requires scrolling past 1.5 screens to see the headline numbers, it's wrong.
-- **Neutral palette + one accent.** Chrome (borders, headings, secondary text) is `border-border` / `text-muted-foreground`. Primary text is `text-foreground`. The brand orange is reserved for: the primary CTA on a page, the active section indicator, the occasional badge or focus ring. **No** decorative gradients, **no** multi-color status tagging, **no** full-bleed colored hero rows.
-- **One font, three sizes.** Inter (already provided). Page title: `text-base font-semibold` or `text-lg font-semibold`. Section labels: `text-sm font-medium`. Body: `text-sm` regular. Captions / labels-on-fields: `text-xs text-muted-foreground`. **Never** use `text-2xl` / `text-3xl` on a dashboard — that's marketing-page typography, not product UI.
-- **Hairline borders, no shadows.** `border border-border`, never `border-2`. Default cards have no shadow; reserve shadow strictly for floating layers (popovers, dialogs, dropdowns).
-- **Tables, not card stacks, when listing things.** A list of issues / posts / messages / drafts is a tight `Table` (~32–36px rows, no wrapping). Cards are for *one-off* objects (a single profile page, a single proposal preview). Never render 5 things as 5 stacked full-width cards.
-- **Status as a `StatusDot` inline with the row**, not a colored full-width banner. "Twitter/X: ready" lives as one dot + label in the page header chrome, exactly once.
-- **One primary action top-right of a section.** Secondary actions are ghost buttons or icon buttons. **Never** two equal-weight orange buttons side by side; pick which one is the answer to "what is the user trying to do on this screen" and demote the other.
-
-Anti-references — if your output starts resembling any of these, you've left the path:
-
-- **Notion** — too rounded, too playful, decorative cover images, color emoji icons.
-- **Stripe Dashboard** — marketing-grade hero numbers, gradient banners, oversized typography.
-- **Material Design** — color-coded everything, drop shadows on every card, FAB.
-- **Generic shadcn marketing examples** — over-padded cards, decorative dividers, `text-3xl` headers.
-
-When in doubt: open Linear in your head, locate the closest pane (issue list → list view; cycle overview → KPI strip + table; project page → header + sections), and copy that layout. "What would Linear do" is the visual prior to fall back on.
+If your output looks wrong, the fix lives in the polish turn (re-invoke `interface-design`, rewrite via heredoc, screenshot, iterate). It does not live in this SKILL.md.
 
 ### The rule: import `@holaboss/ui`, do not redefine primitives
 
 `@holaboss/ui` is a public npm package. It provides every primitive and CSS token your dashboard needs. **Do not generate shadcn primitives, copy a `components/ui/` directory, write your own Card, or import any other component library**. If `@holaboss/ui` is missing something, surface it to the SDK team instead of inventing a local replacement — visual drift is the failure mode the library exists to prevent.
 
-Layout itself is your call. There is no `DashboardShell` / `PageHeader` / `DataTable` / `StatPill` / etc. — those were removed in 0.3.0. Compose page chrome from the raw primitives (Card, Tabs, Sheet, Sidebar, Table, Skeleton, EmptyState…) under the interface-design skill's rules and the density rules below. There is no register-time gate forcing a specific layout vocabulary; the only guard against bad layouts is the skill chain itself.
+Layout itself is your call. There is no `DashboardShell` / `PageHeader` / `DataTable` / `StatPill` / etc. — those were removed in 0.3.0. Compose page chrome from the raw primitives (Card, Tabs, Sheet, Sidebar, Table, Skeleton, EmptyState…). What the layout should look like is decided in the `interface-design` polish turn, not here.
 
 Install:
 
@@ -206,7 +194,7 @@ A full base-ui-flavoured shadcn surface — ~55 primitives. The ones you reach f
 2. The dashboard reads the app's own SQLite (the table `app.resource()` declared) via TanStack Start server functions — same DB the MCP tools mutate. **Never duplicate state.**
 3. Mount `@holaboss/ui/styles.css` at the top of `__root.tsx`. That single import covers the tokens, the default theme, and every Tailwind utility class the library uses. Without it the tokens fall back to defaults and the components render with no styling.
 
-Beyond those three wiring points, **the layout is yours**. The `interface-design` skill output (invoked above as a hard gate) is your design brief; the primitive catalog above is your toolbox. No scaffolding template, no "minimal dashboard route" stub to copy — every request asks for a different shape, and copying a template is how every agent-built dashboard ends up looking like every other one.
+Beyond those three wiring points, **the layout is yours**. The `interface-design` skill output (delivered in the auto-queued polish turn) is your design brief; the primitive catalog above is your toolbox. No scaffolding template, no "minimal dashboard route" stub to copy.
 
 ### Schema migration (from PM doc)
 
@@ -222,31 +210,19 @@ vibe coding's biggest failure mode is destructive migrations. Rules:
 
 Each schema change is a version; the user must be able to roll back.
 
-### A few don'ts (the failure modes, not a recipe book)
+### UI anti-patterns — two are enforced at register time
 
-The point isn't to mandate which primitive for which intent — that's the `interface-design` skill's job. These are the consistent failure modes seen in agent-built dashboards; avoid them and use your judgement on the rest.
+`workspace_apps_register` runs two structural lints over `src/client/` for dashboard apps. Both reject the call with file/line context; nothing ships until they pass.
 
-- **`text-2xl` / `text-3xl` headers.** That's marketing-page typography. Product UI is `text-sm`/`text-base`.
-- **Status signal rendered twice in the same viewport** ("needs connection" as a dot AND as a banner). One surface per signal.
-- **Hand-rolled loading / empty states.** Use `Skeleton` and `EmptyState` — they're already themed.
-- **A bullet `<ul>` or hand-rolled `<table>` for a list of rows.** Use the `Table` family.
-- **Importing Recharts directly without `ChartContainer`.** You lose theme-aware colors + tooltip styling. Wrap charts in `ChartContainer` + use `ChartTooltip` / `ChartLegend`.
+- **Minimum named imports from `@holaboss/ui`.** A dashboard with fewer than 3 distinct named imports from the library across all `src/client/` files is rejected. Importing only `@holaboss/ui/styles.css` (the stylesheet) does NOT count — the library exists to provide composable components, not just tokens. Replace hand-rolled className-based components with the library's `Card` / `Button` / `Table` / `Badge` / `StatusDot` / `Skeleton` / `EmptyState` / `Tabs` / `ChartContainer` etc.
+- **No parallel design system in app-local CSS.** Any `.css` file under `src/client/` containing hex color literals (`#1f883d`), raw color function calls (`rgb()` / `hsl()` / `oklch()` / `lab()` / `lch()`), or custom CSS variable definitions that don't forward an existing holaOS token (`--my-thing: var(--background);` style passthroughs are allowed) is rejected. The lint exists because agents repeatedly shipped 200+-line stylesheets defining their own theme on top of the library — bypassing the OKLch palette, the font-weight cap, and the workspace theme system. App-local CSS may contain `@import "tailwindcss"` and empty `@layer` blocks so app-side composed Tailwind classes work; that's all.
 
-### Density rules of thumb
+Other UI anti-patterns (not lint-enforced, but still wrong):
 
-- **KPI row**: max ~80px tall total. If you find yourself sizing one KPI card to 80px individually, you're doing it wrong.
-- **Section spacing**: between sections, ~`gap-6`; inside a section, ~`gap-3`. Don't reinvent this.
-- **Status pills**: there is exactly one place in the layout where each piece of status appears. If the same word ("needs connection") is rendered twice in the same viewport, delete one.
-- **Empty states**: never larger than the populated state would be. An empty chart slot shouldn't take more vertical room than the chart-with-data would.
-
-### UI anti-patterns (failure modes the user flagged)
-
-- **Generating a `components/ui/` directory or running `shadcn add`** — that path is gone. Import primitives from `@holaboss/ui` instead.
 - **A `components/ui/` directory or any shadcn-add path.** Import primitives from `@holaboss/ui` only.
-- **Inline `style={{ ... }}`** anywhere except `style={{ width: ... }}` for measured layout (resize observers, etc.). Colors / spacing / radii never inline.
+- **Inline `style={{ ... }}`** anywhere except `style={{ width: ... }}` for measured layout (resize observers, etc.).
 - **Hardcoded hex colors / px values for spacing or radii.** Use the theme tokens; if missing, surface to the SDK team.
 - **A new component library** (Material UI, Ant, Chakra, react-aria, etc.) — `@holaboss/ui` wraps the workspace-canonical primitives; that's the only path.
-- **Hand-rolling a loading skeleton or empty state.** Use `Skeleton` and `EmptyState`.
 - **Per-app dark mode toggle / theme picker.** Theme is workspace-level; the app inherits via CSS variables and does nothing.
 
 ### App-level anti-patterns (not UI — code shape)

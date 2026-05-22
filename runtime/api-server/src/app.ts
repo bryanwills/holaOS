@@ -6528,6 +6528,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
           appIds: Array.isArray(body.app_ids)
             ? body.app_ids.filter((value): value is string => typeof value === "string")
             : undefined,
+          sessionId: capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }) || null,
         });
       } catch (error) {
         if (error instanceof RuntimeAgentToolsServiceError) {
