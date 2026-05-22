@@ -468,13 +468,7 @@ function SidebarInboxSection() {
             </div>
           </div>
         ) : (
-          <motion.div
-            layout
-            transition={{
-              layout: { duration: 0.2, ease: INBOX_EASE },
-            }}
-            className="flex flex-col gap-1.5 px-0.5 pt-1"
-          >
+          <div className="flex flex-col gap-1.5 px-0.5 pt-1">
             <AnimatePresence initial={false} mode="popLayout">
               {proposals.map((proposal) => (
                 <InboxProposalCard
@@ -498,7 +492,7 @@ function SidebarInboxSection() {
                 />
               ))}
             </AnimatePresence>
-          </motion.div>
+          </div>
         )}
       </div>
     </div>
@@ -538,7 +532,7 @@ function InboxProposalCard({
 
   return (
     <motion.div
-      layout
+      layout="position"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{
@@ -570,7 +564,7 @@ function InboxProposalCard({
           <div className="mt-1 truncate text-xs font-medium text-foreground">
             {proposal.task_name || "Untitled proposal"}
           </div>
-          {proposal.task_generation_rationale && !expanded ? (
+          {proposal.task_generation_rationale ? (
             <div className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-foreground/55">
               {proposal.task_generation_rationale}
             </div>
@@ -591,23 +585,18 @@ function InboxProposalCard({
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{
-              height: { duration: 0.22, ease: INBOX_EASE },
-              opacity: { duration: 0.14, ease: INBOX_EASE },
+              height: { duration: 0.16, ease: INBOX_EASE },
+              opacity: { duration: 0.12, ease: INBOX_EASE },
             }}
             className="overflow-hidden"
           >
-            <div className="border-t border-border/60 px-2.5 py-2">
-              {proposal.task_generation_rationale ? (
-                <div className="mb-2 text-[11px] leading-snug text-foreground/65">
-                  {proposal.task_generation_rationale}
-                </div>
-              ) : null}
+            <div className="border-t border-border/60 px-2.5 py-1.5">
               {proposal.task_prompt ? (
-                <div className="rounded-md bg-foreground/[0.04] px-2 py-1.5 font-mono text-[10.5px] leading-snug whitespace-pre-wrap break-words text-foreground/75">
+                <div className="max-h-24 overflow-y-auto rounded-md bg-foreground/[0.04] px-2 py-1 font-mono text-[10.5px] leading-snug whitespace-pre-wrap break-words text-foreground/75">
                   {proposal.task_prompt}
                 </div>
               ) : null}
-              <div className="mt-2 flex items-center gap-1.5">
+              <div className="mt-1.5 flex items-center gap-1.5">
                 <Button
                   type="button"
                   size="xs"
