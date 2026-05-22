@@ -14472,6 +14472,19 @@ async function listOutputs(
   };
 }
 
+async function listOutputFolders(
+  workspaceId: string,
+): Promise<WorkspaceOutputFolderListResponsePayload> {
+  return requestWorkspaceRuntimeJson<WorkspaceOutputFolderListResponsePayload>(
+    workspaceId,
+    {
+      method: "GET",
+      path: "/api/v1/output-folders",
+      params: { workspace_id: workspaceId },
+    },
+  );
+}
+
 function normalizeWorkspaceSkillId(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -23305,6 +23318,11 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, payload: string | HolabossListOutputsPayload) =>
       listOutputs(payload),
+  );
+  handleTrustedIpc(
+    "workspace:listOutputFolders",
+    ["main"],
+    async (_event, workspaceId: string) => listOutputFolders(workspaceId),
   );
   handleTrustedIpc(
     "workspace:listSkills",

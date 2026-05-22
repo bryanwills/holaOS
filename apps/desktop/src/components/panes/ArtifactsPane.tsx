@@ -42,20 +42,12 @@ interface ArtifactsPaneProps {
   workspaceId: string | null;
   onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
   emptyWorkspaceMessage?: string;
-  /**
-   * When provided, the pane refetches whenever this value changes — used by
-   * the new shell to refresh the list each time the user reopens the overlay
-   * so artifacts created during the current session show up without having
-   * to switch workspaces.
-   */
-  refreshSignal?: number | string | null;
 }
 
 export function ArtifactsPane({
   workspaceId,
   onOpenOutput,
   emptyWorkspaceMessage = "Choose a workspace from the top bar to view its artifacts.",
-  refreshSignal,
 }: ArtifactsPaneProps) {
   const [outputs, setOutputs] = useState<WorkspaceOutputRecordPayload[]>([]);
   const [filter, setFilter] = useState<ArtifactBrowserFilter>("all");
@@ -91,7 +83,7 @@ export function ArtifactsPane({
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, refreshSignal]);
+  }, [workspaceId]);
 
   const allDisplayOutputs = useMemo(
     () => dedupeOutputsForDisplay(outputs),

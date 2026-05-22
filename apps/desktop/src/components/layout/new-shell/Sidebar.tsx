@@ -18,9 +18,11 @@ import { WorkspaceIcon } from "@/components/ui/workspace-icon";
 import { WorkspaceIconPicker } from "@/components/ui/workspace-icon-picker";
 import {
   OutputArtifactIcon,
+  outputBrowserFilterForOutput,
   outputKindLabel,
   sortOutputsLatestFirst,
 } from "@/components/panes/ChatPane/ArtifactBrowserModal";
+import type { ArtifactBrowserFilter } from "@/components/panes/ChatPane/types";
 import { FileTypeIcon } from "@/lib/fileIcon";
 import { useIntegrationBinding } from "@/lib/useIntegrationBinding";
 import { cn } from "@/lib/utils";
@@ -66,7 +68,6 @@ import {
 } from "./state/recentFiles";
 import {
   appsExpandedAtom,
-  artifactsOpenAtom,
   automationsOpenAtom,
   createWorkspaceOpenAtom,
   inboxOpenAtom,
@@ -86,8 +87,10 @@ import {
   useRecentBrowserHistory,
   useWorkspaceArtifacts,
   useWorkspaceCronjobs,
+  useWorkspaceOutputFolders,
   useWorkspaceSkills,
 } from "./useWorkspaceLists";
+import { useOpenWorkspaceOutput } from "./useOpenWorkspaceOutput";
 
 type RecentItem =
   | { kind: "url"; ts: string; entry: BrowserHistoryEntryPayload }
@@ -470,65 +473,243 @@ function SidebarInboxSection() {
   );
 }
 
+const ARTIFACT_FILTER_OPTIONS: ReadonlyArray<{
+  id: ArtifactBrowserFilter;
+  label: string;
+}> = [
+  { id: "all", label: "All" },
+  { id: "documents", label: "Docs" },
+  { id: "images", label: "Images" },
+  { id: "code", label: "Code" },
+  { id: "links", label: "Links" },
+  { id: "apps", label: "Apps" },
+];
+
+const UNCATEGORIZED_FOLDER_KEY = "__uncategorized__";
+
 function SidebarArtifactsSection() {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const outputs = useWorkspaceArtifacts(selectedWorkspaceId || null);
-  const setArtifactsOpen = useSetAtom(artifactsOpenAtom);
+  const folders = useWorkspaceOutputFolders(selectedWorkspaceId || null);
+  const { openOutput } = useOpenWorkspaceOutput();
+  const [filter, setFilter] = useState<ArtifactBrowserFilter>("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(
+    () => new Set(),
+  );
+
+  const folderNamesById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const folder of folders) {
+      map.set(folder.id, folder.name || "Untitled folder");
+    }
+    return map;
+  }, [folders]);
+
+  const folderOrderById = useMemo(() => {
+    const map = new Map<string, number>();
+    folders.forEach((folder, index) => {
+      map.set(folder.id, folder.position ?? index);
+    });
+    return map;
+  }, [folders]);
+
   const sortedOutputs = useMemo(
     () => sortOutputsLatestFirst(outputs),
     [outputs],
   );
-  const visibleOutputs = sortedOutputs.slice(0, 12);
+
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const filteredOutputs = useMemo(() => {
+    let result =
+      filter === "all"
+        ? sortedOutputs
+        : sortedOutputs.filter(
+            (output) => outputBrowserFilterForOutput(output) === filter,
+          );
+    if (normalizedSearchQuery) {
+      result = result.filter((output) => {
+        const title = (output.title ?? "").toLowerCase();
+        const kind = outputKindLabel(output).toLowerCase();
+        return (
+          title.includes(normalizedSearchQuery) ||
+          kind.includes(normalizedSearchQuery)
+        );
+      });
+    }
+    return result;
+  }, [sortedOutputs, filter, normalizedSearchQuery]);
+
+  // Bucket outputs by folder, then order folders by their server `position`
+  // with the unfoldered bucket last so explicit folders win the top slots.
+  const groupedOutputs = useMemo(() => {
+    const buckets = new Map<string, WorkspaceOutputRecordPayload[]>();
+    for (const output of filteredOutputs) {
+      const key = output.folder_id || UNCATEGORIZED_FOLDER_KEY;
+      const existing = buckets.get(key);
+      if (existing) {
+        existing.push(output);
+      } else {
+        buckets.set(key, [output]);
+      }
+    }
+    return Array.from(buckets.entries())
+      .map(([key, items]) => ({
+        key,
+        label:
+          key === UNCATEGORIZED_FOLDER_KEY
+            ? "Uncategorized"
+            : (folderNamesById.get(key) ?? "Untitled folder"),
+        order:
+          key === UNCATEGORIZED_FOLDER_KEY
+            ? Number.POSITIVE_INFINITY
+            : (folderOrderById.get(key) ?? Number.POSITIVE_INFINITY - 1),
+        items,
+      }))
+      .sort((left, right) => left.order - right.order);
+  }, [filteredOutputs, folderNamesById, folderOrderById]);
+
+  const totalCount = sortedOutputs.length;
+  const isFiltering = filter !== "all" || normalizedSearchQuery.length > 0;
+  const visibleCount = filteredOutputs.length;
+
+  const toggleFolder = useCallback((key: string) => {
+    setCollapsedFolders((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, []);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-3">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-2 pb-3">
       <SectionLabel>
         Artifacts
-        {sortedOutputs.length > 0 ? (
-          <span className="ml-auto text-foreground/30">
-            {sortedOutputs.length}
-          </span>
+        {totalCount > 0 ? (
+          <span className="ml-auto text-foreground/30">{totalCount}</span>
         ) : null}
       </SectionLabel>
-      {sortedOutputs.length === 0 ? (
-        <div className="grid place-items-center px-3 py-12 text-center">
-          <div className="flex flex-col items-center gap-2">
-            <Package className="size-5 text-foreground/30" />
-            <div className="text-xs text-foreground/55">
-              Artifacts from your agent runs will appear here.
+
+      {totalCount > 0 ? (
+        <>
+          <div className="relative mb-1.5 mt-1">
+            <Search className="pointer-events-none absolute left-2 top-1/2 size-3 -translate-y-1/2 text-foreground/40" />
+            <Input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search artifacts"
+              aria-label="Search artifacts"
+              className="h-7 rounded-md pl-6.5 pr-6 text-xs focus-visible:ring-0"
+            />
+            {searchQuery ? (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                aria-label="Clear search"
+                className="absolute right-1 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-foreground/40 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+              >
+                <X className="size-3" />
+              </button>
+            ) : null}
+          </div>
+          <div className="-mx-0.5 mb-1.5 flex flex-wrap gap-0.5 px-0.5">
+            {ARTIFACT_FILTER_OPTIONS.map((option) => {
+              const active = filter === option.id;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => setFilter(option.id)}
+                  className={cn(
+                    "rounded-full px-2 py-0.5 text-[10.5px] font-medium transition-colors",
+                    active
+                      ? "bg-foreground text-background"
+                      : "text-foreground/55 hover:bg-foreground/[0.04] hover:text-foreground",
+                  )}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      ) : null}
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {totalCount === 0 ? (
+          <div className="grid place-items-center px-3 py-12 text-center">
+            <div className="flex flex-col items-center gap-2">
+              <Package className="size-5 text-foreground/30" />
+              <div className="text-xs text-foreground/55">
+                Artifacts from your agent runs will appear here.
+              </div>
             </div>
           </div>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-0.5">
-          {visibleOutputs.map((output) => {
-            const kindLabel = outputKindLabel(output);
-            return (
-              <button
-                key={output.id}
-                type="button"
-                onClick={() => setArtifactsOpen(true)}
-                className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground/80 transition-colors hover:bg-foreground/[0.04]"
-              >
-                <OutputArtifactIcon output={output} variant="bare" />
-                <span className="min-w-0 flex-1 truncate text-foreground">
-                  {output.title || "Untitled artifact"}
-                </span>
-                <span className="shrink-0 text-foreground/45">{kindLabel}</span>
-              </button>
-            );
-          })}
-          {sortedOutputs.length > visibleOutputs.length ? (
-            <button
-              type="button"
-              onClick={() => setArtifactsOpen(true)}
-              className="mt-1 rounded-md px-2 py-1 text-left text-xs text-foreground/55 transition-colors hover:bg-foreground/[0.04] hover:text-foreground"
-            >
-              See all {sortedOutputs.length} →
-            </button>
-          ) : null}
-        </div>
-      )}
+        ) : visibleCount === 0 ? (
+          <div className="px-2 py-6 text-center text-xs text-foreground/45">
+            {isFiltering
+              ? "No artifacts match this view."
+              : "No artifacts yet."}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {groupedOutputs.map((group) => {
+              const collapsed = collapsedFolders.has(group.key);
+              return (
+                <div key={group.key} className="flex flex-col">
+                  <button
+                    type="button"
+                    onClick={() => toggleFolder(group.key)}
+                    aria-expanded={!collapsed}
+                    className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-left text-[10.5px] font-medium uppercase tracking-wide text-foreground/50 transition-colors hover:bg-foreground/[0.04] hover:text-foreground/70"
+                  >
+                    <ChevronRight
+                      className="size-3 shrink-0 transition-transform duration-snappy ease-emphasized"
+                      style={{
+                        transform: collapsed ? "rotate(0deg)" : "rotate(90deg)",
+                      }}
+                    />
+                    <span className="min-w-0 flex-1 truncate">
+                      {group.label}
+                    </span>
+                    <span className="text-foreground/30">{group.items.length}</span>
+                  </button>
+                  {collapsed ? null : (
+                    <div className="flex flex-col gap-0.5 pt-0.5">
+                      {group.items.map((output) => {
+                        const kindLabel = outputKindLabel(output);
+                        return (
+                          <button
+                            key={output.id}
+                            type="button"
+                            onClick={() => void openOutput(output)}
+                            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground/80 transition-colors hover:bg-foreground/[0.04]"
+                          >
+                            <OutputArtifactIcon
+                              output={output}
+                              variant="bare"
+                            />
+                            <span className="min-w-0 flex-1 truncate text-foreground">
+                              {output.title || "Untitled artifact"}
+                            </span>
+                            <span className="shrink-0 text-foreground/45">
+                              {kindLabel}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

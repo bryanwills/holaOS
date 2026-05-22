@@ -50,9 +50,6 @@ export const createWorkspaceOpenAtom = atom(false);
 /** Is the Inbox overlay open? */
 export const inboxOpenAtom = atom(false);
 
-/** Is the Artifacts overlay open? */
-export const artifactsOpenAtom = atom(false);
-
 /** Is the Automations overlay open? */
 export const automationsOpenAtom = atom(false);
 
@@ -86,7 +83,6 @@ export const browserViewSuspendedAtom = atom(
     get(publishOpenAtom) ||
     get(createWorkspaceOpenAtom) ||
     get(inboxOpenAtom) ||
-    get(artifactsOpenAtom) ||
     get(automationsOpenAtom) ||
     get(sessionsOpenAtom) ||
     get(settingsOpenAtom) ||
