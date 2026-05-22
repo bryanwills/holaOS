@@ -1215,6 +1215,7 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "This tool builds a brand-new user-facing app (TanStack Start project, dashboard, vibe-coded internal tool). It is NOT how a user connects an integration.",
       "If the user wants to connect, authorize, or otherwise gain OAuth access to a known third-party service, call `holaboss_workspace_integrations_propose_connect` instead — building an app for that is a category error.",
       "Use this only when the user actually asked for a new app, dashboard, tool, surface, internal product, or other UI/persistence/schedule-bearing capability.",
+      "MANDATORY PRECONDITION: invoke `skill({ name: \"app-builder-sdk\" })` ONCE before calling this tool, and read its full output. The skill contains the SDK contract (5 primitives, provider id rules, package.json shape, density rules, anti-patterns, install protocol). Building from training-data priors alone produces apps that consistently miss the SDK shape, the npm semver pin, and the density/aesthetic rules — i.e. the failure mode users keep flagging. The 1-line catalog description is NOT enough; load the full SKILL.md.",
     ];
   }
   if (
@@ -1227,6 +1228,7 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "Do NOT interpret a `pending_integrations` non-empty response as 'the API is unavailable' or 'this provider doesn't expose what I need'. It means exactly one thing: the user hasn't completed OAuth for that toolkit yet. Propose connect and wait for the gate to re-dispatch your input.",
       "Do NOT report the app as 'done', 'in safe mode', 'manual mode', 'logging-only', 'preview mode', or any variant that means the app does not actually do what the user asked for. If a provider is still unconnected, the correct outcome is a Connect card in chat, not a shipped non-functional app.",
       "After you propose connects, stop. Do not retry the tool, do not call MCP tools that need those connections, do not poll. The runtime parks the input and re-dispatches it the moment every required connection is active.",
+      "DASHBOARD APPS — MANDATORY POST-BUILD DESIGN PASS: once this tool returns `ready: true` for a dashboard-shape app (one with `src/client/`), BEFORE you tell the user it is done, you MUST: (1) invoke `skill({ name: \"interface-design\" })`; (2) re-read every file under `src/client/` you wrote; (3) apply the skill's rules as a concrete refactor pass — fix `text-3xl` headers, full-width stacked KPI cards, sparse row padding (`py-4` table rows etc.), hand-rolled empty/loading states, decorative card borders, basic padding gaps; (4) re-run `workspace_apps_build` + `workspace_apps_restart_and_wait_ready`. Only then declare the app ready. Invoking the skill and writing 'looks good' without an actual file-by-file refactor pass does NOT satisfy this gate — the user checks the rendered output, not your summary.",
     ];
   }
   return [];
