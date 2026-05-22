@@ -1273,6 +1273,19 @@ interface RuntimeNotificationListOptionsPayload {
     items: WorkspaceOutputRecordPayload[];
   }
 
+  interface WorkspaceOutputFolderRecordPayload {
+    id: string;
+    workspace_id: string;
+    name: string;
+    position: number;
+    created_at: string;
+    updated_at: string;
+  }
+
+  interface WorkspaceOutputFolderListResponsePayload {
+    items: WorkspaceOutputFolderRecordPayload[];
+  }
+
   interface WorkspaceSkillRecordPayload {
     skill_id: string;
     source_dir: string;
@@ -1887,6 +1900,7 @@ interface RuntimeNotificationListOptionsPayload {
       installAppFromCatalog: (params: InstallAppFromCatalogRequest) => Promise<InstallAppFromCatalogResponse>;
       installAppFromArchiveFile: (params: { workspaceId: string }) => Promise<InstallAppFromCatalogResponse | null>;
       listOutputs: (payload: string | WorkspaceOutputListRequestPayload) => Promise<WorkspaceOutputListResponsePayload>;
+      listOutputFolders: (workspaceId: string) => Promise<WorkspaceOutputFolderListResponsePayload>;
       listSkills: (workspaceId: string) => Promise<WorkspaceSkillListResponsePayload>;
       getWorkspaceRoot: (workspaceId: string) => Promise<string>;
       createWorkspace: (payload: HolabossCreateWorkspacePayload) => Promise<WorkspaceResponsePayload>;

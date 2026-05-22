@@ -1459,6 +1459,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:installAppFromArchiveFile", params) as Promise<InstallAppFromCatalogResponse | null>,
     listOutputs: (payload: string | HolabossListOutputsPayload) =>
       ipcRenderer.invoke("workspace:listOutputs", payload) as Promise<WorkspaceOutputListResponsePayload>,
+    listOutputFolders: (workspaceId: string) =>
+      ipcRenderer.invoke("workspace:listOutputFolders", workspaceId) as Promise<WorkspaceOutputFolderListResponsePayload>,
     listSkills: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listSkills", workspaceId) as Promise<WorkspaceSkillListResponsePayload>,
     getWorkspaceRoot: (workspaceId: string) => ipcRenderer.invoke("workspace:getWorkspaceRoot", workspaceId) as Promise<string>,

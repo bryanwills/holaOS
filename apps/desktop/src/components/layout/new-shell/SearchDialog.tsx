@@ -28,7 +28,6 @@ import { WorkspaceIcon } from "@/components/ui/workspace-icon";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import {
-  artifactsOpenAtom,
   automationsOpenAtom,
   createWorkspaceOpenAtom,
   inboxOpenAtom,
@@ -37,6 +36,7 @@ import {
   searchOpenAtom,
   sessionsOpenAtom,
   settingsOpenAtom,
+  sidebarSectionAtom,
 } from "./state/ui";
 
 function hostFromUrl(url: string): string {
@@ -80,7 +80,7 @@ function SearchContent({ onSelect }: { onSelect: () => void }) {
   const { browserState: userBrowser } = useWorkspaceBrowser("user");
   const setNewTabOpen = useSetAtom(newTabOpenAtom);
   const setInboxOpen = useSetAtom(inboxOpenAtom);
-  const setArtifactsOpen = useSetAtom(artifactsOpenAtom);
+  const setSidebarSection = useSetAtom(sidebarSectionAtom);
   const setAutomationsOpen = useSetAtom(automationsOpenAtom);
   const setSessionsOpen = useSetAtom(sessionsOpenAtom);
   const setMarketplaceOpen = useSetAtom(marketplaceOpenAtom);
@@ -168,7 +168,7 @@ function SearchContent({ onSelect }: { onSelect: () => void }) {
           <ActionItem
             label="Open Artifacts"
             icon={<Package />}
-            onSelect={wrap(() => setArtifactsOpen(true))}
+            onSelect={wrap(() => setSidebarSection("artifacts"))}
           />
           <ActionItem
             label="Open Automations"

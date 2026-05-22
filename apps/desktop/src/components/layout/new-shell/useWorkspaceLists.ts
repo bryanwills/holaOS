@@ -33,6 +33,41 @@ export function useWorkspaceSkills(workspaceId: string | null) {
 }
 
 /**
+ * Workspace output folders. Used by the sidebar to label artifact groups
+ * (output records carry only a `folder_id`; this hook supplies the names).
+ */
+export function useWorkspaceOutputFolders(workspaceId: string | null) {
+  const [folders, setFolders] = useState<WorkspaceOutputFolderRecordPayload[]>(
+    [],
+  );
+
+  useEffect(() => {
+    if (!workspaceId) {
+      setFolders([]);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const response =
+          await window.electronAPI.workspace.listOutputFolders(workspaceId);
+        if (!cancelled) setFolders(response.items ?? []);
+      } catch {
+        // tolerate transient errors
+      }
+    };
+    void load();
+    const timer = window.setInterval(load, POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [workspaceId]);
+
+  return folders;
+}
+
+/**
  * Workspace artifacts (agent-run outputs). Mirrors the workspace-scoped
  * fetch behind ArtifactsPane so the sidebar can show recent items inline
  * without forcing the user to open the full overlay.
