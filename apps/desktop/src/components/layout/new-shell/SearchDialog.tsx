@@ -30,7 +30,6 @@ import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import {
   automationsOpenAtom,
   createWorkspaceOpenAtom,
-  inboxOpenAtom,
   marketplaceOpenAtom,
   newTabOpenAtom,
   searchOpenAtom,
@@ -79,7 +78,6 @@ function SearchContent({ onSelect }: { onSelect: () => void }) {
     useWorkspaceSelection();
   const { browserState: userBrowser } = useWorkspaceBrowser("user");
   const setNewTabOpen = useSetAtom(newTabOpenAtom);
-  const setInboxOpen = useSetAtom(inboxOpenAtom);
   const setSidebarSection = useSetAtom(sidebarSectionAtom);
   const setAutomationsOpen = useSetAtom(automationsOpenAtom);
   const setSessionsOpen = useSetAtom(sessionsOpenAtom);
@@ -163,7 +161,7 @@ function SearchContent({ onSelect }: { onSelect: () => void }) {
           <ActionItem
             label="Open Inbox"
             icon={<Inbox />}
-            onSelect={wrap(() => setInboxOpen(true))}
+            onSelect={wrap(() => setSidebarSection("inbox"))}
           />
           <ActionItem
             label="Open Artifacts"

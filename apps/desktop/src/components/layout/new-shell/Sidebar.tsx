@@ -32,6 +32,7 @@ import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { AnimatePresence, motion } from "motion/react";
 import {
+  Check,
   ChevronDown,
   ChevronRight,
   Clock,
@@ -47,13 +48,14 @@ import {
   RotateCw,
   Search,
   Settings,
+  Sparkles,
   Trash2,
   Upload,
   Wrench,
   X,
   Zap,
 } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SectionLabel } from "./shared";
 import {
   activeInternalTabIdAtom,
@@ -70,7 +72,6 @@ import {
   appsExpandedAtom,
   automationsOpenAtom,
   createWorkspaceOpenAtom,
-  inboxOpenAtom,
   publishOpenAtom,
   searchOpenAtom,
   SIDEBAR_MAX_WIDTH,
@@ -415,62 +416,251 @@ function SidebarHomeSection() {
 
 function SidebarInboxSection() {
   const { selectedWorkspaceId } = useWorkspaceSelection();
-  const { proposals, isLoading } = useTaskProposals(selectedWorkspaceId || null);
-  const setInboxOpen = useSetAtom(inboxOpenAtom);
+  const { proposals, isLoading, statusMessage, action, accept, dismiss } =
+    useTaskProposals(selectedWorkspaceId || null);
+  const [expandedProposalId, setExpandedProposalId] = useState<string | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (
+      expandedProposalId &&
+      !proposals.some((p) => p.proposal_id === expandedProposalId)
+    ) {
+      setExpandedProposalId(null);
+    }
+  }, [expandedProposalId, proposals]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-3">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-2 pb-3">
       <SectionLabel>
         Inbox
         {proposals.length > 0 ? (
           <span className="ml-auto text-foreground/30">{proposals.length}</span>
         ) : null}
       </SectionLabel>
-      {isLoading && proposals.length === 0 ? (
-        <div className="grid place-items-center py-8">
-          <Loader2 className="size-4 animate-spin text-foreground/40" />
-        </div>
-      ) : proposals.length === 0 ? (
-        <div className="grid place-items-center px-3 py-12 text-center">
-          <div className="flex flex-col items-center gap-2">
-            <Inbox className="size-5 text-foreground/30" />
-            <div className="text-xs text-foreground/55">
-              You're all caught up
+      {statusMessage ? (
+        <AnimatePresence initial={false}>
+          <motion.div
+            key={statusMessage}
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+            className="mx-0.5 mt-1 mb-1.5 rounded-md border border-border bg-foreground/[0.03] px-2 py-1.5 text-[11px] leading-snug text-foreground/65"
+          >
+            {statusMessage}
+          </motion.div>
+        </AnimatePresence>
+      ) : null}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {isLoading && proposals.length === 0 ? (
+          <div className="grid place-items-center py-8">
+            <Loader2 className="size-4 animate-spin text-foreground/40" />
+          </div>
+        ) : proposals.length === 0 ? (
+          <div className="grid place-items-center px-3 py-12 text-center">
+            <div className="flex flex-col items-center gap-2">
+              <Inbox className="size-5 text-foreground/30" />
+              <div className="text-xs text-foreground/55">
+                You're all caught up
+              </div>
             </div>
           </div>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-0.5">
-          {proposals.slice(0, 12).map((p) => (
-            <button
-              key={p.proposal_id}
-              type="button"
-              onClick={() => setInboxOpen(true)}
-              className="flex flex-col gap-0.5 rounded-md px-2 py-1.5 text-left text-xs text-foreground/80 transition-colors hover:bg-foreground/[0.04]"
-            >
-              <span className="truncate font-medium text-foreground">
-                {p.task_name || "Untitled proposal"}
-              </span>
-              {p.task_generation_rationale ? (
-                <span className="line-clamp-2 text-foreground/55">
-                  {p.task_generation_rationale}
-                </span>
-              ) : null}
-            </button>
-          ))}
-          {proposals.length > 12 ? (
-            <button
-              type="button"
-              onClick={() => setInboxOpen(true)}
-              className="mt-1 rounded-md px-2 py-1 text-left text-xs text-foreground/55 transition-colors hover:bg-foreground/[0.04] hover:text-foreground"
-            >
-              See all {proposals.length} →
-            </button>
-          ) : null}
-        </div>
-      )}
+        ) : (
+          <motion.div
+            layout
+            transition={{
+              layout: { duration: 0.22, ease: [0.16, 1, 0.3, 1] },
+            }}
+            className="flex flex-col gap-1.5 px-0.5 pt-1"
+          >
+            <AnimatePresence initial={false} mode="popLayout">
+              {proposals.map((proposal) => (
+                <InboxProposalCard
+                  key={proposal.proposal_id}
+                  proposal={proposal}
+                  expanded={expandedProposalId === proposal.proposal_id}
+                  onToggleExpand={() =>
+                    setExpandedProposalId((current) =>
+                      current === proposal.proposal_id
+                        ? null
+                        : proposal.proposal_id,
+                    )
+                  }
+                  pendingAction={
+                    action?.proposalId === proposal.proposal_id
+                      ? action.action
+                      : null
+                  }
+                  onAccept={() => void accept(proposal)}
+                  onDismiss={() => void dismiss(proposal)}
+                />
+              ))}
+            </AnimatePresence>
+          </motion.div>
+        )}
+      </div>
     </div>
   );
+}
+
+interface InboxProposalCardProps {
+  proposal: TaskProposalRecordPayload;
+  expanded: boolean;
+  pendingAction: "accept" | "dismiss" | null;
+  onToggleExpand: () => void;
+  onAccept: () => void;
+  onDismiss: () => void;
+}
+
+function InboxProposalCard({
+  proposal,
+  expanded,
+  pendingAction,
+  onToggleExpand,
+  onAccept,
+  onDismiss,
+}: InboxProposalCardProps) {
+  const isActing = pendingAction !== null;
+  const sourceLabel =
+    proposal.proposal_source === "evolve" ? "Evolve" : "Proactive";
+  const sourceIcon =
+    proposal.proposal_source === "evolve" ? (
+      <Sparkles className="size-2.5" />
+    ) : (
+      <Inbox className="size-2.5" />
+    );
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: -6, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{
+        opacity: 0,
+        scale: 0.96,
+        transition: { duration: 0.16, ease: [0.4, 0, 1, 1] },
+      }}
+      transition={{
+        layout: { duration: 0.22, ease: [0.16, 1, 0.3, 1] },
+        default: { duration: 0.2, ease: [0.16, 1, 0.3, 1] },
+      }}
+      className="overflow-hidden rounded-lg border border-border bg-card"
+    >
+      <button
+        type="button"
+        onClick={onToggleExpand}
+        aria-expanded={expanded}
+        className="flex w-full items-start gap-2 px-2.5 py-2 text-left transition-colors hover:bg-foreground/[0.025]"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-foreground/[0.06] px-1.5 py-px text-[9.5px] font-medium uppercase tracking-wide text-foreground/55">
+              {sourceIcon}
+              {sourceLabel}
+            </span>
+            <span className="shrink-0 text-[10px] text-foreground/40">
+              {inboxRelativeTime(proposal.created_at)}
+            </span>
+          </div>
+          <div className="mt-1 truncate text-xs font-medium text-foreground">
+            {proposal.task_name || "Untitled proposal"}
+          </div>
+          {proposal.task_generation_rationale && !expanded ? (
+            <div className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-foreground/55">
+              {proposal.task_generation_rationale}
+            </div>
+          ) : null}
+        </div>
+        <ChevronRight
+          className="mt-0.5 size-3 shrink-0 text-foreground/30 transition-transform duration-snappy ease-emphasized"
+          style={{
+            transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
+          }}
+        />
+      </button>
+      <AnimatePresence initial={false}>
+        {expanded ? (
+          <motion.div
+            key="details"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{
+              height: { duration: 0.22, ease: [0.16, 1, 0.3, 1] },
+              opacity: { duration: 0.18, ease: [0.16, 1, 0.3, 1] },
+            }}
+            className="overflow-hidden"
+          >
+            <div className="border-t border-border/60 px-2.5 py-2">
+              {proposal.task_generation_rationale ? (
+                <div className="mb-2 text-[11px] leading-snug text-foreground/65">
+                  {proposal.task_generation_rationale}
+                </div>
+              ) : null}
+              {proposal.task_prompt ? (
+                <div className="rounded-md bg-foreground/[0.04] px-2 py-1.5 font-mono text-[10.5px] leading-snug whitespace-pre-wrap break-words text-foreground/75">
+                  {proposal.task_prompt}
+                </div>
+              ) : null}
+              <div className="mt-2 flex items-center gap-1.5">
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="default"
+                  disabled={isActing}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onAccept();
+                  }}
+                  className="h-6 px-2 text-[11px]"
+                >
+                  {pendingAction === "accept" ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <Check className="size-3" />
+                  )}
+                  Accept
+                </Button>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  disabled={isActing}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDismiss();
+                  }}
+                  className="h-6 px-2 text-[11px] text-foreground/55 hover:text-foreground"
+                >
+                  {pendingAction === "dismiss" ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <X className="size-3" />
+                  )}
+                  Dismiss
+                </Button>
+              </div>
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+function inboxRelativeTime(value: string): string {
+  const ms = Date.now() - Date.parse(value);
+  if (Number.isNaN(ms)) return value;
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }
 
 const ARTIFACT_FILTER_OPTIONS: ReadonlyArray<{
