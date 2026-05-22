@@ -146,16 +146,16 @@ cd <app-dir>
 bun add @holaboss/ui
 ```
 
-The app-builder-sdk itself still installs via `file:` because it's lockstep-versioned with the runtime; `@holaboss/ui` is independent and rolls forward like any normal npm dep. The resulting `package.json` looks like:
+Both `@holaboss/app-builder-sdk` and `@holaboss/ui` are public npm packages. The resulting `package.json` looks like:
 
 ```json
 "dependencies": {
-  "@holaboss/app-builder-sdk": "file:/absolute/path/to/<app-builder-sdk-skill-dir>/sdk-package",
+  "@holaboss/app-builder-sdk": "^0.1.0",
   "@holaboss/ui": "^0.3.0"
 }
 ```
 
-**Pin the major.minor explicitly.** Pre-1.0 caret semver is special — `^0.1.0` only matches `0.1.x`, NOT `0.2.x` or `0.3.x`. Writing `"^0.1.0"` locks the app to the layouts-era release that this skill no longer matches. Always use the current major.minor (currently `^0.3.0`) in fresh apps.
+**Pin the major.minor explicitly.** Pre-1.0 caret semver is special — `^0.1.0` only matches `0.1.x`, NOT `0.2.x` or `0.3.x`. Writing the wrong major.minor locks the app to an old release that this skill no longer matches. Always use the current major.minor (currently `^0.1.0` for app-builder-sdk, `^0.3.0` for ui) in fresh apps. Do NOT install via `file:` paths or git refs — npm is the only supported source.
 
 ### Mount the styles — one import, done
 
@@ -281,7 +281,7 @@ For Slack-style modules where the agent drives via MCP and no dashboard is neede
 ├── provider.ts         # ProviderRegistry: id, baseUrl, allowedHosts, whoamiPath
 ├── server.ts           # production entry: SqliteStateBackend + runtime-broker + startMcpServer
 ├── app.runtime.yaml    # manifest (lifecycle, healthchecks, mcp.tools list, env_contract, integration)
-└── package.json        # only declares: @holaboss/app-builder-sdk via `file:` dep
+└── package.json        # declares @holaboss/app-builder-sdk via npm semver
 ```
 
 `startMcpServer({ httpPort })`'s built-in placeholder is acceptable here — the user never opens this app's workspace pane in practice, they drive it from chat. Copy `reference/slack-messaging/{server.ts,app.runtime.yaml}` and adapt the constants. Copy `reference/<your-shape>/{app.ts,provider.ts}` and adapt the resource/action declarations.
@@ -323,7 +323,7 @@ The desktop's iframe (`AppSurfacePane`) resolves the URL to `env.PORT`; whatever
 
 After writing the 4 files into `<workspace>/apps/<app_id>/`, do these in order. Do not skip steps:
 
-### 1. `package.json` — use a `file:` dep, absolute path
+### 1. `package.json` — npm semver, no `file:` paths
 
 ```json
 {
@@ -332,12 +332,13 @@ After writing the 4 files into `<workspace>/apps/<app_id>/`, do these in order. 
   "private": true,
   "type": "module",
   "dependencies": {
-    "@holaboss/app-builder-sdk": "file:/absolute/path/to/<app-builder-sdk-skill-dir>/sdk-package"
+    "@holaboss/app-builder-sdk": "^0.1.0",
+    "@holaboss/ui": "^0.3.0"
   }
 }
 ```
 
-Prefer the bundled `sdk-package` path beside this skill. Do not assume a repo checkout exists. The dependency path still needs to be absolute because the SDK package lives outside the workspace and relative paths break across worktrees.
+Both packages live on npmjs.com (public, Apache-2.0). `bun install` pulls them down like any normal dep — no repo checkout assumption, no machine-specific file: paths.
 
 ### 2. `bun install` once in the app dir
 
