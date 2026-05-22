@@ -5808,7 +5808,15 @@ export class RuntimeAgentToolsService {
     const polishCallerSessionId =
       typeof params.sessionId === "string" ? params.sessionId.trim() : "";
     const polishPassQueued: JsonObject[] = [];
-    if (polishCallerSessionId) {
+    // Defer polish when ANY of the apps have unresolved integrations.
+    // Polish takes a browser_screenshot to evaluate the layout — if the
+    // app is rendering its `integration_not_bound` empty state instead
+    // of real chrome with real data, the screenshot tells the agent
+    // nothing about whether the layout is right. The next ensure-running
+    // call after the user binds will re-trigger this code path with an
+    // empty pending list and the polish will queue properly.
+    const polishBlockedByPendingIntegrations = pendingIntegrations.length > 0;
+    if (polishCallerSessionId && !polishBlockedByPendingIntegrations) {
       const polishSessionId = resolvePolishTargetSession(
         this.store,
         params.workspaceId,
