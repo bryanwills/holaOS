@@ -29,11 +29,11 @@ import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import {
   automationsOpenAtom,
+  chatPanelViewAtom,
   createWorkspaceOpenAtom,
   marketplaceOpenAtom,
   newTabOpenAtom,
   searchOpenAtom,
-  sessionsOpenAtom,
   settingsOpenAtom,
   sidebarSectionAtom,
 } from "./state/ui";
@@ -80,7 +80,7 @@ function SearchContent({ onSelect }: { onSelect: () => void }) {
   const setNewTabOpen = useSetAtom(newTabOpenAtom);
   const setSidebarSection = useSetAtom(sidebarSectionAtom);
   const setAutomationsOpen = useSetAtom(automationsOpenAtom);
-  const setSessionsOpen = useSetAtom(sessionsOpenAtom);
+  const setChatPanelView = useSetAtom(chatPanelViewAtom);
   const setMarketplaceOpen = useSetAtom(marketplaceOpenAtom);
   const setSettingsOpen = useSetAtom(settingsOpenAtom);
   const setCreateWorkspaceOpen = useSetAtom(createWorkspaceOpenAtom);
@@ -176,7 +176,7 @@ function SearchContent({ onSelect }: { onSelect: () => void }) {
           <ActionItem
             label="Open Sessions"
             icon={<FileText />}
-            onSelect={wrap(() => setSessionsOpen(true))}
+            onSelect={wrap(() => setChatPanelView("sessions"))}
           />
           <ActionItem
             label="Open Marketplace"

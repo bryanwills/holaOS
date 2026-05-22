@@ -6,13 +6,11 @@ import { useEffect, useState } from "react";
 import { SettingsScreenRoot } from "@/components/layout/SettingsScreenRoot";
 import { AutomationsPane } from "@/components/panes/AutomationsPane";
 import { MarketplacePane } from "@/components/panes/MarketplacePane";
-import { SubagentSessionsPane } from "@/components/panes/SubagentSessionsPane";
 import { Button } from "@/components/ui/button";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import {
   automationsOpenAtom,
   marketplaceOpenAtom,
-  sessionsOpenAtom,
   settingsOpenAtom,
   settingsSectionAtom,
 } from "./state/ui";
@@ -22,7 +20,6 @@ export function Overlays() {
   return (
     <>
       <AutomationsOverlay />
-      <SessionsOverlay />
       <MarketplaceOverlay />
       <SettingsOverlay />
     </>
@@ -94,19 +91,6 @@ function AutomationsOverlay() {
     </PaneOverlay>
   );
 }
-
-function SessionsOverlay() {
-  const { selectedWorkspaceId } = useWorkspaceSelection();
-  return (
-    <PaneOverlay openAtom={sessionsOpenAtom} title="Sessions">
-      <SubagentSessionsPane
-        workspaceId={selectedWorkspaceId || null}
-        variant="full"
-      />
-    </PaneOverlay>
-  );
-}
-
 
 function MarketplaceOverlay() {
   return (

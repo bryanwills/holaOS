@@ -1,20 +1,64 @@
 import { useAtom, useSetAtom } from "jotai";
-import { useCallback, useEffect, useRef } from "react";
+import { ArrowLeft, MessageCircle } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatPane } from "@/components/panes/ChatPane";
 import type { AttachmentListItem } from "@/components/panes/ChatPane/types";
-import { sessionsOpenAtom } from "./state/ui";
+import { SubagentSessionsPane } from "@/components/panes/SubagentSessionsPane";
+import { Button } from "@/components/ui/button";
+import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import {
   activeInternalTabIdAtom,
   internalTabsAtom,
 } from "./state/internalTabs";
+import { chatPanelViewAtom } from "./state/ui";
 import { useOpenWorkspaceOutput } from "./useOpenWorkspaceOutput";
 
+interface ChatSessionOpenRequest {
+  sessionId: string;
+  requestKey: number;
+  mode?: "session" | "draft";
+}
+
 export function ChatPanel() {
-  const setSessionsOpen = useSetAtom(sessionsOpenAtom);
+  const { selectedWorkspaceId } = useWorkspaceSelection();
   const [internalTabs, setInternalTabs] = useAtom(internalTabsAtom);
   const setActiveInternalTabId = useSetAtom(activeInternalTabIdAtom);
   const { openOutput, openUrlInBrowserTab, openFileInInternalTab } =
     useOpenWorkspaceOutput();
+
+  const [view, setView] = useAtom(chatPanelViewAtom);
+  const [sessionOpenRequest, setSessionOpenRequest] =
+    useState<ChatSessionOpenRequest | null>(null);
+  const sessionRequestKeyRef = useRef(0);
+
+  // Reset to chat whenever the workspace changes — the sessions list is
+  // workspace-scoped and would otherwise show stale items briefly.
+  useEffect(() => {
+    setView("chat");
+  }, [selectedWorkspaceId, setView]);
+
+  const handleOpenSessionsView = useCallback(() => {
+    setView("sessions");
+  }, [setView]);
+
+  const handleReturnToChat = useCallback(() => {
+    setView("chat");
+  }, [setView]);
+
+  const handleOpenSession = useCallback(
+    (sessionId: string) => {
+      const normalized = sessionId.trim();
+      if (!normalized) return;
+      sessionRequestKeyRef.current += 1;
+      setSessionOpenRequest({
+        sessionId: normalized,
+        requestKey: sessionRequestKeyRef.current,
+        mode: "session",
+      });
+      setView("chat");
+    },
+    [setView],
+  );
 
   const handleOpenLocalLink = useCallback(
     (href: string) => {
@@ -86,14 +130,59 @@ export function ChatPanel() {
 
   return (
     <aside className="flex w-[480px] shrink-0 flex-col border-l border-border bg-background">
-      <ChatPane
-        variant="embedded"
-        onOpenSessions={() => setSessionsOpen(true)}
-        onOpenOutput={openOutput}
-        onOpenLinkInBrowser={openUrlInBrowserTab}
-        onOpenLocalLink={handleOpenLocalLink}
-        onPreviewImageAttachment={handlePreviewImageAttachment}
-      />
+      {view === "sessions" ? (
+        <SessionsView
+          workspaceId={selectedWorkspaceId || null}
+          onBack={handleReturnToChat}
+          onOpenSession={handleOpenSession}
+        />
+      ) : (
+        <ChatPane
+          variant="embedded"
+          onOpenSessions={handleOpenSessionsView}
+          onOpenOutput={openOutput}
+          onOpenLinkInBrowser={openUrlInBrowserTab}
+          onOpenLocalLink={handleOpenLocalLink}
+          onPreviewImageAttachment={handlePreviewImageAttachment}
+          sessionOpenRequest={sessionOpenRequest}
+        />
+      )}
     </aside>
+  );
+}
+
+function SessionsView({
+  workspaceId,
+  onBack,
+  onOpenSession,
+}: {
+  workspaceId: string | null;
+  onBack: () => void;
+  onOpenSession: (sessionId: string) => void;
+}) {
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
+        <div className="inline-flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
+          <MessageCircle className="size-3.5 shrink-0 text-foreground/55" />
+          <span className="truncate">Sessions</span>
+        </div>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Return to chat"
+          onClick={onBack}
+        >
+          <ArrowLeft className="size-3.5" />
+        </Button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <SubagentSessionsPane
+          workspaceId={workspaceId}
+          variant="full"
+          onOpenSession={(session) => onOpenSession(session.session_id)}
+        />
+      </div>
+    </div>
   );
 }
