@@ -16,6 +16,11 @@ import {
 import { StatusDot } from "@/components/ui/status-dot";
 import { WorkspaceIcon } from "@/components/ui/workspace-icon";
 import { WorkspaceIconPicker } from "@/components/ui/workspace-icon-picker";
+import {
+  OutputArtifactIcon,
+  outputKindLabel,
+  sortOutputsLatestFirst,
+} from "@/components/panes/ChatPane/ArtifactBrowserModal";
 import { FileTypeIcon } from "@/lib/fileIcon";
 import { useIntegrationBinding } from "@/lib/useIntegrationBinding";
 import { cn } from "@/lib/utils";
@@ -79,6 +84,7 @@ import {
 import { useTaskProposals } from "./useTaskProposals";
 import {
   useRecentBrowserHistory,
+  useWorkspaceArtifacts,
   useWorkspaceCronjobs,
   useWorkspaceSkills,
 } from "./useWorkspaceLists";
@@ -465,25 +471,64 @@ function SidebarInboxSection() {
 }
 
 function SidebarArtifactsSection() {
+  const { selectedWorkspaceId } = useWorkspaceSelection();
+  const outputs = useWorkspaceArtifacts(selectedWorkspaceId || null);
   const setArtifactsOpen = useSetAtom(artifactsOpenAtom);
+  const sortedOutputs = useMemo(
+    () => sortOutputsLatestFirst(outputs),
+    [outputs],
+  );
+  const visibleOutputs = sortedOutputs.slice(0, 12);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-3">
-      <SectionLabel>Artifacts</SectionLabel>
-      <div className="grid place-items-center px-3 py-12 text-center">
-        <div className="flex flex-col items-center gap-3">
-          <Package className="size-5 text-foreground/30" />
-          <div className="text-xs text-foreground/55">
-            Artifacts from your agent runs will appear here.
+      <SectionLabel>
+        Artifacts
+        {sortedOutputs.length > 0 ? (
+          <span className="ml-auto text-foreground/30">
+            {sortedOutputs.length}
+          </span>
+        ) : null}
+      </SectionLabel>
+      {sortedOutputs.length === 0 ? (
+        <div className="grid place-items-center px-3 py-12 text-center">
+          <div className="flex flex-col items-center gap-2">
+            <Package className="size-5 text-foreground/30" />
+            <div className="text-xs text-foreground/55">
+              Artifacts from your agent runs will appear here.
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setArtifactsOpen(true)}
-            className="rounded-md bg-foreground/[0.05] px-2.5 py-1 text-xs text-foreground/70 transition-colors hover:bg-foreground/[0.08] hover:text-foreground"
-          >
-            Open full Artifacts view
-          </button>
         </div>
-      </div>
+      ) : (
+        <div className="flex flex-col gap-0.5">
+          {visibleOutputs.map((output) => {
+            const kindLabel = outputKindLabel(output);
+            return (
+              <button
+                key={output.id}
+                type="button"
+                onClick={() => setArtifactsOpen(true)}
+                className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground/80 transition-colors hover:bg-foreground/[0.04]"
+              >
+                <OutputArtifactIcon output={output} variant="bare" />
+                <span className="min-w-0 flex-1 truncate text-foreground">
+                  {output.title || "Untitled artifact"}
+                </span>
+                <span className="shrink-0 text-foreground/45">{kindLabel}</span>
+              </button>
+            );
+          })}
+          {sortedOutputs.length > visibleOutputs.length ? (
+            <button
+              type="button"
+              onClick={() => setArtifactsOpen(true)}
+              className="mt-1 rounded-md px-2 py-1 text-left text-xs text-foreground/55 transition-colors hover:bg-foreground/[0.04] hover:text-foreground"
+            >
+              See all {sortedOutputs.length} →
+            </button>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }

@@ -32,6 +32,42 @@ export function useWorkspaceSkills(workspaceId: string | null) {
   return skills;
 }
 
+/**
+ * Workspace artifacts (agent-run outputs). Mirrors the workspace-scoped
+ * fetch behind ArtifactsPane so the sidebar can show recent items inline
+ * without forcing the user to open the full overlay.
+ */
+export function useWorkspaceArtifacts(workspaceId: string | null) {
+  const [outputs, setOutputs] = useState<WorkspaceOutputRecordPayload[]>([]);
+
+  useEffect(() => {
+    if (!workspaceId) {
+      setOutputs([]);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const response = await window.electronAPI.workspace.listOutputs({
+          workspaceId,
+          limit: 50,
+        });
+        if (!cancelled) setOutputs(response.items ?? []);
+      } catch {
+        // tolerate transient errors — sidebar stays at last known list
+      }
+    };
+    void load();
+    const timer = window.setInterval(load, POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [workspaceId]);
+
+  return outputs;
+}
+
 /** Workspace cronjobs (active automations). */
 export function useWorkspaceCronjobs(workspaceId: string | null) {
   const [jobs, setJobs] = useState<CronjobRecordPayload[]>([]);
