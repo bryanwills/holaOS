@@ -5912,6 +5912,88 @@ export class RuntimeAgentToolsService {
     };
   }
 
+  /**
+   * Polish-pass queueing for dashboard apps whose required integrations
+   * have just become bound (typically called from integrations.ts's
+   * onConnectionActive hook after a connection becomes active).
+   *
+   * Forensic context: ensureWorkspaceAppsRunning defers polish when
+   * pending_integrations is non-empty (polish needs a real UI to
+   * screenshot, not the integration_not_bound empty state). After the
+   * user binds, nothing else explicitly re-evaluates polish — the
+   * agent's session is idle by then and won't call ensure-running
+   * again on its own. This method bridges the gap: iterate registered
+   * dashboard apps in the workspace, and for each one whose pending
+   * integrations are now empty, queue the polish input to the most
+   * recently active main session.
+   */
+  queuePolishForCompletedBindings(workspaceId: string): JsonObject[] {
+    let workspaceDir: string;
+    try {
+      this.requireWorkspace(workspaceId);
+      workspaceDir = path.join(this.options.workspaceRoot, workspaceId);
+    } catch {
+      return [];
+    }
+
+    const sessionId = this.latestMainSessionId(workspaceId);
+    if (!sessionId) return [];
+
+    const apps = this.listRegisteredWorkspaceAppEntries(workspaceId)
+      .map((entry) => (typeof entry.app_id === "string" ? entry.app_id : ""))
+      .filter((appId) => appId.length > 0 && appIsDashboardShape(workspaceDir, appId));
+    if (apps.length === 0) return [];
+
+    const queued: JsonObject[] = [];
+    for (const appId of apps) {
+      const pending = pendingIntegrationsFromAppManifests({
+        workspaceDir,
+        appIds: [appId],
+        store: this.store,
+        workspaceId,
+      });
+      if (pending.length > 0) continue;
+
+      const idempotencyKey = `polish-pass:${sessionId}:${appId}`;
+      try {
+        const input = this.store.enqueueInput({
+          workspaceId,
+          sessionId,
+          idempotencyKey,
+          payload: {
+            text: buildPolishPassPrompt(appId),
+            image_urls: [],
+            context: {
+              source: "runtime_auto_queue",
+              source_type: "post_binding_polish_pass",
+              app_id: appId,
+            },
+          },
+        });
+        queued.push({ app_id: appId, input_id: input.inputId, session_id: sessionId });
+      } catch {
+        // best-effort
+      }
+    }
+    return queued;
+  }
+
+  /** Return the most recently updated non-archived main session in the
+   *  workspace, or null when no main session exists yet. */
+  private latestMainSessionId(workspaceId: string): string | null {
+    try {
+      const sessions = this.store.listSessions({
+        workspaceId,
+        includeArchived: false,
+        limit: 50,
+      });
+      const main = sessions.find((s) => s.kind === "main_session");
+      return main?.sessionId ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   async restartWorkspaceApp(
     params: RuntimeAgentToolsRestartWorkspaceAppParams,
   ): Promise<JsonObject> {

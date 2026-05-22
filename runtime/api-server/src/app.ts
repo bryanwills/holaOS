@@ -3405,6 +3405,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const composioMcpManagerHolder: {
     manager: { restart: (workspaceId: string) => Promise<unknown> } | null;
   } = { manager: null };
+  const runtimeAgentToolsHolder: {
+    service: { queuePolishForCompletedBindings: (workspaceId: string) => unknown } | null;
+  } = { service: null };
   const integrationService = new RuntimeIntegrationService(store, {
     onConnectionActive: () => {
       try {
@@ -3445,6 +3448,41 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
           app.log.warn(
             { error: error instanceof Error ? error.message : String(error) },
             "iterating workspaces for composio-mcp restart failed",
+          );
+        }
+      }
+
+      // When a connection becomes active for a dashboard app's required
+      // provider, the pending_integrations gate that was deferring the
+      // polish pass may have just unblocked. ensureWorkspaceAppsRunning
+      // is the natural place to queue polish, but nothing calls it
+      // automatically after a binding completes — the agent's session
+      // is idle by then. Trigger the polish-queue logic directly for
+      // every workspace; the method internally re-checks pending
+      // integrations and dashboard shape per app.
+      const runtimeAgentTools = runtimeAgentToolsHolder.service;
+      if (runtimeAgentTools) {
+        try {
+          for (const workspace of store.listWorkspaces({ includeDeleted: false })) {
+            try {
+              const queued = runtimeAgentTools.queuePolishForCompletedBindings(workspace.id);
+              if (Array.isArray(queued) && queued.length > 0) {
+                queueWorkerHolder.worker?.wake();
+              }
+            } catch (error) {
+              app.log.warn(
+                {
+                  err: error instanceof Error ? error.message : String(error),
+                  workspaceId: workspace.id,
+                },
+                "queuePolishForCompletedBindings failed",
+              );
+            }
+          }
+        } catch (error) {
+          app.log.warn(
+            { error: error instanceof Error ? error.message : String(error) },
+            "iterating workspaces for polish queue failed",
           );
         }
       }
@@ -3543,6 +3581,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       },
     },
   });
+  runtimeAgentToolsHolder.service = runtimeAgentToolsService;
   async function maybeShapeCapabilityToolResult(params: {
     headers: Record<string, unknown>;
     toolId: string;
