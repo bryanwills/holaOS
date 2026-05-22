@@ -98,6 +98,18 @@ The runtime enforces this at `workspace_apps_register` time: a source-tree scan 
 
 The SDK's default `startMcpServer({ httpPort, ... })` ships a one-screen "headless module" placeholder on the http port. That placeholder is **only acceptable for integration-only modules** (Slack-style MCP-driven flows). The moment the user asks for a dashboard / list view / kanban / calendar / "let me see my X", you must replace the placeholder with a real dashboard built on `@holaboss/ui`.
 
+### Mandatory: invoke `interface-design` before writing JSX
+
+**This is a hard gate, not a suggestion.** Before writing the first line of code under `src/client/` for a dashboard-shape app, invoke `skill({ name: "interface-design" })` exactly once. Read its full output and apply it.
+
+Why this is mandatory:
+
+- Without it, agent-authored dashboards consistently ship with the same failure mode the user has flagged repeatedly: stacked full-width KPI cards, no information density, generic shadcn marketing-page aesthetics, weight stacking via `text-3xl` headers and `font-bold`. The `@holaboss/ui` primitives alone don't prevent this — agents reach for them and still hand-roll bad compositions.
+- `interface-design` is purpose-built for the exact category of work this skill triggers: dashboards, admin panels, internal SaaS tools, data-dense interactive products. Its rules (anti-generic-output, density, hierarchy, restraint) compose cleanly on top of the Linear aesthetic + `@holaboss/ui` density rules below.
+- Token cost is real but bounded: the skill is small (one SKILL.md + 4 reference files, ~40KB). The cost of a single dashboard that ships looking broken is much higher — the user has rejected output enough times that re-invoking app-builder-sdk to redo the UI dwarfs the up-front cost of chaining interface-design.
+
+Do not skip on the grounds that "I already have app-builder-sdk loaded" or "I know the Linear aesthetic". This skill exists because aesthetic intuition alone is not load-bearing for this category of work; the explicit rules are. Do not invoke `frontend-design` instead — that one targets marketing pages / landing pages / posters and will drift the output the wrong way. For integration-only modules (no `src/client/`), skip this step entirely; it applies only when you are about to author dashboard JSX.
+
 ### Visual design language: anchor on Linear
 
 When laying out a holaOS dashboard, **target the Linear aesthetic** (linear.app). Linear is the canonical reference for a holaOS pane. If your output doesn't feel like it could ship inside Linear, you took a wrong turn.

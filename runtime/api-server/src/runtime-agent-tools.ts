@@ -128,10 +128,29 @@ function pendingIntegrationsFromAppManifests(params: {
       const key = `${appId}|${providerLower}`;
       if (seen.has(key)) continue;
       seen.add(key);
+      // Count active connections for this provider so the agent can tell
+      // "user needs to OAuth-connect (zero accounts)" apart from
+      // "user already has accounts, app just needs binding (chat UI
+      // handles the picker)". Without this the agent calls
+      // propose_connect even when the user has authorized accounts,
+      // and the user sees a duplicate Connect card next to the
+      // auto-rendered binding picker.
+      let availableAccounts = 0;
+      if (params.store) {
+        try {
+          availableAccounts = params.store
+            .listIntegrationConnections({ providerId: integration.provider })
+            .filter((conn) => conn.status.trim().toLowerCase() === "active")
+            .length;
+        } catch {
+          availableAccounts = 0;
+        }
+      }
       out.push({
         app_id: appId,
         provider_id: integration.provider,
         credential_source: integration.credentialSource,
+        available_accounts: availableAccounts,
         // Forward the per-yaml whoami config (if any) so the chat UI can
         // pass it to Hono's /composio/connect — removes the need for the
         // central PROVIDER_WHOAMI constant in the Hono worker.
