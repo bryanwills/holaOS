@@ -50,9 +50,6 @@ export const createWorkspaceOpenAtom = atom(false);
 /** Is the Automations overlay open? */
 export const automationsOpenAtom = atom(false);
 
-/** Is the Sessions overlay open? */
-export const sessionsOpenAtom = atom(false);
-
 /** Is the Settings full-screen overlay open? */
 export const settingsOpenAtom = atom(false);
 
@@ -69,6 +66,14 @@ export const appsExpandedAtom = atomWithStorage(
 export const settingsSectionAtom = atom<UiSettingsPaneSection>("settings");
 
 /**
+ * Which view the right-hand chat panel is showing. "chat" is the normal
+ * ChatPane; "sessions" swaps in the workspace's session list (legacy
+ * AppShell's agentView pattern). Lifted to jotai so cmd+K can flip it.
+ */
+export type ChatPanelView = "chat" | "sessions";
+export const chatPanelViewAtom = atom<ChatPanelView>("chat");
+
+/**
  * True when any overlay is open. BrowserPane reads this to detach the
  * native BrowserView; otherwise the OS-level webview paints on top of
  * the React modal layer and the user can't see it.
@@ -80,7 +85,6 @@ export const browserViewSuspendedAtom = atom(
     get(publishOpenAtom) ||
     get(createWorkspaceOpenAtom) ||
     get(automationsOpenAtom) ||
-    get(sessionsOpenAtom) ||
     get(settingsOpenAtom) ||
     get(marketplaceOpenAtom) ||
     get(activeInternalTabIdAtom) !== null ||
