@@ -70,11 +70,6 @@ import {
   findForbiddenUpstreamHosts,
   formatHostLintError,
 } from "./workspace-app-host-lint.js";
-import {
-  formatDashboardUiLintError,
-  inspectDashboardUiUsage,
-} from "./workspace-app-ui-lint.js";
-
 const SESSION_REFRESH_NOTE =
   "New MCP servers became available in this turn. Their tools will be visible to you starting from the next user message — please end this turn (do not call the new tools yet) and let the user trigger the next one.";
 
@@ -5401,14 +5396,11 @@ export class RuntimeAgentToolsService {
       );
     }
 
-    const uiUsage = inspectDashboardUiUsage(appDir);
-    if (uiUsage.hasClientDir && !uiUsage.usesHolabossUiLayout) {
-      throw new RuntimeAgentToolsServiceError(
-        400,
-        "workspace_app_missing_holaboss_ui_layout",
-        formatDashboardUiLintError(uiUsage),
-      );
-    }
+    // Dashboard layout lint removed in @holaboss/ui 0.3.0 — layouts
+    // primitives are gone; agents compose page chrome from raw primitives
+    // (Card, Tabs, Section, Sheet, Sidebar, etc.) plus the interface-design
+    // skill. No structural gate replaces it; visual quality is now
+    // owned by the skill chain, not register-time grep.
 
     const lifecycle: Record<string, string> = {};
     if (parsed.lifecycle.setup) lifecycle.setup = parsed.lifecycle.setup;

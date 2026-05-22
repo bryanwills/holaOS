@@ -124,33 +124,6 @@ export * from "./primitives/toggle-group.js";
 export * from "./primitives/toggle.js";
 
 // =====================================================================
-// Layouts — composition primitives. Use these for page chrome,
-// loading / empty / error states, and dashboard structure. The
-// majority of visual drift between agent-built apps happens at this
-// layer, so reach for these before hand-rolling a similar layout.
-// =====================================================================
-
-export { DashboardShell } from "./layouts/dashboard-shell.js";
-export type { DashboardShellProps } from "./layouts/dashboard-shell.js";
-export { DataTable } from "./layouts/data-table.js";
-export type {
-  DataTableColumn,
-  DataTableProps,
-} from "./layouts/data-table.js";
-export { ErrorState } from "./layouts/error-state.js";
-export type { ErrorStateProps } from "./layouts/error-state.js";
-export { FilterBar } from "./layouts/filter-bar.js";
-export type { FilterBarProps } from "./layouts/filter-bar.js";
-export { LoadingState } from "./layouts/loading-state.js";
-export type { LoadingStateProps } from "./layouts/loading-state.js";
-export { PageHeader } from "./layouts/page-header.js";
-export type { PageHeaderProps } from "./layouts/page-header.js";
-export { Section } from "./layouts/section.js";
-export type { SectionProps } from "./layouts/section.js";
-export { StatPill } from "./layouts/stat-pill.js";
-export type { StatPillProps } from "./layouts/stat-pill.js";
-
-// =====================================================================
 // Utilities
 // =====================================================================
 
