@@ -3199,6 +3199,13 @@ interface UpdateQueuedSessionInputResponsePayload {
   updated_at: string;
 }
 
+interface CancelQueuedSessionInputResponsePayload {
+  input_id: string;
+  session_id: string;
+  status: string;
+  updated_at: string;
+}
+
 interface HolabossClientConfigPayload {
   projectsUrl: string;
   marketplaceUrl: string;
@@ -3339,6 +3346,12 @@ interface HolabossUpdateQueuedSessionInputPayload {
   session_id: string;
   input_id: string;
   text: string;
+}
+
+interface HolabossCancelQueuedSessionInputPayload {
+  workspace_id: string;
+  session_id: string;
+  input_id: string;
 }
 
 interface HolabossStreamSessionOutputsPayload {
@@ -15903,6 +15916,18 @@ async function updateQueuedSessionInput(
   );
 }
 
+async function cancelQueuedSessionInput(
+  payload: HolabossCancelQueuedSessionInputPayload,
+): Promise<CancelQueuedSessionInputResponsePayload> {
+  return requestWorkspaceRuntimeJson<CancelQueuedSessionInputResponsePayload>(
+    payload.workspace_id,
+    {
+      method: "DELETE",
+      path: `/api/v1/agent-sessions/${encodeURIComponent(payload.session_id)}/inputs/${encodeURIComponent(payload.input_id)}?workspace_id=${encodeURIComponent(payload.workspace_id)}`,
+    },
+  );
+}
+
 async function* iterSseEvents(stream: NodeJS.ReadableStream) {
   const decoder = new TextDecoder();
   let buffer = "";
@@ -23575,6 +23600,12 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, payload: HolabossUpdateQueuedSessionInputPayload) =>
       updateQueuedSessionInput(payload),
+  );
+  handleTrustedIpc(
+    "workspace:cancelQueuedSessionInput",
+    ["main"],
+    async (_event, payload: HolabossCancelQueuedSessionInputPayload) =>
+      cancelQueuedSessionInput(payload),
   );
   handleTrustedIpc(
     "workspace:openSessionOutputStream",

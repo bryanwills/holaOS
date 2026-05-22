@@ -6623,6 +6623,46 @@ export function ChatPane({
     );
   }
 
+  async function cancelQueuedSessionInputItem(item: QueuedSessionInput) {
+    if (queuedSessionInputPreview.length > 0) {
+      const previewIndex =
+        Number.parseInt(
+          item.inputId.replace("preview-queued-", "").trim(),
+          10,
+        ) - 1;
+      const currentEntries = window.__holabossQueuedMessagesPreviewState ?? [];
+      if (previewIndex < 0 || previewIndex >= currentEntries.length) {
+        throw new Error("Queued preview item not found.");
+      }
+      const updatedEntries = currentEntries.filter(
+        (_entry, index) => index !== previewIndex,
+      );
+      setQueuedSessionInputPreviewState(updatedEntries);
+      return;
+    }
+
+    if (item.status !== "queued") {
+      throw new Error("Only queued messages can be cancelled.");
+    }
+
+    await window.electronAPI.workspace.cancelQueuedSessionInput({
+      workspace_id: item.workspaceId,
+      session_id: item.sessionId,
+      input_id: item.inputId,
+    });
+
+    setQueuedSessionInputs((current) =>
+      current.filter(
+        (currentItem) =>
+          !(
+            currentItem.inputId === item.inputId &&
+            currentItem.sessionId === item.sessionId &&
+            currentItem.workspaceId === item.workspaceId
+          ),
+      ),
+    );
+  }
+
   function appendPendingLocalFiles(files: File[]) {
     if (files.length === 0) {
       return;
@@ -8880,6 +8920,11 @@ export function ChatPane({
                               ? undefined
                               : updateQueuedSessionInputText
                           }
+                          onCancelItem={
+                            isReadOnlyInspectionSession
+                              ? undefined
+                              : cancelQueuedSessionInputItem
+                          }
                         >
                           <Composer
                             input={input}
@@ -8994,6 +9039,11 @@ export function ChatPane({
                         isReadOnlyInspectionSession
                           ? undefined
                           : updateQueuedSessionInputText
+                      }
+                      onCancelItem={
+                        isReadOnlyInspectionSession
+                          ? undefined
+                          : cancelQueuedSessionInputItem
                       }
                     >
                       <Composer
