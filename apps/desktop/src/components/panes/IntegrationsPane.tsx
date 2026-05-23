@@ -95,6 +95,20 @@ function composioFallbackLogo(slug: string): string | null {
   return `https://logos.composio.dev/api/${cleaned}`;
 }
 
+// Composio's logo CDN returns wide wordmark SVGs (and sometimes a pure
+// white fill) for a handful of providers, so the square thumbnail in
+// the integrations grid renders as a sliver-in-a-banner or invisibly
+// white-on-white. Simple Icons publishes a square monochrome SVG per
+// brand at a stable unpkg URL — short-circuit just those slugs.
+const BRAND_LOGO_OVERRIDES: Record<string, string> = {
+  github: "https://unpkg.com/simple-icons@16.20.0/icons/github.svg",
+  linear: "https://unpkg.com/simple-icons@16.20.0/icons/linear.svg",
+};
+
+function brandLogoOverride(slug: string): string | null {
+  return BRAND_LOGO_OVERRIDES[slug.trim().toLowerCase()] ?? null;
+}
+
 function mergeIntegrationCards(
   catalogProviders: IntegrationCatalogProviderPayload[],
   toolkits: ComposioToolkit[],
@@ -131,7 +145,10 @@ function mergeIntegrationCards(
         normalizedText(provider.description) ||
         normalizedText(provider.display_name) ||
         providerId,
-      logo: toolkit?.logo ?? composioFallbackLogo(providerId),
+      logo:
+        brandLogoOverride(providerId) ??
+        toolkit?.logo ??
+        composioFallbackLogo(providerId),
       authSchemes: uniqueStrings([
         ...(toolkit?.auth_schemes || []),
         ...(provider.auth_modes || []),
@@ -151,7 +168,7 @@ function mergeIntegrationCards(
       providerId,
       name: normalizedText(toolkit.name) || providerId,
       description: normalizedText(toolkit.description) || providerId,
-      logo: toolkit.logo,
+      logo: brandLogoOverride(providerId) ?? toolkit.logo,
       authSchemes: uniqueStrings(toolkit.auth_schemes || []),
       categories: toolkitCategories.length > 0 ? toolkitCategories : ["other"],
       supportsManaged: true,
