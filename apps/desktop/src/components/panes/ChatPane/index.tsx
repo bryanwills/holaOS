@@ -3016,6 +3016,11 @@ interface ChatPaneProps {
   inboxUnreadCount?: number;
   onOpenAutomations?: () => void;
   onOpenArtifacts?: () => void;
+  /**
+   * Optional: when present, ChatHeader renders a leading focus-mode
+   * toggle. Only the new shell wires this — legacy AppShell omits.
+   */
+  onEnterFocusMode?: () => void;
   composerDraftText?: string;
   onComposerDraftTextChange?: (text: string) => void;
   /** Schedule the user is currently editing — when set, ChatPane shows a
@@ -3058,6 +3063,7 @@ export function ChatPane({
   inboxUnreadCount = 0,
   onOpenAutomations,
   onOpenArtifacts,
+  onEnterFocusMode,
   composerDraftText = "",
   onComposerDraftTextChange,
   scheduleEditContext = null,
@@ -8590,6 +8596,7 @@ export function ChatPane({
               onOpenSessions={onOpenSessions}
               onOpenAutomations={onOpenAutomations}
               onOpenArtifacts={onOpenArtifacts}
+              onEnterFocusMode={onEnterFocusMode}
             />
           </div>
         ) : null}
