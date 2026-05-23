@@ -7,7 +7,6 @@ import {
   Package,
   PanelLeftClose,
   PanelLeftOpen,
-  PanelRightClose,
   Plus,
   X,
 } from "lucide-react";
@@ -32,11 +31,7 @@ import {
   internalTabsAtom,
 } from "./state/internalTabs";
 import { removeRecentFileByPathAtom } from "./state/recentFiles";
-import {
-  focusModeAtom,
-  newTabOpenAtom,
-  sidebarCollapsedAtom,
-} from "./state/ui";
+import { newTabOpenAtom, sidebarCollapsedAtom } from "./state/ui";
 
 export function TopChrome() {
   const openNewTab = useSetAtom(newTabOpenAtom);
@@ -226,18 +221,15 @@ export function TopChrome() {
         />
       ))}
       {agentTabCount > 0 ? <ScratchGroupChip /> : null}
-      <div className="ml-auto flex items-center gap-0.5">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="New tab"
-          onClick={() => openNewTab(true)}
-          className="window-no-drag text-foreground/55 hover:text-foreground"
-        >
-          <Plus className="size-3.5" strokeWidth={1.75} />
-        </Button>
-        <FocusModeToggle />
-      </div>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label="New tab"
+        onClick={() => openNewTab(true)}
+        className="window-no-drag ml-1 text-foreground/55 hover:text-foreground"
+      >
+        <Plus className="size-3.5" strokeWidth={1.75} />
+      </Button>
       {menuTarget && ctxActions ? (
         <TabContextMenu
           target={menuTarget}
@@ -249,27 +241,6 @@ export function TopChrome() {
         />
       ) : null}
     </header>
-  );
-}
-
-/**
- * Right-side affordance to collapse the tabs/Center column and let chat
- * take over the canvas. Uses `strokeWidth={1.5}` for a quiet, refined
- * line weight that reads as a tool, not a CTA.
- */
-function FocusModeToggle() {
-  const setFocusMode = useSetAtom(focusModeAtom);
-  return (
-    <Button
-      variant="ghost"
-      size="icon-sm"
-      aria-label="Focus on chat"
-      title="Focus on chat"
-      onClick={() => setFocusMode(true)}
-      className="window-no-drag text-foreground/45 transition-colors hover:text-foreground/85"
-    >
-      <PanelRightClose className="size-3.5" strokeWidth={1.5} />
-    </Button>
   );
 }
 

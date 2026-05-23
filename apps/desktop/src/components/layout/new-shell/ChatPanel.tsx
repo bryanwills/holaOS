@@ -1,16 +1,33 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, ChevronLeft, MessageCircle, Plus } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  ArrowLeft,
+  ChevronDown,
+  File as FileIcon,
+  Globe,
+  MessageCircle,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Plus,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWorkspaceBrowser } from "@/components/panes/useWorkspaceBrowser";
 import { ChatPane } from "@/components/panes/ChatPane";
 import type { AttachmentListItem } from "@/components/panes/ChatPane/types";
 import { SubagentSessionsPane } from "@/components/panes/SubagentSessionsPane";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import {
   activeInternalTabIdAtom,
+  type InternalTab,
   internalTabsAtom,
 } from "./state/internalTabs";
 import {
@@ -25,7 +42,7 @@ import {
 import type { ChatLayout } from "./useChatLayout";
 import { useOpenWorkspaceOutput } from "./useOpenWorkspaceOutput";
 
-// Linear-style ease — flat, no overshoot. Reused for canvas/width
+// Linear-style ease — flat, no overshoot. Reused across canvas/width
 // transitions so the shell feels of a piece with the inbox cards.
 const CHAT_EASE = [0.32, 0.72, 0, 1] as const;
 
@@ -169,23 +186,21 @@ export function ChatPanel({ layout = "split" }: { layout?: ChatLayout }) {
   return (
     <aside
       className={cn(
-        "relative flex shrink-0 flex-col bg-background transition-[width] duration-stride ease-out-expo",
+        "group/chat-panel relative flex shrink-0 flex-col bg-background transition-[width] duration-stride ease-out-expo",
         isCanvas ? "min-w-0 flex-1" : "border-l border-border",
       )}
       style={isCanvas ? undefined : { width: chatPanelWidth }}
     >
       {!isCanvas ? <ChatPanelResizeHandle /> : null}
+      {isCanvas ? <CanvasHeader /> : <SplitModeFocusButton />}
       <div
         className={cn(
           "flex min-h-0 flex-1 flex-col",
-          isCanvas && "mx-auto w-full max-w-[760px] px-8",
+          isCanvas && "mx-auto w-full max-w-[760px] px-8 pt-1",
         )}
       >
         {body}
       </div>
-      <AnimatePresence>
-        {isCanvas ? <ChatCanvasControls key="canvas-controls" /> : null}
-      </AnimatePresence>
     </aside>
   );
 }
@@ -240,7 +255,7 @@ function ChatPanelResizeHandle() {
       onMouseEnter={() => setHovering(true)}
       onMouseLeave={() => setHovering(false)}
       onDoubleClick={() => setWidth(CHAT_PANEL_DEFAULT_WIDTH)}
-      className="absolute top-0 left-0 z-10 h-full w-1.5 -translate-x-1/2 cursor-col-resize select-none"
+      className="absolute top-0 left-0 z-20 h-full w-1.5 -translate-x-1/2 cursor-col-resize select-none"
     >
       <div
         className={cn(
@@ -253,62 +268,240 @@ function ChatPanelResizeHandle() {
 }
 
 /**
- * Floating control row that sits over the top of the chat canvas in
- * chatOnly / focus modes. `pointer-events-none` on the container so the
- * chat below stays interactive; only the actual buttons receive events.
- * Backdrop blur on the buttons keeps them legible against scrolling
- * content underneath.
+ * Discreet focus-entry affordance for split mode — a small `PanelLeftClose`
+ * icon button anchored to the chat panel's top-right. Reveals only on hover
+ * over the panel so it doesn't compete with the composer for attention.
+ * Icon metaphor matches the action: clicking collapses the panel(s) to the
+ * left of chat (TopChrome + Center).
  */
-function ChatCanvasControls() {
+function SplitModeFocusButton() {
+  const setFocusMode = useSetAtom(focusModeAtom);
+  return (
+    <button
+      type="button"
+      onClick={() => setFocusMode(true)}
+      aria-label="Focus on chat"
+      title="Focus on chat"
+      className="window-no-drag absolute top-2 right-2 z-10 grid size-6 place-items-center rounded-md text-foreground/35 opacity-0 transition-[opacity,color,background-color] duration-snappy ease-emphasized hover:bg-foreground/[0.04] hover:text-foreground/85 focus-visible:opacity-100 group-hover/chat-panel:opacity-100"
+    >
+      <PanelLeftClose className="size-3.5" strokeWidth={1.5} />
+    </button>
+  );
+}
+
+/**
+ * Full-width header bar for canvas modes. Holds the hidden-tabs dropdown
+ * on the left (in focus mode) and the new-tab + restore controls on the
+ * right. Replaces the floating overlay so the chat below isn't obstructed
+ * by mid-content buttons and the area reads as a proper header.
+ */
+function CanvasHeader() {
   const { browserState } = useWorkspaceBrowser("user");
   const internalTabs = useAtomValue(internalTabsAtom);
   const [focusMode, setFocusMode] = useAtom(focusModeAtom);
   const openNewTab = useSetAtom(newTabOpenAtom);
   const totalTabsHidden = browserState.tabs.length + internalTabs.length;
-  const canExitFocus = focusMode && totalTabsHidden > 0;
+  const showTabsDropdown = focusMode && totalTabsHidden > 0;
 
   return (
     <motion.div
       initial={{ opacity: 0, y: -2 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -2 }}
       transition={{ duration: 0.18, ease: CHAT_EASE }}
-      className="pointer-events-none absolute inset-x-0 top-0 z-10 flex h-10 items-center gap-1 px-3"
+      className="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-background/80 px-2 backdrop-blur-sm"
     >
       <AnimatePresence initial={false} mode="popLayout">
-        {canExitFocus ? (
-          <motion.button
-            key="exit-focus"
-            type="button"
+        {showTabsDropdown ? (
+          <motion.div
+            key="tabs-dropdown"
             layout
             initial={{ opacity: 0, x: -4 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -4 }}
             transition={{ duration: 0.16, ease: CHAT_EASE }}
-            onClick={() => setFocusMode(false)}
-            className="window-no-drag pointer-events-auto inline-flex h-7 items-center gap-1 rounded-md bg-background/70 px-2 text-[11px] font-medium text-foreground/55 backdrop-blur-sm ring-1 ring-border/60 transition-colors hover:bg-foreground/[0.04] hover:text-foreground"
-            title="Show tabs"
           >
-            <ChevronLeft className="size-3" strokeWidth={1.75} />
-            <span className="tabular-nums">
-              {totalTabsHidden} tab{totalTabsHidden === 1 ? "" : "s"}
-            </span>
-          </motion.button>
+            <HiddenTabsDropdown totalTabsHidden={totalTabsHidden} />
+          </motion.div>
         ) : null}
       </AnimatePresence>
-      <div className="ml-auto flex items-center gap-1">
+      <div className="ml-auto flex items-center gap-0.5">
         <Button
           variant="ghost"
           size="icon-sm"
           aria-label="New tab"
           onClick={() => openNewTab(true)}
-          className="window-no-drag pointer-events-auto bg-background/70 text-foreground/55 ring-1 ring-border/60 backdrop-blur-sm hover:text-foreground"
+          className="window-no-drag text-foreground/55 hover:text-foreground"
         >
           <Plus className="size-3.5" strokeWidth={1.75} />
         </Button>
+        {focusMode && totalTabsHidden > 0 ? (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Show tabs panel"
+            title="Show tabs panel"
+            onClick={() => setFocusMode(false)}
+            className="window-no-drag text-foreground/45 hover:text-foreground/85"
+          >
+            <PanelLeftOpen className="size-3.5" strokeWidth={1.5} />
+          </Button>
+        ) : null}
       </div>
     </motion.div>
   );
+}
+
+/**
+ * Dropdown listing every hidden tab (browser + internal). Picking a tab
+ * activates it AND exits focus, so the user lands on that tab rather than
+ * the last-active one. A trailing "Show all tabs" item exits focus without
+ * picking — useful when the user just wants the tab strip back.
+ */
+function HiddenTabsDropdown({
+  totalTabsHidden,
+}: {
+  totalTabsHidden: number;
+}) {
+  const { browserState } = useWorkspaceBrowser("user");
+  const internalTabs = useAtomValue(internalTabsAtom);
+  const setActiveInternalTabId = useSetAtom(activeInternalTabIdAtom);
+  const setFocusMode = useSetAtom(focusModeAtom);
+  const { selectedWorkspaceId } = useWorkspaceSelection();
+
+  const items = useMemo(() => {
+    const browserItems = browserState.tabs.map((tab) => ({
+      kind: "browser" as const,
+      id: tab.id,
+      label: tab.title || tab.url || "Untitled tab",
+      hint: tab.url ? hostFromUrl(tab.url) : "",
+      faviconUrl: tab.faviconUrl ?? "",
+    }));
+    const internalItems = internalTabs.map((tab) => ({
+      kind: "internal" as const,
+      id: tab.id,
+      label: tab.label,
+      hint: tab.kind === "file" ? "Local file" : "Image",
+      tab,
+    }));
+    return [...browserItems, ...internalItems];
+  }, [browserState.tabs, internalTabs]);
+
+  const activateBrowserTab = useCallback(
+    async (tabId: string) => {
+      setActiveInternalTabId(null);
+      if (selectedWorkspaceId) {
+        try {
+          await window.electronAPI.browser.setActiveWorkspace(
+            selectedWorkspaceId,
+            "user",
+          );
+        } catch {
+          // non-fatal
+        }
+      }
+      try {
+        await window.electronAPI.browser.setActiveTab(tabId);
+      } catch {
+        // non-fatal
+      }
+    },
+    [selectedWorkspaceId, setActiveInternalTabId],
+  );
+
+  const handleSelect = useCallback(
+    async (item: (typeof items)[number]) => {
+      if (item.kind === "browser") {
+        await activateBrowserTab(item.id);
+      } else {
+        setActiveInternalTabId(item.id);
+      }
+      setFocusMode(false);
+    },
+    [activateBrowserTab, setActiveInternalTabId, setFocusMode],
+  );
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        className="window-no-drag inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium text-foreground/55 transition-colors hover:bg-foreground/[0.04] hover:text-foreground focus-visible:bg-foreground/[0.04] focus-visible:outline-none data-[popup-open]:bg-foreground/[0.04] data-[popup-open]:text-foreground"
+        title="Hidden tabs"
+      >
+        <span className="tabular-nums">
+          {totalTabsHidden} tab{totalTabsHidden === 1 ? "" : "s"}
+        </span>
+        <ChevronDown className="size-3 opacity-60" strokeWidth={1.75} />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" side="bottom" className="w-72">
+        {items.map((item) => (
+          <DropdownMenuItem
+            key={`${item.kind}-${item.id}`}
+            onClick={() => void handleSelect(item)}
+            className="gap-2"
+          >
+            <TabIconForItem item={item} />
+            <span className="min-w-0 flex-1 truncate">{item.label}</span>
+            {item.hint ? (
+              <span className="shrink-0 truncate text-[10px] text-foreground/40">
+                {item.hint}
+              </span>
+            ) : null}
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={() => setFocusMode(false)}
+          className="gap-2 text-foreground/65"
+        >
+          <PanelLeftOpen className="size-3.5" strokeWidth={1.5} />
+          <span>Show tabs panel</span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+type HiddenTabItem =
+  | {
+      kind: "browser";
+      id: string;
+      label: string;
+      hint: string;
+      faviconUrl: string;
+    }
+  | {
+      kind: "internal";
+      id: string;
+      label: string;
+      hint: string;
+      tab: InternalTab;
+    };
+
+function TabIconForItem({ item }: { item: HiddenTabItem }) {
+  if (item.kind === "browser") {
+    return item.faviconUrl ? (
+      <img
+        src={item.faviconUrl}
+        alt=""
+        className="size-3.5 shrink-0 rounded-sm"
+      />
+    ) : (
+      <Globe className="size-3.5 shrink-0 text-foreground/45" strokeWidth={1.75} />
+    );
+  }
+  return (
+    <FileIcon
+      className="size-3.5 shrink-0 text-foreground/45"
+      strokeWidth={1.75}
+    />
+  );
+}
+
+function hostFromUrl(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "";
+  }
 }
 
 function SessionsView({
@@ -324,7 +517,10 @@ function SessionsView({
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
         <div className="inline-flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
-          <MessageCircle className="size-3.5 shrink-0 text-foreground/55" strokeWidth={1.75} />
+          <MessageCircle
+            className="size-3.5 shrink-0 text-foreground/55"
+            strokeWidth={1.75}
+          />
           <span className="truncate">Sessions</span>
         </div>
         <Button
