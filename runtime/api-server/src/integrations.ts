@@ -178,6 +178,18 @@ export interface IntegrationServiceHooks {
    *  api-server to wake inputs that were parked waiting for this provider
    *  to be connected via a propose_connect card. */
   onConnectionActive?: (params: { providerId: string }) => void;
+  /** Called after a binding row is created or updated via `upsertBinding`.
+   *  Distinct from `onConnectionActive` — fires when an *already-active*
+   *  connection is attached to an app (the dominant path when a previously-
+   *  authorized provider gets bound to a new dashboard app). The post-build
+   *  polish gate uses this to re-queue polish for apps whose pending
+   *  integrations were just resolved. */
+  onBindingCreated?: (params: {
+    workspaceId: string;
+    targetType: string;
+    targetId: string;
+    integrationKey: string;
+  }) => void;
 }
 
 export class RuntimeIntegrationService {
@@ -255,6 +267,13 @@ export class RuntimeIntegrationService {
       integrationKey,
       connectionId,
       isDefault
+    });
+
+    this.hooks.onBindingCreated?.({
+      workspaceId: binding.workspaceId,
+      targetType: binding.targetType,
+      targetId: binding.targetId,
+      integrationKey: binding.integrationKey
     });
 
     return toIntegrationBindingPayload(binding);
