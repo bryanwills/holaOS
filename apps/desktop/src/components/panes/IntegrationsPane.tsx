@@ -6,6 +6,7 @@ import {
   Plus,
   RefreshCw,
   ShieldAlert,
+  Trash2,
   Unplug,
 } from "lucide-react";
 import { AddIntegrationDialog } from "@/components/panes/AddIntegrationDialog";
@@ -190,6 +191,9 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     string | null
   >(null);
   const [disconnectingConnectionId, setDisconnectingConnectionId] = useState<
+    string | null
+  >(null);
+  const [clearingIntegrationMemoryConnectionId, setClearingIntegrationMemoryConnectionId] = useState<
     string | null
   >(null);
   const [refreshingConnectionId, setRefreshingConnectionId] = useState<
@@ -652,6 +656,10 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     label: string;
     workspaceCount: number;
   } | null>(null);
+  const [pendingMemoryClear, setPendingMemoryClear] = useState<{
+    connectionId: string;
+    label: string;
+  } | null>(null);
 
   function handleDisconnect(connectionId: string) {
     const target = connections.find((c) => c.connection_id === connectionId);
@@ -1047,6 +1055,28 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
         }}
         open={Boolean(pendingDisconnect)}
         title="Disconnect this account?"
+      />
+      <ConfirmDialog
+        confirmLabel="Clear memory"
+        description={
+          pendingMemoryClear
+            ? `${pendingMemoryClear.label} memory will be deleted from the integration tree. The account stays connected, and you can fetch again to rebuild it.`
+            : ""
+        }
+        destructive
+        onConfirm={() => {
+          // Integration-memory clear is part of the upstream integration
+          // memory graph rollout (ee6ed956) that's not wired up on this
+          // branch yet. Confirming just closes the dialog for now.
+          if (pendingMemoryClear) {
+            setPendingMemoryClear(null);
+          }
+        }}
+        onOpenChange={(open) => {
+          if (!open) setPendingMemoryClear(null);
+        }}
+        open={Boolean(pendingMemoryClear)}
+        title="Clear this account's memory?"
       />
     </>
   );
