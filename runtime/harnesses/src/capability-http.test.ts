@@ -157,6 +157,47 @@ test("runtime workspace-instructions client preserves explicit empty replacement
   });
 });
 
+test("runtime memory-retrieve client posts to the memory retrieval capability route", async () => {
+  let capturedUrl = "";
+  let capturedBody: Record<string, unknown> | null = null;
+
+  const fetchImpl: typeof fetch = async (input, init) => {
+    capturedUrl = String(input);
+    capturedBody =
+      typeof init?.body === "string"
+        ? (JSON.parse(init.body) as Record<string, unknown>)
+        : null;
+    return new Response(JSON.stringify({ tool_id: "memory_retrieve", hits: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+  };
+
+  await executeRuntimeToolCapability({
+    runtimeApiBaseUrl: "http://127.0.0.1:5060",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    selectedModel: "openai/gpt-5.4",
+    toolId: "memory_retrieve",
+    toolParams: {
+      query: "Who is the Orchid customer escalation contact?",
+      mode: "mixed",
+      tree_id: "interaction:customer:orchid",
+      max_results: 5,
+    },
+    fetchImpl,
+  });
+
+  assert.equal(capturedUrl, "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/memory/retrieve");
+  assert.deepEqual(capturedBody, {
+    query: "Who is the Orchid customer escalation contact?",
+    mode: "mixed",
+    tree_id: "interaction:customer:orchid",
+    max_results: 5,
+  });
+});
+
 test("runtime onboarding alignment-report client forwards structured report payloads", async () => {
   let capturedUrl = "";
   let capturedBody: Record<string, unknown> | null = null;
@@ -182,6 +223,12 @@ test("runtime onboarding alignment-report client forwards structured report payl
     toolId: "holaboss_create_alignment_report",
     toolParams: {
       report: {
+        markdown: [
+          "# Alignment report",
+          "",
+          "- Create a Twitter analytics workspace",
+          "- Add a custom dashboard app",
+        ].join("\n"),
         summary: "Create a Twitter analytics workspace.",
         custom_apps: [{ name: "twitter-engagement-dashboard" }],
       },
@@ -195,6 +242,12 @@ test("runtime onboarding alignment-report client forwards structured report payl
   );
   assert.deepEqual(capturedBody, {
     report: {
+      markdown: [
+        "# Alignment report",
+        "",
+        "- Create a Twitter analytics workspace",
+        "- Add a custom dashboard app",
+      ].join("\n"),
       summary: "Create a Twitter analytics workspace.",
       custom_apps: [{ name: "twitter-engagement-dashboard" }],
     },

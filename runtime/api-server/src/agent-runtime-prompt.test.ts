@@ -175,7 +175,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   );
   assert.match(
     prompt.systemPrompt,
-    /Use `AGENTS\.md` as the durable workspace ledger for stable instructions, procedures, facts, conventions, decisions, and recurring blockers; use local skills for situational workflows\./i
+    /Use `AGENTS\.md` for workspace-wide operating rules, defaults, conventions, and recurring commands that should shape behavior by default on future runs; use local skills for situational workflows\./i
   );
   assert.match(prompt.systemPrompt, /Session policy:/);
   assert.match(prompt.systemPrompt, /front-of-house workspace session/i);
@@ -619,6 +619,156 @@ test("composeAgentPrompt can inject a run-specific routing recovery override for
 test("composeAgentPrompt instructs main sessions to record durable workspace knowledge into AGENTS.md when the tool is available", () => {
   const capabilityManifest = buildAgentCapabilityManifest({
     defaultTools: ["read"],
+    extraTools: ["update_workspace_instructions", "memory_retrieve"],
+    runtimeToolIds: ["update_workspace_instructions", "memory_retrieve"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+  });
+
+  const prompt = composeAgentPrompt("You are concise.", {
+    defaultTools: ["read"],
+    extraTools: ["update_workspace_instructions", "memory_retrieve"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "main_session",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+  });
+
+  assert.match(
+    prompt.systemPrompt,
+    /Record workspace-wide operating defaults in root `AGENTS\.md` with `update_workspace_instructions` when they are clearly stable, likely to recur, or explicitly confirmed by the user/i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Before writing to `AGENTS\.md`, ask whether the agent should obey the information by default on most future runs in this workspace even when the current subject is not in scope\./i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /durable requirements or preferences, verified recurring commands, default procedures, conventions, policies, decisions, and recurring blockers that should shape behavior by default in future runs/i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Do not record named-subject knowledge in `AGENTS\.md` unless it is explicitly intended to become a workspace-wide default instruction\./i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /This includes customer, project, vendor, person, system, or workflow-specific facts such as contacts, owners, thresholds, URLs, channels, prior outcomes, and subject-specific procedures\./i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /A statement being durable or phrased as `remember this` does not by itself make it an `AGENTS\.md` item; if it is mainly contextual knowledge to recall later, keep it in memory instead\./i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state\. When in doubt, prefer memory or transient context over `AGENTS\.md`, and leave it out until the pattern repeats or the user confirms it should persist as a default\./i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Before choosing a retrieval path, first infer the most likely source of truth for the answer and prefer the most local authoritative source\./i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /If the answer is not already established by the current turn, currently loaded context, or a direct tool result in this run, probe `memory_retrieve` before broadening to browser, web, file search, connected integrations, or other external retrieval routes\./i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /If the answer is likely to be workspace-specific or previously learned contextual knowledge such as customer, project, person, workflow, decision, procedure, owner, threshold, contact, internal URL, or other facts that could plausibly have come from prior interactions or previously ingested knowledge in this workspace, use `memory_retrieve` first\./i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Do not open a browser tab or other live external surface first for an unknown fact lookup when memory could plausibly already contain the answer\./i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Use browser, web, or other live external sources before memory only when the user is explicitly asking for current live state, current UI state, or other freshness-sensitive information that memory is unlikely to settle on its own\./i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /If memory does not return a strong relevant result, then broaden outward to the next most plausible source, which may include local file search, connected integrations, workspace data\/tools, or web search depending on where the answer is most likely to live\./i,
+  );
+});
+
+test("composeBaseAgentPrompt instructs direct sessions to record durable workspace knowledge into AGENTS.md when the tool is available", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read"],
+    extraTools: ["update_workspace_instructions", "memory_retrieve"],
+    runtimeToolIds: ["update_workspace_instructions", "memory_retrieve"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    toolServerIdMap: {},
+  });
+
+  const prompt = composeBaseAgentPrompt("You are concise.", {
+    defaultTools: ["read"],
+    extraTools: ["update_workspace_instructions", "memory_retrieve"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "main_session",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+  });
+
+  assert.match(
+    prompt.systemPrompt,
+    /Record workspace-wide operating defaults in root `AGENTS\.md` with `update_workspace_instructions` when they are clearly stable, likely to recur, or explicitly confirmed by the user/i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Before writing to `AGENTS\.md`, ask whether the agent should obey the information by default on most future runs in this workspace even when the current subject is not in scope\./i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /durable requirements or preferences, verified recurring commands, default procedures, conventions, policies, decisions, and recurring blockers that should shape behavior by default in future runs/i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Do not record named-subject knowledge in `AGENTS\.md` unless it is explicitly intended to become a workspace-wide default instruction\./i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /This includes customer, project, vendor, person, system, or workflow-specific facts such as contacts, owners, thresholds, URLs, channels, prior outcomes, and subject-specific procedures\./i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /A statement being durable or phrased as `remember this` does not by itself make it an `AGENTS\.md` item; if it is mainly contextual knowledge to recall later, keep it in memory instead\./i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state\. When in doubt, prefer memory or transient context over `AGENTS\.md`, and leave it out until the pattern repeats or the user confirms it should persist as a default\./i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Before choosing a retrieval path, first infer the most likely source of truth for the answer and prefer the most local authoritative source\./i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /If the answer is not already established by the current turn, currently loaded context, or a direct tool result in this run, probe `memory_retrieve` before broadening to browser, web, file search, connected integrations, or other external retrieval routes\./i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /If the answer is likely to be workspace-specific or previously learned contextual knowledge such as customer, project, person, workflow, decision, procedure, owner, threshold, contact, internal URL, or other facts that could plausibly have come from prior interactions or previously ingested knowledge in this workspace, use `memory_retrieve` first\./i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Do not open a browser tab or other live external surface first for an unknown fact lookup when memory could plausibly already contain the answer\./i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Use browser, web, or other live external sources before memory only when the user is explicitly asking for current live state, current UI state, or other freshness-sensitive information that memory is unlikely to settle on its own\./i,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /If memory does not return a strong relevant result, then broaden outward to the next most plausible source, which may include local file search, connected integrations, workspace data\/tools, or web search depending on where the answer is most likely to live\./i,
+  );
+});
+
+test("composeAgentPrompt instructs subagents to record durable workspace knowledge into AGENTS.md when the tool is available", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read"],
     extraTools: ["update_workspace_instructions"],
     runtimeToolIds: ["update_workspace_instructions"],
     workspaceSkillIds: [],
@@ -631,7 +781,7 @@ test("composeAgentPrompt instructs main sessions to record durable workspace kno
     extraTools: ["update_workspace_instructions"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
-    sessionKind: "main_session",
+    sessionKind: "subagent",
     sessionMode: "code",
     harnessId: "pi",
     capabilityManifest,
@@ -639,50 +789,15 @@ test("composeAgentPrompt instructs main sessions to record durable workspace kno
 
   assert.match(
     prompt.systemPrompt,
-    /Record durable workspace knowledge in root `AGENTS\.md` with `update_workspace_instructions` when it is clearly stable, likely to recur, or explicitly confirmed by the user/i,
+    /Record workspace-wide operating defaults in root `AGENTS\.md` with `update_workspace_instructions` when they are clearly stable, likely to recur, or explicitly confirmed by the user/i,
   );
   assert.match(
     prompt.systemPrompt,
-    /durable requirements or preferences, verified commands or procedures, stable facts, conventions, decisions, and recurring blockers/i,
+    /durable requirements or preferences, verified recurring commands, default procedures, conventions, policies, decisions, and recurring blockers/i,
   );
   assert.match(
     prompt.systemPrompt,
-    /Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state\. When in doubt, leave it out until the pattern repeats or the user confirms it should persist\./i,
-  );
-});
-
-test("composeBaseAgentPrompt instructs direct sessions to record durable workspace knowledge into AGENTS.md when the tool is available", () => {
-  const capabilityManifest = buildAgentCapabilityManifest({
-    defaultTools: ["read"],
-    extraTools: ["update_workspace_instructions"],
-    runtimeToolIds: ["update_workspace_instructions"],
-    workspaceSkillIds: [],
-    resolvedMcpToolRefs: [],
-    toolServerIdMap: {},
-  });
-
-  const prompt = composeBaseAgentPrompt("You are concise.", {
-    defaultTools: ["read"],
-    extraTools: ["update_workspace_instructions"],
-    workspaceSkillIds: [],
-    resolvedMcpToolRefs: [],
-    sessionKind: "main_session",
-    sessionMode: "code",
-    harnessId: "pi",
-    capabilityManifest,
-  });
-
-  assert.match(
-    prompt.systemPrompt,
-    /Record durable workspace knowledge in root `AGENTS\.md` with `update_workspace_instructions` when it is clearly stable, likely to recur, or explicitly confirmed by the user/i,
-  );
-  assert.match(
-    prompt.systemPrompt,
-    /durable requirements or preferences, verified commands or procedures, stable facts, conventions, decisions, and recurring blockers/i,
-  );
-  assert.match(
-    prompt.systemPrompt,
-    /Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state\. When in doubt, leave it out until the pattern repeats or the user confirms it should persist\./i,
+    /Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state\. When in doubt, prefer memory or transient context over `AGENTS\.md`, and leave it out until the pattern repeats or the user confirms it should persist as a default\./i,
   );
 });
 
@@ -768,8 +883,8 @@ test("composeAgentPrompt keeps main sessions free of todo doctrine even if todo 
 test("composeAgentPrompt keeps onboarding sessions free of subagent delegation doctrine", () => {
   const capabilityManifest = buildAgentCapabilityManifest({
     defaultTools: ["read", "edit"],
-    extraTools: ["onboarding_status", "onboarding_complete"],
-    runtimeToolIds: ["onboarding_status", "onboarding_complete"],
+    extraTools: ["onboarding_status", "holaboss_onboarding_complete"],
+    runtimeToolIds: ["onboarding_status", "holaboss_onboarding_complete"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     toolServerIdMap: {},
@@ -777,7 +892,7 @@ test("composeAgentPrompt keeps onboarding sessions free of subagent delegation d
 
   const prompt = composeAgentPrompt("You are concise.", {
     defaultTools: ["read", "edit"],
-    extraTools: ["onboarding_status", "onboarding_complete"],
+    extraTools: ["onboarding_status", "holaboss_onboarding_complete"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     sessionKind: "onboarding",
@@ -851,8 +966,10 @@ test("composeAgentPrompt gives workspace onboarding its own design-lab prompt", 
   assert.match(prompt.systemPrompt, /Keep the onboarding thread conversational and uncluttered/);
   assert.match(prompt.systemPrompt, /holaboss_create_alignment_question/);
   assert.match(prompt.systemPrompt, /multiple-choice question/);
+  assert.match(prompt.systemPrompt, /Include a human-readable `markdown` body in the report for the review card/);
   assert.match(prompt.systemPrompt, /waiting for implementation results before moving to verification/);
   assert.match(prompt.systemPrompt, /verification report/);
+  assert.match(prompt.systemPrompt, /including a concise human-readable `markdown` body/);
   assert.match(prompt.systemPrompt, /verified implementation/);
   assert.match(prompt.systemPrompt, /alignment review card/);
   assert.match(prompt.systemPrompt, /verification review card/);
@@ -1296,6 +1413,17 @@ test("composeBaseAgentPrompt includes recalled durable memory as context message
           freshness_state: "fresh",
           freshness_note: "Verify this memory against the current workspace state before acting on it.",
         },
+        {
+          scope: "integration",
+          memory_type: "leaf",
+          title: "Your OpenAI API account has been funded",
+          summary: "Email from OpenAI about your API account being funded.",
+          path: "integration/accounts/gmail-jeffreyli-imerch.ai-89418944a655/leaves/leaf-65461043924305269f729543.md",
+          verification_policy: "none",
+          staleness_policy: "workspace_sensitive",
+          freshness_state: "fresh",
+          freshness_note: "Leaf memory from gmail account jeffreyli@imerch.ai.",
+        },
       ],
     },
   });
@@ -1314,6 +1442,7 @@ test("composeBaseAgentPrompt includes recalled durable memory as context message
   assert.match(prompt.contextMessages.join("\n\n"), /Recalled durable memory:/);
   assert.match(prompt.contextMessages.join("\n\n"), /User response style/);
   assert.match(prompt.contextMessages.join("\n\n"), /Deploy permission blocker/);
+  assert.doesNotMatch(prompt.contextMessages.join("\n\n"), /integration\/accounts\/gmail-jeffreyli-imerch.ai-89418944a655\/leaves\/leaf-65461043924305269f729543\.md/);
   assert.match(prompt.contextMessages.join("\n\n"), /check_before_use/);
   assert.match(prompt.contextMessages.join("\n\n"), /Freshness: `stable` \(`stable`\)/);
   assert.match(prompt.contextMessages.join("\n\n"), /Freshness: `fresh` \(`workspace_sensitive`\)/);

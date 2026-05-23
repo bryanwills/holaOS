@@ -507,9 +507,6 @@ test("claimed input persists runner events, assistant text, and idle state on su
     async sync() {
       return {};
     },
-    async capture() {
-      return { files: {} };
-    },
   };
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
@@ -4302,9 +4299,6 @@ test("claimed input resolves evolve model context from the provider background t
     async sync() {
       return {};
     },
-    async capture() {
-      return { files: {} };
-    },
   };
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
@@ -4426,7 +4420,7 @@ test("claimed onboarding input instructs native onboarding tools directly", asyn
   });
 
   assert.match(capturedInstruction, /onboarding_status/);
-  assert.match(capturedInstruction, /onboarding_complete/);
+  assert.match(capturedInstruction, /holaboss_onboarding_complete/);
   assert.doesNotMatch(capturedInstruction, /`hb`/);
 
   store.close();

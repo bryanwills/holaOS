@@ -50,6 +50,7 @@ import {
 } from "./session-todo.js";
 import type { TerminalSessionManagerLike } from "./terminal-session-manager.js";
 import type { QueueWorkerLike } from "./queue-worker.js";
+import { retrieveWorkspaceMemory, type WorkspaceMemoryCategory } from "./workspace-memory.js";
 import type { ComposioMcpManager } from "./composio-mcp-manager.js";
 import { getStoreCatalogEntry } from "./integration-store-catalog.js";
 import { invokeWorkspaceSkill, resolveWorkspaceSkills } from "./workspace-skills.js";
@@ -387,6 +388,19 @@ export interface RuntimeAgentToolsResumeSubagentParams {
   answer: string;
   selectedModel?: string | null;
   model?: string | null;
+}
+
+export interface RuntimeAgentToolsRetrieveMemoryParams {
+  workspaceId: string;
+  sessionId?: string | null;
+  inputId?: string | null;
+  selectedModel?: string | null;
+  query: string;
+  categories?: WorkspaceMemoryCategory[] | null;
+  mode?: "mixed" | "summaries" | "leaves" | null;
+  treeId?: string | null;
+  nodeId?: string | null;
+  maxResults?: number | null;
 }
 
 export interface RuntimeAgentToolsContinueSubagentParams {
@@ -1214,6 +1228,12 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/web-search",
     description: runtimeToolBaseDefinition("web_search").description
+  },
+  {
+    id: runtimeToolBaseDefinition("memory_retrieve").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/memory/retrieve",
+    description: runtimeToolBaseDefinition("memory_retrieve").description
   },
   {
     id: runtimeToolBaseDefinition("todoread").id,
@@ -2823,6 +2843,8 @@ export class RuntimeAgentToolsService {
 
   answerAlignmentQuestion(params: {
     workspaceId: string;
+    model?: string | null;
+    thinkingValue?: string | null;
     optionId?: string | null;
     responseText?: string | null;
     notes?: string | null;
@@ -2961,8 +2983,8 @@ export class RuntimeAgentToolsService {
         text: queuedText,
         attachments: [],
         image_urls: [],
-        model: null,
-        thinking_value: null,
+        model: normalizedString(params.model) || null,
+        thinking_value: normalizedString(params.thinkingValue) || null,
         context: {
           source: "alignment_question",
           question_count: questions.length,
@@ -4248,6 +4270,45 @@ export class RuntimeAgentToolsService {
         error instanceof Error ? error.message : "web search failed"
       );
     }
+  }
+
+  async retrieveMemory(params: RuntimeAgentToolsRetrieveMemoryParams): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const mode = normalizedString(params.mode) as "mixed" | "summaries" | "leaves";
+    if (mode && mode !== "mixed" && mode !== "summaries" && mode !== "leaves") {
+      throw new RuntimeAgentToolsServiceError(
+        400,
+        "memory_retrieve_mode_invalid",
+        "mode must be one of [\"mixed\",\"summaries\",\"leaves\"]",
+      );
+    }
+    const result = await retrieveWorkspaceMemory({
+      store: this.store,
+      workspaceId: params.workspaceId,
+      query: params.query,
+      categories: params.categories ?? null,
+      mode: mode || "mixed",
+      treeId: normalizedString(params.treeId) || null,
+      nodeId: normalizedString(params.nodeId) || null,
+      maxResults: normalizedInteger(params.maxResults, 8, 1, 50),
+      selectedModel: normalizedString(params.selectedModel) || null,
+      sessionId: normalizedString(params.sessionId) || null,
+      inputId: normalizedString(params.inputId) || null,
+    });
+    const sanitizeHit = (hit: Record<string, unknown>): JsonObject => {
+      const { path: _path, absolute_path: _absolutePath, ...rest } = hit;
+      return { ...rest } as JsonObject;
+    };
+    return {
+      tool_id: "memory_retrieve",
+      categories: result.categories,
+      query: result.query,
+      mode: result.mode,
+      tree_id: result.tree_id,
+      node_id: result.node_id,
+      hits: result.hits.map((hit) => sanitizeHit({ ...hit })),
+      children: result.children ? result.children.map((child) => sanitizeHit({ ...child })) : null,
+    };
   }
 
   invokeSkill(params: RuntimeAgentToolsInvokeSkillParams): JsonObject {

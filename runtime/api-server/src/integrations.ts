@@ -20,6 +20,10 @@ export interface IntegrationConnectionPayload {
   account_external_id: string | null;
   account_handle: string | null;
   account_email: string | null;
+  context_cron_auto_fetch_enabled: boolean;
+  last_context_fetch_attempted_at: string | null;
+  last_context_fetch_completed_at: string | null;
+  last_context_fetch_status: string | null;
   auth_mode: string;
   granted_scopes: string[];
   status: string;
@@ -124,6 +128,10 @@ function toIntegrationConnectionPayload(record: {
   accountExternalId: string | null;
   accountHandle?: string | null;
   accountEmail?: string | null;
+  contextCronAutoFetchEnabled?: boolean;
+  lastContextFetchAttemptedAt?: string | null;
+  lastContextFetchCompletedAt?: string | null;
+  lastContextFetchStatus?: string | null;
   authMode: string;
   grantedScopes: string[];
   status: string;
@@ -139,6 +147,13 @@ function toIntegrationConnectionPayload(record: {
     account_external_id: record.accountExternalId,
     account_handle: record.accountHandle ?? null,
     account_email: record.accountEmail ?? null,
+    context_cron_auto_fetch_enabled:
+      record.contextCronAutoFetchEnabled ?? true,
+    last_context_fetch_attempted_at:
+      record.lastContextFetchAttemptedAt ?? null,
+    last_context_fetch_completed_at:
+      record.lastContextFetchCompletedAt ?? null,
+    last_context_fetch_status: record.lastContextFetchStatus ?? null,
     auth_mode: record.authMode,
     granted_scopes: record.grantedScopes,
     status: record.status,
@@ -177,7 +192,11 @@ export interface IntegrationServiceHooks {
   /** Called whenever a connection becomes (or stays) active. Used by the
    *  api-server to wake inputs that were parked waiting for this provider
    *  to be connected via a propose_connect card. */
-  onConnectionActive?: (params: { providerId: string }) => void;
+  onConnectionActive?: (params: {
+    providerId: string;
+    connectionId: string;
+    ownerUserId: string;
+  }) => void;
   /** Called after a binding row is created or updated via `upsertBinding`.
    *  Distinct from `onConnectionActive` — fires when an *already-active*
    *  connection is attached to an app (the dominant path when a previously-
@@ -338,6 +357,11 @@ export class RuntimeIntegrationService {
       providerId,
       ownerUserId,
       accountLabel,
+      contextCronAutoFetchEnabled:
+        existing?.contextCronAutoFetchEnabled ?? true,
+      lastContextFetchAttemptedAt: existing?.lastContextFetchAttemptedAt ?? null,
+      lastContextFetchCompletedAt: existing?.lastContextFetchCompletedAt ?? null,
+      lastContextFetchStatus: existing?.lastContextFetchStatus ?? null,
       authMode,
       grantedScopes: params.grantedScopes ?? existing?.grantedScopes ?? [],
       status: "active",
@@ -347,14 +371,24 @@ export class RuntimeIntegrationService {
       accountEmail: params.accountEmail ?? existing?.accountEmail ?? null
     });
 
-    this.notifyConnectionActive(record.providerId, record.status);
+    this.notifyConnectionActive(
+      record.connectionId,
+      record.providerId,
+      record.ownerUserId,
+      record.status,
+    );
     return toIntegrationConnectionPayload(record);
   }
 
-  private notifyConnectionActive(providerId: string, status: string): void {
+  private notifyConnectionActive(
+    connectionId: string,
+    providerId: string,
+    ownerUserId: string,
+    status: string,
+  ): void {
     if (status.trim().toLowerCase() !== "active") return;
     try {
-      this.hooks.onConnectionActive?.({ providerId });
+      this.hooks.onConnectionActive?.({ providerId, connectionId, ownerUserId });
     } catch {
       // Hook is best-effort — never block the connection write.
     }
@@ -375,6 +409,7 @@ export class RuntimeIntegrationService {
      */
     accountHandle?: string | null;
     accountEmail?: string | null;
+    contextCronAutoFetchEnabled?: boolean;
   }): IntegrationConnectionPayload {
     const normalizedId = requiredString(connectionId, "connection_id");
     const existing = this.store.getIntegrationConnection(normalizedId);
@@ -396,9 +431,21 @@ export class RuntimeIntegrationService {
         params.accountHandle !== undefined ? params.accountHandle : existing.accountHandle,
       accountEmail:
         params.accountEmail !== undefined ? params.accountEmail : existing.accountEmail,
+      contextCronAutoFetchEnabled:
+        params.contextCronAutoFetchEnabled !== undefined
+          ? params.contextCronAutoFetchEnabled
+          : existing.contextCronAutoFetchEnabled,
+      lastContextFetchAttemptedAt: existing.lastContextFetchAttemptedAt,
+      lastContextFetchCompletedAt: existing.lastContextFetchCompletedAt,
+      lastContextFetchStatus: existing.lastContextFetchStatus,
     });
 
-    this.notifyConnectionActive(record.providerId, record.status);
+    this.notifyConnectionActive(
+      record.connectionId,
+      record.providerId,
+      record.ownerUserId,
+      record.status,
+    );
     return toIntegrationConnectionPayload(record);
   }
 

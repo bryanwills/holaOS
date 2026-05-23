@@ -28,6 +28,7 @@ import type { AppLifecycleExecutorLike } from "./app-lifecycle-worker.js";
 import { FilesystemMemoryService, type MemoryServiceLike } from "./memory.js";
 import type { RuntimeConfigServiceLike } from "./runtime-config.js";
 import type { RunnerExecutorLike } from "./runner-worker.js";
+import { globalMemoryDirForWorkspaceRoot, workspaceMemoryDir } from "./workspace-bundle-paths.js";
 
 const tempDirs: string[] = [];
 const ORIGINAL_ENV = {
@@ -786,7 +787,7 @@ test("runtime tools capability routes expose local onboarding and cronjob action
     assert.ok(
       capabilityStatus
         .json()
-        .tools.some((tool: { id: string }) => tool.id === "onboarding_complete")
+        .tools.some((tool: { id: string }) => tool.id === "holaboss_onboarding_complete")
     );
     assert.ok(
       capabilityStatus
@@ -827,6 +828,11 @@ test("runtime tools capability routes expose local onboarding and cronjob action
       capabilityStatus
         .json()
         .tools.some((tool: { id: string }) => tool.id === "skill")
+    );
+    assert.ok(
+      capabilityStatus
+        .json()
+        .tools.some((tool: { id: string }) => tool.id === "memory_retrieve")
     );
     assert.ok(
       capabilityStatus
@@ -1064,6 +1070,8 @@ test.skip("workspace onboarding runtime tools persist alignment and verification
         "x-holaboss-workspace-id": labId,
       },
       payload: {
+        model: "openai_codex/gpt-5.4",
+        thinking_value: "medium",
         option_id: "fast",
         notes: "Keep the first version minimal.",
       },
@@ -1088,6 +1096,8 @@ test.skip("workspace onboarding runtime tools persist alignment and verification
       (queued?.payload.text as string | undefined) ?? "",
       "Optimize for fast setup first.\n\nAdditional notes: Keep the first version minimal.",
     );
+    assert.equal(queued?.payload.model, "openai_codex/gpt-5.4");
+    assert.equal(queued?.payload.thinking_value, "medium");
 
     const alignment = await app.inject({
       method: "POST",
@@ -1097,6 +1107,13 @@ test.skip("workspace onboarding runtime tools persist alignment and verification
       },
       payload: {
         report: {
+          markdown: [
+            "# Alignment report",
+            "",
+            "- Set up a lightweight CRM workspace",
+            "- Install Notion",
+            "- Create a deal tracker app",
+          ].join("\n"),
           summary: "Set up a lightweight CRM workspace",
           apps_to_install: ["notion"],
           apps_to_create: ["deal-tracker"],
@@ -1111,6 +1128,16 @@ test.skip("workspace onboarding runtime tools persist alignment and verification
     assert.equal(
       alignment.json().alignment_report.summary,
       "Set up a lightweight CRM workspace",
+    );
+    assert.equal(
+      alignment.json().alignment_report.markdown,
+      [
+        "# Alignment report",
+        "",
+        "- Set up a lightweight CRM workspace",
+        "- Install Notion",
+        "- Create a deal tracker app",
+      ].join("\n"),
     );
 
     const implementing = await app.inject({
@@ -1132,6 +1159,12 @@ test.skip("workspace onboarding runtime tools persist alignment and verification
       },
       payload: {
         report: {
+          markdown: [
+            "# Verification report",
+            "",
+            "- Installed Notion",
+            "- Scaffolded the deal tracker app",
+          ].join("\n"),
           summary: "Installed notion and scaffolded deal-tracker",
           verification_checks: ["app builds", "workspace files created"],
         },
@@ -1145,6 +1178,15 @@ test.skip("workspace onboarding runtime tools persist alignment and verification
     assert.equal(
       verification.json().verification_report.summary,
       "Installed notion and scaffolded deal-tracker",
+    );
+    assert.equal(
+      verification.json().verification_report.markdown,
+      [
+        "# Verification report",
+        "",
+        "- Installed Notion",
+        "- Scaffolded the deal tracker app",
+      ].join("\n"),
     );
 
     const revised = await app.inject({
@@ -2059,6 +2101,341 @@ test("runtime skill tool resolves a workspace skill through shared runtime state
     assert.deepEqual(response.json().granted_tools, ["bash"]);
     assert.deepEqual(response.json().granted_commands, ["deploy-docs"]);
     assert.equal(response.json().tool_id, "skill");
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
+test("runtime memory_retrieve tool returns interaction leaf hits from the tree backend", async () => {
+  const root = makeTempDir("hb-runtime-api-memory-retrieve-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.upsertInteractionEntity({
+    workspaceId: "workspace-1",
+    entityId: "interaction:workflow:deploy-procedure",
+    entityType: "workflow",
+    canonicalName: "Deploy procedure",
+    slug: "workflow-deploy-procedure",
+    summary: "Deployment procedure memory.",
+    aliases: [],
+    isSystem: false,
+    status: "active",
+  });
+  store.upsertInteractionLeaf({
+    workspaceId: "workspace-1",
+    leafId: "leaf-deploy-procedure",
+    entityId: "interaction:workflow:deploy-procedure",
+    subjectKey: "procedure:deploy",
+    path: "workspace/workspace-1/interaction/entities/workflow-deploy-procedure/leaves/leaf-deploy-procedure.md",
+    title: "Deploy procedure",
+    summary: "Steps for deployment.",
+    fingerprint: "deploy-procedure-fingerprint",
+    bodySha256: "deploy-procedure-sha",
+    tags: ["deploy"],
+    secondaryEntityIds: [],
+    sourceType: "leaf",
+    sourceEventId: null,
+    sourceMessageId: null,
+    sourceTurnInputId: "input-seed",
+    admissionConfidence: 0.9,
+    entityConfidence: 0.9,
+    observedAt: "2026-05-20T00:00:00.000Z",
+    supersedesLeafId: null,
+    status: "active",
+  });
+  const leafPath = path.join(
+    workspaceMemoryDir(path.join(workspaceRoot, "workspace-1")),
+    "interaction",
+    "entities",
+    "workflow-deploy-procedure",
+    "leaves",
+    "leaf-deploy-procedure.md",
+  );
+  fs.mkdirSync(path.dirname(leafPath), { recursive: true });
+  fs.writeFileSync(leafPath, "# Deploy procedure\n\nSteps for deployment.\n", "utf8");
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/memory/retrieve",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+      },
+      payload: {
+        query: "how do I deploy?",
+        mode: "leaves",
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().tool_id, "memory_retrieve");
+    assert.equal(response.json().categories[0], "interaction");
+    assert.equal(response.json().hits.length, 1);
+    assert.equal(response.json().hits[0].title, "Deploy procedure");
+    assert.equal(response.json().hits[0].summary, "Steps for deployment.");
+    assert.equal("path" in response.json().hits[0], false);
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
+test("runtime memory_retrieve tool returns integration leaf hits from the tree backend", async () => {
+  const root = makeTempDir("hb-runtime-api-memory-retrieve-integration-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.upsertIntegrationConnection({
+    connectionId: "conn-github-1",
+    providerId: "github",
+    ownerUserId: "user-1",
+    accountLabel: "Jeff GitHub",
+    accountExternalId: "acct-1",
+    accountHandle: "jeff-github",
+    accountEmail: null,
+    authMode: "oauth",
+    grantedScopes: ["repo"],
+    status: "active",
+    secretRef: null,
+  });
+  store.upsertIntegrationBinding({
+    bindingId: "binding-github-1",
+    workspaceId: "workspace-1",
+    targetType: "workspace",
+    targetId: "workspace-1",
+    integrationKey: "github",
+    connectionId: "conn-github-1",
+    isDefault: true,
+  });
+  store.upsertIntegrationTree({
+    treeId: "integration:github:acct-1",
+    provider: "github",
+    ownerUserId: "user-1",
+    accountKey: "jeff-github",
+    accountLabel: "Jeff GitHub",
+    slug: "github-jeff-acct-1",
+    summary: "GitHub account memory.",
+    status: "active",
+  });
+  store.upsertIntegrationLeaf({
+    leafId: "leaf-release-pr",
+    treeId: "integration:github:acct-1",
+    subjectKey: "pr:release-123",
+    path: "integration/accounts/github-jeff-acct-1/leaves/leaf-release-pr.md",
+    title: "Release PR #123 owner",
+    summary: "The release PR owner is Maya Chen.",
+    fingerprint: "integration-release-pr-fingerprint",
+    bodySha256: "integration-release-pr-sha",
+    tags: ["github", "release"],
+    sourceType: "github.pull_request",
+    sourceEventId: "evt-1",
+    sourceMessageId: null,
+    externalObjectId: "123",
+    externalObjectType: "pull_request",
+    admissionConfidence: 0.94,
+    observedAt: "2026-05-20T00:00:00.000Z",
+    supersedesLeafId: null,
+    status: "active",
+  });
+  const leafPath = path.join(
+    globalMemoryDirForWorkspaceRoot(workspaceRoot),
+    "integration",
+    "accounts",
+    "github-jeff-acct-1",
+    "leaves",
+    "leaf-release-pr.md",
+  );
+  fs.mkdirSync(path.dirname(leafPath), { recursive: true });
+  fs.writeFileSync(leafPath, "# Release PR #123 owner\n\nThe release PR owner is Maya Chen.\n", "utf8");
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/memory/retrieve",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+      },
+      payload: {
+        query: "who owns release pr 123?",
+        categories: ["integration"],
+        mode: "leaves",
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().tool_id, "memory_retrieve");
+    assert.deepEqual(response.json().categories, ["integration"]);
+    assert.equal(response.json().hits.length, 1);
+    assert.equal(response.json().hits[0].title, "Release PR #123 owner");
+    assert.equal(response.json().hits[0].provider, "github");
+    assert.equal(response.json().hits[0].summary, "The release PR owner is Maya Chen.");
+    assert.equal("path" in response.json().hits[0], false);
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
+test("runtime memory_retrieve searches both interaction and integration trees when both exist", async () => {
+  const root = makeTempDir("hb-runtime-api-memory-retrieve-both-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.upsertInteractionEntity({
+    workspaceId: "workspace-1",
+    entityId: "interaction:project:atlas-api",
+    entityType: "project",
+    canonicalName: "Atlas API",
+    slug: "project-atlas-api",
+    summary: "Atlas API workspace memory.",
+    aliases: [],
+    isSystem: false,
+    status: "active",
+  });
+  store.upsertInteractionLeaf({
+    workspaceId: "workspace-1",
+    leafId: "leaf-atlas-incident",
+    entityId: "interaction:project:atlas-api",
+    subjectKey: "incident-bridge",
+    path: "workspace/workspace-1/interaction/entities/project-atlas-api/leaves/leaf-atlas-incident.md",
+    title: "Atlas API incident bridge",
+    summary: "The incident bridge channel is #atlas-api-rollout.",
+    fingerprint: "atlas-incident-fingerprint",
+    bodySha256: "atlas-incident-sha",
+    tags: ["project"],
+    secondaryEntityIds: [],
+    sourceType: "manual",
+    sourceEventId: null,
+    sourceMessageId: null,
+    sourceTurnInputId: "input-seed",
+    admissionConfidence: 0.9,
+    entityConfidence: 0.9,
+    observedAt: "2026-05-20T00:00:00.000Z",
+    supersedesLeafId: null,
+    status: "active",
+  });
+  const interactionLeafPath = path.join(
+    workspaceMemoryDir(path.join(workspaceRoot, "workspace-1")),
+    "interaction",
+    "entities",
+    "project-atlas-api",
+    "leaves",
+    "leaf-atlas-incident.md",
+  );
+  fs.mkdirSync(path.dirname(interactionLeafPath), { recursive: true });
+  fs.writeFileSync(interactionLeafPath, "# Atlas API incident bridge\n\nThe incident bridge channel is #atlas-api-rollout.\n", "utf8");
+
+  store.upsertIntegrationConnection({
+    connectionId: "conn-github-2",
+    providerId: "github",
+    ownerUserId: "user-1",
+    accountLabel: "Atlas GitHub",
+    accountExternalId: "acct-2",
+    accountHandle: "atlas-github",
+    accountEmail: null,
+    authMode: "oauth",
+    grantedScopes: ["repo"],
+    status: "active",
+    secretRef: null,
+  });
+  store.upsertIntegrationBinding({
+    bindingId: "binding-github-2",
+    workspaceId: "workspace-1",
+    targetType: "workspace",
+    targetId: "workspace-1",
+    integrationKey: "github",
+    connectionId: "conn-github-2",
+    isDefault: true,
+  });
+  store.upsertIntegrationTree({
+    treeId: "integration:github:acct-2",
+    provider: "github",
+    ownerUserId: "user-1",
+    accountKey: "atlas-github",
+    accountLabel: "Atlas GitHub",
+    slug: "github-atlas-acct-2",
+    summary: "Atlas GitHub account memory.",
+    status: "active",
+  });
+  store.upsertIntegrationLeaf({
+    leafId: "leaf-atlas-pr-owner",
+    treeId: "integration:github:acct-2",
+    subjectKey: "release-pr-owner",
+    path: "integration/accounts/github-atlas-acct-2/leaves/leaf-atlas-pr-owner.md",
+    title: "Atlas API release PR owner",
+    summary: "The Atlas API release PR owner is Noah Bell.",
+    fingerprint: "atlas-pr-owner-fingerprint",
+    bodySha256: "atlas-pr-owner-sha",
+    tags: ["github"],
+    sourceType: "github.pull_request",
+    sourceEventId: "evt-2",
+    sourceMessageId: null,
+    externalObjectId: "456",
+    externalObjectType: "pull_request",
+    admissionConfidence: 0.95,
+    observedAt: "2026-05-20T00:01:00.000Z",
+    supersedesLeafId: null,
+    status: "active",
+  });
+  const integrationLeafPath = path.join(
+    globalMemoryDirForWorkspaceRoot(workspaceRoot),
+    "integration",
+    "accounts",
+    "github-atlas-acct-2",
+    "leaves",
+    "leaf-atlas-pr-owner.md",
+  );
+  fs.mkdirSync(path.dirname(integrationLeafPath), { recursive: true });
+  fs.writeFileSync(integrationLeafPath, "# Atlas API release PR owner\n\nThe Atlas API release PR owner is Noah Bell.\n", "utf8");
+
+  const app = buildTestRuntimeApiServer({ store });
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/memory/retrieve",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+      },
+      payload: {
+        query: "atlas api",
+        mode: "leaves",
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().tool_id, "memory_retrieve");
+    assert.deepEqual(response.json().categories, ["interaction", "integration"]);
+    const titles = response.json().hits.map((hit: { title: string }) => hit.title);
+    assert.ok(titles.includes("Atlas API incident bridge"));
+    assert.ok(titles.includes("Atlas API release PR owner"));
   } finally {
     await app.close();
     store.close();
@@ -3480,10 +3857,6 @@ test("memory routes delegate to the memory service and preserve payloads", async
     async sync(payload) {
       calls.push({ operation: "sync", payload });
       return { workspace_id: payload.workspace_id, queued: true, reason: payload.reason };
-    },
-    async capture(payload) {
-      calls.push({ operation: "capture", payload });
-      return { workspace_id: payload.workspace_id, files: {} };
     }
   };
   const app = buildTestRuntimeApiServer({ store, memoryService });
@@ -3604,68 +3977,6 @@ test("memory routes delegate to the memory service and preserve payloads", async
 
   await app.close();
   store.close();
-});
-
-test("proactive context capture route returns the bundled workspace context", async () => {
-  const previousUserId = process.env.HOLABOSS_USER_ID;
-  process.env.HOLABOSS_USER_ID = "user-1";
-
-  const root = makeTempDir("hb-runtime-api-proactive-context-");
-  const store = new RuntimeStateStore({
-    dbPath: path.join(root, "runtime.db"),
-    workspaceRoot: path.join(root, "workspace")
-  });
-  store.createWorkspace({
-    workspaceId: "workspace-1",
-    name: "Workspace One",
-    harness: "pi",
-    status: "active"
-  });
-  const workspaceDir = store.workspaceDir("workspace-1");
-  fs.writeFileSync(
-    path.join(workspaceDir, "workspace.yaml"),
-    [
-      "applications:",
-      "  - app_id: twitter",
-      "mcp_registry:",
-      "  allowlist:",
-      "    tool_ids:",
-      "      - twitter.performance",
-    ].join("\n"),
-    "utf8"
-  );
-
-  const app = buildTestRuntimeApiServer({ store });
-
-  try {
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/v1/proactive/context/capture",
-      payload: {
-        workspace_id: "workspace-1"
-      }
-    });
-
-    assert.equal(response.statusCode, 200);
-    const body = response.json() as { context: Record<string, unknown> };
-    const context = body.context;
-    const workspace = context.workspace as Record<string, unknown>;
-    const snapshot = context.snapshot as Record<string, unknown>;
-    assert.equal(workspace.id, "workspace-1");
-    assert.equal(workspace.holaboss_user_id, "user-1");
-    assert.equal(snapshot.workspace_id, "workspace-1");
-    assert.deepEqual(snapshot.applications, ["twitter"]);
-    assert.deepEqual(snapshot.mcp_tool_ids, ["twitter.performance"]);
-    assert.equal(typeof context.captured_at, "string");
-  } finally {
-    await app.close();
-    store.close();
-    if (previousUserId === undefined) {
-      delete process.env.HOLABOSS_USER_ID;
-    } else {
-      process.env.HOLABOSS_USER_ID = previousUserId;
-    }
-  }
 });
 
 test("workspace CRUD routes preserve local payload shape", async () => {
@@ -5804,58 +6115,66 @@ test("cronjobs, task proposals, and session state routes preserve local payload 
   assert.equal(updatedProposal.json().proposal.state, "accepted");
   assert.equal(updatedProposal.json().proposal.proposal_source, "proactive");
 
-  store.ensureSession({
-    workspaceId: workspace.id,
-    sessionId: "session-main",
-    kind: "main_session",
-    title: "Main"
+  await app.close();
+  store.close();
+});
+
+test("raw cronjob routes keep draft lab jobs disabled by default", async () => {
+  const root = makeTempDir("hb-runtime-api-lab-cron-routes-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
   });
-  store.createMemoryUpdateProposal({
-    proposalId: "memory-proposal-1",
-    workspaceId: workspace.id,
-    sessionId: "session-main",
-    inputId: "input-1",
-    proposalKind: "preference",
-    targetKey: "response-style",
-    title: "Response style preference",
-    summary: "Prefer concise responses.",
-    payload: {
-      preference_type: "response_style",
-      style: "concise",
-    },
-    evidence: "Please keep responses concise.",
-    confidence: 0.99,
-    sourceMessageId: "user-input-1",
-    createdAt: "2026-04-03T10:00:00.000Z"
+  const app = buildTestRuntimeApiServer({ store });
+  const workspace = store.createWorkspace({
+    workspaceId: "lab-1",
+    name: "Lab Jobs",
+    harness: "pi",
+    status: "active",
+    workspaceRole: "draft_lab",
+    labPurpose: "workspace_onboarding",
+    labStatus: "active",
   });
 
-  const listedMemoryProposals = await app.inject({
-    method: "GET",
-    url: `/api/v1/memory-update-proposals?workspace_id=${workspace.id}&session_id=session-main`
-  });
-  const acceptedMemoryProposal = await app.inject({
+  const createdJob = await app.inject({
     method: "POST",
-    url: "/api/v1/memory-update-proposals/memory-proposal-1/accept",
+    url: "/api/v1/cronjobs",
     payload: {
       workspace_id: workspace.id,
-      summary: "Prefer concise responses."
+      initiated_by: "workspace_agent",
+      cron: "0 9 * * *",
+      description: "Daily check",
+      instruction: "Say hello",
+      enabled: true,
+      delivery: { mode: "announce", channel: "session_run", to: null }
     }
   });
-  const dismissedMemoryProposal = await app.inject({
-    method: "POST",
-    url: "/api/v1/memory-update-proposals/memory-proposal-1/dismiss",
-    payload: {
-      workspace_id: workspace.id
-    }
+  assert.equal(createdJob.statusCode, 200);
+  assert.equal(createdJob.json().enabled, false);
+  assert.equal(createdJob.json().next_run_at, null);
+  assert.deepEqual(createdJob.json().metadata, {
+    author_recommended_enabled: true,
+    lab_execution_disabled: true,
   });
+  const jobId = createdJob.json().id as string;
 
-  assert.equal(listedMemoryProposals.statusCode, 200);
-  assert.equal(listedMemoryProposals.json().count, 1);
-  assert.equal(acceptedMemoryProposal.statusCode, 200);
-  assert.equal(acceptedMemoryProposal.json().proposal.state, "accepted");
-  assert.equal(acceptedMemoryProposal.json().proposal.persisted_memory_id, "user-preference:response-style");
-  assert.equal(store.getMemoryEntry({ memoryId: "user-preference:response-style" })?.summary, "Prefer concise responses.");
-  assert.equal(dismissedMemoryProposal.statusCode, 409);
+  const updatedJob = await app.inject({
+    method: "PATCH",
+    url: `/api/v1/cronjobs/${jobId}`,
+    payload: {
+      workspace_id: workspace.id,
+      description: "Updated check",
+      enabled: true,
+    }
+  });
+  assert.equal(updatedJob.statusCode, 200);
+  assert.equal(updatedJob.json().description, "Updated check");
+  assert.equal(updatedJob.json().enabled, false);
+  assert.equal(updatedJob.json().next_run_at, null);
+  assert.deepEqual(updatedJob.json().metadata, {
+    author_recommended_enabled: true,
+    lab_execution_disabled: true,
+  });
 
   await app.close();
   store.close();

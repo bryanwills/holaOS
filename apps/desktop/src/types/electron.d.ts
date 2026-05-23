@@ -155,7 +155,64 @@ declare global {
     height: number;
   }
 
-  type UiSettingsPaneSection = "account" | "billing" | "providers" | "integrations" | "submissions" | "settings" | "experimental";
+  type UiSettingsPaneSection = "account" | "billing" | "providers" | "integrations" | "memory" | "submissions" | "settings" | "experimental";
+
+  interface MemoryBrowserTreeNodePayload {
+    name: string;
+    path: string;
+    kind: "directory" | "file";
+    size_bytes: number | null;
+    modified_at: string | null;
+    children?: MemoryBrowserTreeNodePayload[];
+  }
+
+  interface MemoryBrowserTreeResponsePayload {
+    workspace_id: string;
+    root: MemoryBrowserTreeNodePayload;
+    counts: {
+      directories: number;
+      files: number;
+    };
+  }
+
+  interface MemoryBrowserFileResponsePayload {
+    workspace_id: string;
+    path: string;
+    name: string;
+    size_bytes: number;
+    modified_at: string;
+    content: string;
+  }
+
+  type MemoryBrowserGraphForestPayload = "workspace" | "integrations";
+  type MemoryBrowserGraphNodeKindPayload = "root" | "tree" | "entity" | "branch" | "summary" | "leaf";
+
+  interface MemoryBrowserGraphNodePayload {
+    id: string;
+    kind: MemoryBrowserGraphNodeKindPayload;
+    category: "interaction" | "integration";
+    tree_id: string | null;
+    label: string;
+    subtitle: string | null;
+    status: string | null;
+    level: number | null;
+    child_count: number | null;
+    path: string | null;
+  }
+
+  interface MemoryBrowserGraphEdgePayload {
+    from: string;
+    to: string;
+    kind: "contains" | "parent_child" | "reference";
+  }
+
+  interface MemoryBrowserGraphResponsePayload {
+    workspace_id: string;
+    forest: MemoryBrowserGraphForestPayload;
+    focus_tree_id: string | null;
+    nodes: MemoryBrowserGraphNodePayload[];
+    edges: MemoryBrowserGraphEdgePayload[];
+  }
 
   interface BrowserStatePayload {
     id: string;
@@ -1435,6 +1492,10 @@ interface RuntimeNotificationListOptionsPayload {
     account_handle: string | null;
     /** Provider-side email from whoami (e.g. josh@example.com) — used for re-auth dedupe. */
     account_email: string | null;
+    context_cron_auto_fetch_enabled: boolean;
+    last_context_fetch_attempted_at: string | null;
+    last_context_fetch_completed_at: string | null;
+    last_context_fetch_status: string | null;
     auth_mode: string;
     granted_scopes: string[];
     status: string;
@@ -1503,6 +1564,45 @@ interface RuntimeNotificationListOptionsPayload {
     entries: IntegrationStoreCatalogEntry[];
   }
 
+  interface IntegrationContextFetchStatusPayload {
+    connection_id: string;
+    provider_id: string;
+    run_id: string;
+    supported: boolean;
+    status: "running" | "completed" | "failed" | "unsupported";
+    account_key: string | null;
+    account_label: string | null;
+    tree_id: string | null;
+    current_chunk_label: string | null;
+    chunks_total: number;
+    chunks_completed: number;
+    messages_seen: number;
+    messages_persisted: number;
+    leaves_created: number;
+    leaves_superseding: number;
+    leaves_unchanged: number;
+    summary_nodes: number;
+    actions: string[];
+    started_at: string | null;
+    updated_at: string;
+    completed_at: string | null;
+    fetched_at: string | null;
+    error_message: string | null;
+    reason: string | null;
+  }
+
+  interface IntegrationContextFetchStartResponsePayload {
+    ok: true;
+    started: boolean;
+    deduped: boolean;
+    status: IntegrationContextFetchStatusPayload;
+  }
+
+  interface IntegrationContextFetchStatusListResponsePayload {
+    ok: true;
+    statuses: IntegrationContextFetchStatusPayload[];
+  }
+
   interface AllWorkspaceIntegrationOverridesPayload {
     overrides: Array<{
       workspace_id: string;
@@ -1563,6 +1663,10 @@ interface RuntimeNotificationListOptionsPayload {
     /** Backfill provider-side identity. `null` clears, omit to leave alone. */
     account_handle?: string | null;
     account_email?: string | null;
+    context_cron_auto_fetch_enabled?: boolean;
+    last_context_fetch_attempted_at?: string | null;
+    last_context_fetch_completed_at?: string | null;
+    last_context_fetch_status?: string | null;
   }
 
   interface IntegrationMergeConnectionsResult {
@@ -1936,13 +2040,6 @@ interface RuntimeNotificationListOptionsPayload {
         payload: ArchiveBackgroundTaskPayload
       ) => Promise<ArchiveBackgroundTaskResponsePayload>;
       acceptTaskProposal: (payload: TaskProposalAcceptPayload) => Promise<TaskProposalAcceptResponsePayload>;
-      listMemoryUpdateProposals: (
-        payload: MemoryUpdateProposalListRequestPayload
-      ) => Promise<MemoryUpdateProposalListResponsePayload>;
-      acceptMemoryUpdateProposal: (
-        payload: MemoryUpdateProposalAcceptPayload
-      ) => Promise<MemoryUpdateProposalAcceptResponsePayload>;
-      dismissMemoryUpdateProposal: (workspaceId: string, proposalId: string) => Promise<MemoryUpdateProposalDismissResponsePayload>;
       updateTaskProposalState: (
         workspaceId: string,
         proposalId: string,
@@ -1971,6 +2068,8 @@ interface RuntimeNotificationListOptionsPayload {
       answerOnboardingAlignmentQuestion: (
         workspaceId: string,
         payload: {
+          model?: string | null;
+          thinkingValue?: string | null;
           optionId?: string | null;
           responseText?: string | null;
           notes?: string | null;
@@ -2019,6 +2118,15 @@ interface RuntimeNotificationListOptionsPayload {
       listIntegrationStoreCatalog: () => Promise<IntegrationStoreCatalogPayload>;
       listAllWorkspaceIntegrationOverrides: () => Promise<AllWorkspaceIntegrationOverridesPayload>;
       listWorkspaceIntegrations: (workspaceId: string) => Promise<WorkspaceIntegrationsListResponsePayload>;
+      listMemoryBrowserTree: (workspaceId: string) => Promise<MemoryBrowserTreeResponsePayload>;
+      readMemoryBrowserFile: (
+        workspaceId: string,
+        targetPath: string
+      ) => Promise<MemoryBrowserFileResponsePayload>;
+      listMemoryBrowserGraph: (
+        workspaceId: string,
+        params: { forest: MemoryBrowserGraphForestPayload; treeId?: string | null }
+      ) => Promise<MemoryBrowserGraphResponsePayload>;
       setWorkspaceIntegrationOverride: (
         workspaceId: string,
         toolkitSlug: string,
@@ -2044,6 +2152,12 @@ interface RuntimeNotificationListOptionsPayload {
         toolSlug?: string;
         arguments?: Record<string, unknown>;
       }) => Promise<unknown>;
+      fetchIntegrationContext: (
+        connectionId: string
+      ) => Promise<IntegrationContextFetchStartResponsePayload>;
+      listIntegrationContextFetchStatuses: (
+        connectionIds?: string[]
+      ) => Promise<IntegrationContextFetchStatusListResponsePayload>;
       restartApp: (workspaceId: string, appId: string) => Promise<{
         workspace_id: string;
         app_id: string;

@@ -24,7 +24,6 @@ export interface ChatMessage {
   segments?: ChatAssistantSegment[];
   executionItems?: ChatExecutionTimelineItem[];
   outputs?: WorkspaceOutputRecordPayload[];
-  memoryProposals?: MemoryUpdateProposalRecordPayload[];
   pendingIntegrations?: ChatPendingIntegration[];
   // Proposals emitted by `holaboss_workspace_integrations_propose_connect`. Same
   // visual treatment as pendingIntegrations but no app_id (the agent is

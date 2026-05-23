@@ -111,6 +111,24 @@ import {
   RuntimeIntegrationService
 } from "./integrations.js";
 import { BrokerError, IntegrationBrokerService } from "./integration-broker.js";
+import {
+  fetchIntegrationContextForConnection,
+  normalizeComposioError,
+  supportsIntegrationContextFetchProvider,
+} from "./integration-context-fetch.js";
+import {
+  createIntegrationContextFetchManager,
+  type IntegrationContextFetchRunner,
+} from "./integration-context-fetch-manager.js";
+import {
+  type IntegrationContextAutofetchWorkerLike,
+  RuntimeIntegrationContextAutofetchWorker,
+} from "./integration-context-autofetch-worker.js";
+import {
+  buildMemoryBrowserGraph,
+  buildMemoryBrowserTree,
+  readMemoryBrowserFile,
+} from "./memory-browser.js";
 import { resumePendingIntegrationInputs } from "./integration-proposal-gate.js";
 import { OAuthService } from "./oauth-service.js";
 import { ComposioService } from "./composio-service.js";
@@ -164,15 +182,8 @@ import { buildAppSetupEnv } from "./app-setup-env.js";
 import { collectWorkspaceSnapshot } from "./workspace-snapshot.js";
 import {
   buildMemoryUpdateProposalsFromUserInput,
-  durableMemoryCandidateFromAcceptedProposal,
-  runtimeUserProfileUpdateFromAcceptedProposal,
 } from "./user-memory-proposals.js";
-import {
-  persistDurableMemoryCandidate,
-  refreshMemoryIndexes,
-} from "./turn-memory-writeback.js";
 import { promotedWorkspaceSkillPath } from "./evolve-skill-review.js";
-import { captureWorkspaceContext } from "./proactive-context.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 50;
 const DEFAULT_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
@@ -186,6 +197,8 @@ export interface BuildRuntimeApiServerOptions {
   store?: RuntimeStateStore;
   dbPath?: string;
   workspaceRoot?: string;
+  integrationContextFetchRunner?: IntegrationContextFetchRunner;
+  integrationContextAutofetchWorker?: IntegrationContextAutofetchWorkerLike | null;
   queueWorker?: QueueWorkerLike | null;
   mainSessionEventWorker?: MainSessionEventWorkerLike | null;
   durableMemoryWorker?: DurableMemoryWorkerLike | null;
@@ -282,8 +295,7 @@ function resolveMainSessionEventWorker(
 function resolveBridgeWorker(
   options: BuildRuntimeApiServerOptions,
   app: FastifyInstance,
-  store: RuntimeStateStore,
-  memoryService: MemoryServiceLike
+  store: RuntimeStateStore
 ): BridgeWorkerLike | null {
   if (options.bridgeWorker !== undefined) {
     return options.bridgeWorker;
@@ -292,7 +304,7 @@ function resolveBridgeWorker(
     return null;
   }
   try {
-    return new RuntimeRemoteBridgeWorker({ logger: app.log, store, memoryService });
+    return new RuntimeRemoteBridgeWorker({ logger: app.log, store });
   } catch (error) {
     app.log.warn(
       {
@@ -318,6 +330,24 @@ function resolveRecallEmbeddingBackfillWorker(
     store,
     logger: app.log,
     memoryService,
+  });
+}
+
+function resolveIntegrationContextAutofetchWorker(
+  options: BuildRuntimeApiServerOptions,
+  app: FastifyInstance,
+  store: RuntimeStateStore,
+  fetchManager: ReturnType<typeof createIntegrationContextFetchManager>,
+): IntegrationContextAutofetchWorkerLike | null {
+  if (options.integrationContextAutofetchWorker !== undefined) {
+    return options.integrationContextAutofetchWorker;
+  }
+  return new RuntimeIntegrationContextAutofetchWorker({
+    store,
+    fetchManager,
+    logger: {
+      warn: (meta, message) => app.log.warn(meta, message),
+    },
   });
 }
 
@@ -1299,29 +1329,6 @@ function taskProposalPayload(record: TaskProposalRecord): Record<string, unknown
     accepted_session_id: record.acceptedSessionId,
     accepted_input_id: record.acceptedInputId,
     accepted_at: record.acceptedAt
-  };
-}
-
-function memoryUpdateProposalPayload(record: MemoryUpdateProposalRecord): Record<string, unknown> {
-  return {
-    proposal_id: record.proposalId,
-    workspace_id: record.workspaceId,
-    session_id: record.sessionId,
-    input_id: record.inputId,
-    proposal_kind: record.proposalKind,
-    target_key: record.targetKey,
-    title: record.title,
-    summary: record.summary,
-    payload: record.payload,
-    evidence: record.evidence,
-    confidence: record.confidence,
-    source_message_id: record.sourceMessageId,
-    state: record.state,
-    persisted_memory_id: record.persistedMemoryId,
-    created_at: record.createdAt,
-    updated_at: record.updatedAt,
-    accepted_at: record.acceptedAt,
-    dismissed_at: record.dismissedAt,
   };
 }
 
@@ -3404,6 +3411,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const memoryService = options.memoryService ?? new FilesystemMemoryService({
     workspaceRoot: store.workspaceRoot,
     resolveWorkspaceDir: (workspaceId) => store.workspaceDir(workspaceId),
+    store,
   });
   const runtimeConfigService = options.runtimeConfigService ?? new FileRuntimeConfigService();
   const browserToolService = options.browserToolService ?? new DesktopBrowserToolService({ artifactStore: store });
@@ -3415,9 +3423,17 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         captureRuntimeException,
       })
       : options.terminalSessionManager;
+  const integrationContextFetchManager = createIntegrationContextFetchManager({
+    store,
+    runFetch: options.integrationContextFetchRunner
+      ?? fetchIntegrationContextForConnection,
+    logger: {
+      warn: (meta, message) => app.log.warn(meta, message),
+    },
+  });
   // Deferred holders: queue worker + composio MCP manager are both
   // constructed after the integration service, but onConnectionActive
-  // needs to call into both. We pass closures that read the holders
+  // needs to call into them. We pass closures that read the holders
   // at call time — by then the dependents are set.
   const queueWorkerHolder: { worker: { wake: () => void } | null } = { worker: null };
   const composioMcpManagerHolder: {
@@ -3426,6 +3442,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const runtimeAgentToolsHolder: {
     service: { queuePolishForCompletedBindings: (workspaceId: string) => unknown } | null;
   } = { service: null };
+  const integrationContextAutofetchWorkerHolder: {
+    worker: IntegrationContextAutofetchWorkerLike | null;
+  } = { worker: null };
 
   function tryQueuePolishForWorkspace(workspaceId: string): void {
     const runtimeAgentTools = runtimeAgentToolsHolder.service;
@@ -3460,7 +3479,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   }
 
   const integrationService = new RuntimeIntegrationService(store, {
-    onConnectionActive: () => {
+    onConnectionActive: ({ connectionId, providerId }) => {
       try {
         const woken = resumePendingIntegrationInputs(store);
         if (woken > 0) {
@@ -3512,6 +3531,28 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       // every workspace; the method internally re-checks pending
       // integrations and dashboard shape per app.
       tryQueuePolishForAllWorkspaces();
+
+      // Kick off the integration-memory context autofetch for providers
+      // that support it (gmail / slack / linear / etc.).
+      if (!supportsIntegrationContextFetchProvider(providerId)) {
+        return;
+      }
+      void integrationContextFetchManager.start({
+        connectionId,
+      }).catch((error) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        const normalized = normalizeComposioError(error);
+        app.log.warn(
+          {
+            connectionId,
+            providerId,
+            statusCode: normalized.statusCode,
+            error: detail,
+          },
+          "integration context fetch start failed",
+        );
+      });
+      integrationContextAutofetchWorkerHolder.worker?.wake();
     },
     onBindingCreated: ({ workspaceId }) => {
       // Binding an already-active connection to a new app does NOT
@@ -3556,7 +3597,16 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     store,
     queueWorker,
   );
-  const bridgeWorker = resolveBridgeWorker(options, app, store, memoryService);
+  const integrationContextAutofetchWorker =
+    resolveIntegrationContextAutofetchWorker(
+      options,
+      app,
+      store,
+      integrationContextFetchManager,
+    );
+  integrationContextAutofetchWorkerHolder.worker =
+    integrationContextAutofetchWorker;
+  const bridgeWorker = resolveBridgeWorker(options, app, store);
   const recallEmbeddingBackfillWorker = resolveRecallEmbeddingBackfillWorker(options, app, store, memoryService);
   const runtimeAgentToolsService = new RuntimeAgentToolsService(store, {
     workspaceRoot: store.workspaceRoot,
@@ -4346,6 +4396,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     await terminalSessionManager?.close();
     await recallEmbeddingBackfillWorker?.close();
     await bridgeWorker?.close();
+    await integrationContextAutofetchWorker?.close();
     await mainSessionEventWorker?.close();
     await cronWorker?.close();
     await queueWorker?.close();
@@ -4362,6 +4413,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     await queueWorker?.start();
     await cronWorker?.start();
     await mainSessionEventWorker?.start();
+    await integrationContextAutofetchWorker?.start();
     await bridgeWorker?.start();
     await recallEmbeddingBackfillWorker?.start();
     if (options.enableAppHealthMonitor !== false) {
@@ -4872,7 +4924,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         authMode: typeof request.body.auth_mode === "string" ? request.body.auth_mode : "manual_token",
         grantedScopes: Array.isArray(request.body.granted_scopes) ? request.body.granted_scopes : [],
         secretRef: typeof request.body.secret_ref === "string" ? request.body.secret_ref : undefined,
-        accountExternalId: typeof request.body.account_external_id === "string" ? request.body.account_external_id : undefined
+        accountExternalId: typeof request.body.account_external_id === "string" ? request.body.account_external_id : undefined,
       });
     } catch (error) {
       if (error instanceof IntegrationServiceError) {
@@ -4892,6 +4944,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const body = request.body as Record<string, unknown>;
     const accountHandlePresent = Object.prototype.hasOwnProperty.call(body, "account_handle");
     const accountEmailPresent = Object.prototype.hasOwnProperty.call(body, "account_email");
+    const contextCronAutoFetchPresent = Object.prototype.hasOwnProperty.call(
+      body,
+      "context_cron_auto_fetch_enabled",
+    );
     const normalizeIdentity = (value: unknown): string | null => {
       if (value === null) return null;
       if (typeof value !== "string") return null;
@@ -4899,14 +4955,29 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return trimmed.length === 0 ? null : trimmed;
     };
     try {
-      return integrationService.updateConnection(params.connectionId, {
+      const updated = integrationService.updateConnection(params.connectionId, {
         status: typeof body.status === "string" ? body.status : undefined,
         secretRef: typeof body.secret_ref === "string" ? body.secret_ref : undefined,
         accountLabel: typeof body.account_label === "string" ? body.account_label : undefined,
         grantedScopes: Array.isArray(body.granted_scopes) ? body.granted_scopes : undefined,
         ...(accountHandlePresent ? { accountHandle: normalizeIdentity(body.account_handle) } : {}),
-        ...(accountEmailPresent ? { accountEmail: normalizeIdentity(body.account_email) } : {})
+        ...(accountEmailPresent ? { accountEmail: normalizeIdentity(body.account_email) } : {}),
+        ...(contextCronAutoFetchPresent
+          ? {
+              contextCronAutoFetchEnabled: optionalBoolean(
+                body.context_cron_auto_fetch_enabled,
+                false,
+              ),
+            }
+          : {}),
       });
+      if (
+        contextCronAutoFetchPresent
+        && updated.context_cron_auto_fetch_enabled
+      ) {
+        integrationContextAutofetchWorker?.wake();
+      }
+      return updated;
     } catch (error) {
       if (error instanceof IntegrationServiceError) {
         return sendError(reply, error.statusCode, error.message);
@@ -5245,6 +5316,118 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 502, error instanceof Error ? error.message : "composio finalize failed");
     }
   });
+
+  app.post("/api/v1/integrations/context-fetch", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const connectionId = typeof request.body.connection_id === "string"
+      ? request.body.connection_id.trim()
+      : "";
+    if (!connectionId) {
+      return sendError(reply, 400, "connection_id is required");
+    }
+    if (!store.getIntegrationConnection(connectionId)) {
+      return sendError(reply, 404, `integration connection ${connectionId} not found`);
+    }
+    try {
+      return await integrationContextFetchManager.start({
+        connectionId,
+      });
+    } catch (error) {
+      if (error instanceof IntegrationServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      const detail =
+        error instanceof Error ? error.message : "integration context fetch start failed";
+      return sendError(reply, 500, detail);
+    }
+  });
+
+  app.get("/api/v1/integrations/context-fetch", async (request, reply) => {
+    void reply;
+    const connectionIds = isRecord(request.query)
+      && typeof request.query.connection_ids === "string"
+      ? request.query.connection_ids
+        .split(",")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+      : [];
+    return integrationContextFetchManager.list({
+      connectionIds,
+    });
+  });
+
+  app.get("/api/v1/memory/browser/tree", async (request, reply) => {
+    try {
+      if (!isRecord(request.query)) {
+        throw new Error("workspace_id is required");
+      }
+      const workspaceId = requiredString(
+        request.query.workspace_id,
+        "workspace_id",
+      ).trim();
+      return buildMemoryBrowserTree({
+        store,
+        workspaceId,
+      });
+    } catch (error) {
+      const detail =
+        error instanceof Error ? error.message : "memory browser tree failed";
+      const statusCode = detail.includes("not found") ? 404 : 400;
+      return sendError(reply, statusCode, detail);
+    }
+  });
+
+  app.get("/api/v1/memory/browser/file", async (request, reply) => {
+    try {
+      if (!isRecord(request.query)) {
+        throw new Error("workspace_id and path are required");
+      }
+      const workspaceId = requiredString(
+        request.query.workspace_id,
+        "workspace_id",
+      ).trim();
+      const targetPath = requiredString(request.query.path, "path").trim();
+      return readMemoryBrowserFile({
+        store,
+        workspaceId,
+        targetPath,
+      });
+    } catch (error) {
+      const detail =
+        error instanceof Error ? error.message : "memory browser file failed";
+      const statusCode = detail.includes("not found") ? 404 : 400;
+      return sendError(reply, statusCode, detail);
+    }
+  });
+
+  app.get("/api/v1/memory/browser/graph", async (request, reply) => {
+    try {
+      if (!isRecord(request.query)) {
+        throw new Error("workspace_id and forest are required");
+      }
+      const workspaceId = requiredString(
+        request.query.workspace_id,
+        "workspace_id",
+      ).trim();
+      const forest = requiredString(request.query.forest, "forest").trim();
+      if (forest !== "workspace" && forest !== "integrations") {
+        throw new Error("forest must be workspace or integrations");
+      }
+      return buildMemoryBrowserGraph({
+        store,
+        workspaceId,
+        forest,
+        treeId: optionalString(request.query.tree_id)?.trim() || null,
+      });
+    } catch (error) {
+      const detail =
+        error instanceof Error ? error.message : "memory browser graph failed";
+      const statusCode = detail.includes("not found") ? 404 : 400;
+      return sendError(reply, statusCode, detail);
+    }
+  });
   // ---- Runtime Agent Tools (onboarding, cronjobs, media) ----
 
   app.get("/api/v1/capabilities/runtime-tools", async (request) => {
@@ -5323,6 +5506,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       });
       return runtimeAgentToolsService.answerAlignmentQuestion({
         workspaceId,
+        model: optionalString(request.body.model),
+        thinkingValue: optionalString(request.body.thinking_value),
         optionId: optionalString(request.body.option_id),
         responseText: optionalString(request.body.response_text),
         notes: nullableString(request.body.notes),
@@ -5941,6 +6126,60 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 400, error instanceof Error ? error.message : "runtime web search failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/memory/retrieve", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      const workspaceId = requiredCapabilityWorkspaceId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      const sessionId = capabilitySessionId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      const result = await runtimeAgentToolsService.retrieveMemory({
+        workspaceId,
+        sessionId: sessionId || null,
+        inputId:
+          capabilityInputId({
+            headers: request.headers as Record<string, unknown>,
+            body: request.body,
+          }) || null,
+        selectedModel: capabilitySelectedModel({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        query: requiredString(request.body.query, "query"),
+        categories: Array.isArray(request.body.categories)
+          ? request.body.categories
+            .filter((value): value is string => typeof value === "string")
+            .map((value) => value.trim().toLowerCase())
+            .filter((value): value is "interaction" | "integration" => value === "interaction" || value === "integration")
+          : undefined,
+        mode: nullableString(request.body.mode) as "mixed" | "summaries" | "leaves" | null,
+        treeId: nullableString(request.body.tree_id) ?? null,
+        nodeId: nullableString(request.body.node_id) ?? null,
+        maxResults: hasOwn(request.body, "max_results")
+          ? optionalInteger(request.body.max_results, 8)
+          : undefined,
+      });
+      return await maybeShapeCapabilityToolResult({
+        headers: request.headers as Record<string, unknown>,
+        toolId: "memory_retrieve",
+        payload: result,
+        workspaceId,
+        sessionId,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime memory retrieval failed");
     }
   });
 
@@ -7355,30 +7594,6 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "memory sync failed");
-    }
-  });
-
-  app.post("/api/v1/proactive/context/capture", async (request, reply) => {
-    if (!isRecord(request.body)) {
-      return sendError(reply, 400, "request body must be an object");
-    }
-    let workspaceId = "";
-    try {
-      workspaceId = requiredString(request.body.workspace_id, "workspace_id");
-      return {
-        context: await captureWorkspaceContext({
-          store,
-          memoryService,
-          workspaceId,
-        }),
-      };
-    } catch (error) {
-      if (workspaceId) {
-        const message = error instanceof Error ? error.message : "workspace context capture failed";
-        const statusCode = /\bnot found\b/i.test(message) ? 404 : 500;
-        return sendError(reply, statusCode, message);
-      }
-      return sendError(reply, 400, error instanceof Error ? error.message : "workspace_id is required");
     }
   });
 
@@ -10882,123 +11097,6 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     return { proposal: taskProposalPayload(proposal) };
   });
 
-  app.get("/api/v1/memory-update-proposals", async (request, reply) => {
-    const query = isRecord(request.query) ? request.query : {};
-    const workspaceId = optionalString(query.workspace_id);
-    if (!workspaceId) {
-      return sendError(reply, 400, "workspace_id is required");
-    }
-    const state = optionalString(query.state) as MemoryUpdateProposalRecord["state"] | null;
-    const proposals = store.listMemoryUpdateProposals({
-      workspaceId,
-      sessionId: optionalString(query.session_id),
-      inputId: optionalString(query.input_id),
-      state,
-      limit: optionalInteger(query.limit, 200),
-      offset: optionalInteger(query.offset, 0),
-    });
-    return {
-      proposals: proposals.map((item) => memoryUpdateProposalPayload(item)),
-      count: proposals.length,
-    };
-  });
-
-  app.post("/api/v1/memory-update-proposals/:proposalId/accept", async (request, reply) => {
-    const body = isRecord(request.body) ? request.body : {};
-    const params = request.params as { proposalId: string };
-    const workspaceId = requiredString(body.workspace_id, "workspace_id");
-    const proposal = store.getMemoryUpdateProposal({ workspaceId, proposalId: params.proposalId });
-    if (!proposal) {
-      return sendError(reply, 404, "Memory update proposal not found");
-    }
-    if (proposal.state === "dismissed") {
-      return sendError(reply, 409, "Memory update proposal has already been dismissed");
-    }
-    if (proposal.state === "accepted") {
-      return sendError(reply, 409, "Memory update proposal has already been accepted");
-    }
-
-    const acceptedAt = utcNowIso();
-    const summary = requiredString(body.summary ?? proposal.summary, "summary");
-    let persistedMemoryId: string | null = null;
-
-    if (proposal.proposalKind === "preference") {
-      const candidate = durableMemoryCandidateFromAcceptedProposal({
-        proposal,
-        summary,
-        acceptedAt,
-      });
-      if (!candidate) {
-        return sendError(reply, 422, "Unsupported preference proposal");
-      }
-      await persistDurableMemoryCandidate({
-        store,
-        memoryService,
-        workspaceId: proposal.workspaceId,
-        sessionId: proposal.sessionId,
-        inputId: proposal.inputId,
-        candidate,
-      });
-      await refreshMemoryIndexes({
-        store,
-        memoryService,
-        workspaceId: proposal.workspaceId,
-      });
-      persistedMemoryId = candidate.memoryId;
-    } else if (proposal.proposalKind === "profile") {
-      const profileUpdate = runtimeUserProfileUpdateFromAcceptedProposal({ proposal });
-      if (!profileUpdate) {
-        return sendError(reply, 422, "Unsupported profile proposal");
-      }
-      const profile = store.upsertRuntimeUserProfile(profileUpdate);
-      persistedMemoryId = `runtime-profile:${profile.profileId}`;
-    } else {
-      return sendError(reply, 422, "Unsupported memory proposal kind");
-    }
-
-    const updatedProposal = store.updateMemoryUpdateProposal({
-      workspaceId: proposal.workspaceId,
-      proposalId: proposal.proposalId,
-      fields: {
-        summary,
-        state: "accepted",
-        persistedMemoryId,
-        acceptedAt,
-        dismissedAt: null,
-      },
-    });
-    return {
-      proposal: memoryUpdateProposalPayload(updatedProposal ?? proposal),
-    };
-  });
-
-  app.post("/api/v1/memory-update-proposals/:proposalId/dismiss", async (request, reply) => {
-    const body = isRecord(request.body) ? request.body : {};
-    const workspaceId = requiredString(body.workspace_id, "workspace_id");
-    const params = request.params as { proposalId: string };
-    const proposal = store.getMemoryUpdateProposal({ workspaceId, proposalId: params.proposalId });
-    if (!proposal) {
-      return sendError(reply, 404, "Memory update proposal not found");
-    }
-    if (proposal.state === "accepted") {
-      return sendError(reply, 409, "Memory update proposal has already been accepted");
-    }
-    if (proposal.state === "dismissed") {
-      return sendError(reply, 409, "Memory update proposal has already been dismissed");
-    }
-    const updatedProposal = store.updateMemoryUpdateProposal({
-      workspaceId: proposal.workspaceId,
-      proposalId: proposal.proposalId,
-      fields: {
-        state: "dismissed",
-        dismissedAt: utcNowIso(),
-      },
-    });
-    return {
-      proposal: memoryUpdateProposalPayload(updatedProposal ?? proposal),
-    };
-  });
-
   app.get("/api/v1/agent-sessions/:sessionId/outputs/events", async (request, reply) => {
     const params = request.params as { sessionId: string };
     const query = isRecord(request.query) ? request.query : {};
@@ -11111,13 +11209,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     return reply.send(stream);
   });
 
-  // Temporary diagnostic route — exercises the full runtime → Hono →
-  // Composio path through ComposioApiClient using the env-injected
+  // Diagnostic route — exercises the full runtime → Hono → Composio
+  // path through ComposioApiClient using the env-injected
   // HOLABOSS_AUTH_BEARER_TOKEN. Called by the IntegrationsPane debug
   // button so we can confirm desktop-side env injection + runtime SDK
-  // + Hono /internal/* + bearer plugin all line up end-to-end. Safe to
-  // delete once a real consumer (cron worker / data harvester / first-
-  // run prefetch) is in product and we have a real smoke test.
+  // + Hono /internal/* + bearer plugin all line up end-to-end.
   app.post("/api/v1/debug/composio-runtime-test", async (request, reply) => {
     const { createComposioApiClientFromEnv, ComposioApiClientError } =
       await import("./composio-api-client.js");

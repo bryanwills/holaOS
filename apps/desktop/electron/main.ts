@@ -89,12 +89,12 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { URL, pathToFileURL } from "node:url";
-import ExcelJS from "exceljs";
 import JSZip from "jszip";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
@@ -215,6 +215,39 @@ const APP_DISPLAY_NAME = "holaOS";
 const MAC_APP_MENU_PRODUCT_LABEL = "holaOS";
 const AUTH_CALLBACK_PROTOCOL = "ai.holaboss.app";
 const DESKTOP_LAUNCH_ID = randomUUID();
+const nodeRequire = createRequire(__filename);
+
+interface XlsxPopulateCell {
+  address(): string;
+  value(): unknown;
+  value(value: unknown): XlsxPopulateCell;
+  hyperlink(): string | undefined;
+  hyperlink(hyperlink: string): XlsxPopulateCell;
+}
+
+interface XlsxPopulateRange {
+  value(): unknown;
+}
+
+interface XlsxPopulateWorksheet {
+  name(): string;
+  cell(row: number, column: number): XlsxPopulateCell;
+  usedRange(): XlsxPopulateRange | undefined;
+  hyperlink(address: string): string | undefined;
+  hyperlink(address: string, hyperlink: string | null | undefined): XlsxPopulateWorksheet;
+}
+
+interface XlsxPopulateWorkbook {
+  sheet(indexOrName: number | string): XlsxPopulateWorksheet | undefined;
+  sheets(): XlsxPopulateWorksheet[];
+  outputAsync(): Promise<Buffer | Uint8Array | ArrayBuffer>;
+}
+
+interface XlsxPopulateStatic {
+  fromDataAsync(data: Buffer | Uint8Array | ArrayBuffer): Promise<XlsxPopulateWorkbook>;
+}
+
+const XlsxPopulate = nodeRequire("xlsx-populate") as XlsxPopulateStatic;
 Sentry.setTags({
   desktop_launch_id: DESKTOP_LAUNCH_ID,
   process_kind: "electron_main",
@@ -2606,12 +2639,6 @@ interface TemplateListResponsePayload {
   spotlight: SpotlightItemPayload[];
 }
 
-interface ProactiveIngestItemResultPayload {
-  status?: string;
-  event_id?: string;
-  detail?: string | null;
-}
-
 type WorkspaceLocationPayload = "local" | "cloud";
 
 interface WorkspaceRecordPayload {
@@ -2804,69 +2831,6 @@ interface EnsureWorkspaceMainSessionResponsePayload {
   migrated_legacy_session_count: number;
 }
 
-type MemoryUpdateProposalKind = "preference" | "identity" | "profile";
-type MemoryUpdateProposalState = "pending" | "accepted" | "dismissed";
-
-interface MemoryUpdateProposalRecordPayload {
-  proposal_id: string;
-  workspace_id: string;
-  session_id: string;
-  input_id: string;
-  proposal_kind: MemoryUpdateProposalKind;
-  target_key: string;
-  title: string;
-  summary: string;
-  payload: Record<string, unknown>;
-  evidence: string | null;
-  confidence: number | null;
-  source_message_id: string | null;
-  state: MemoryUpdateProposalState;
-  persisted_memory_id: string | null;
-  created_at: string;
-  updated_at: string;
-  accepted_at: string | null;
-  dismissed_at: string | null;
-}
-
-interface MemoryUpdateProposalListRequestPayload {
-  workspaceId: string;
-  sessionId?: string | null;
-  inputId?: string | null;
-  state?: MemoryUpdateProposalState | null;
-  limit?: number;
-  offset?: number;
-}
-
-interface MemoryUpdateProposalListResponsePayload {
-  proposals: MemoryUpdateProposalRecordPayload[];
-  count: number;
-}
-
-interface MemoryUpdateProposalAcceptPayload {
-  proposalId: string;
-  workspaceId: string;
-  summary?: string | null;
-}
-
-interface MemoryUpdateProposalAcceptResponsePayload {
-  proposal: MemoryUpdateProposalRecordPayload;
-}
-
-interface MemoryUpdateProposalDismissResponsePayload {
-  proposal: MemoryUpdateProposalRecordPayload;
-}
-
-interface RemoteTaskProposalGenerationResponsePayload {
-  accepted: boolean;
-  accepted_count: number;
-  event_count: number;
-  correlation_id: string;
-}
-
-interface ProactiveContextCaptureResponsePayload {
-  context: Record<string, unknown>;
-}
-
 interface TaskProposalStateUpdatePayload {
   proposal: TaskProposalRecordPayload;
 }
@@ -2955,6 +2919,10 @@ interface IntegrationConnectionPayload {
   account_external_id: string | null;
   account_handle: string | null;
   account_email: string | null;
+  context_cron_auto_fetch_enabled: boolean;
+  last_context_fetch_attempted_at: string | null;
+  last_context_fetch_completed_at: string | null;
+  last_context_fetch_status: string | null;
   auth_mode: string;
   granted_scopes: string[];
   status: string;
@@ -3010,6 +2978,42 @@ interface IntegrationUpdateConnectionPayload {
   /** Backfill provider-side identity. `null` clears, omit to leave alone. */
   account_handle?: string | null;
   account_email?: string | null;
+  context_cron_auto_fetch_enabled?: boolean;
+  last_context_fetch_attempted_at?: string | null;
+  last_context_fetch_completed_at?: string | null;
+  last_context_fetch_status?: string | null;
+}
+
+function normalizeIntegrationConnectionPayload(
+  connection: Omit<
+    IntegrationConnectionPayload,
+    | "account_handle"
+    | "account_email"
+    | "context_cron_auto_fetch_enabled"
+    | "last_context_fetch_attempted_at"
+    | "last_context_fetch_completed_at"
+    | "last_context_fetch_status"
+  > & {
+    account_handle?: string | null;
+    account_email?: string | null;
+    context_cron_auto_fetch_enabled?: boolean;
+    last_context_fetch_attempted_at?: string | null;
+    last_context_fetch_completed_at?: string | null;
+    last_context_fetch_status?: string | null;
+  },
+): IntegrationConnectionPayload {
+  return {
+    ...connection,
+    account_handle: connection.account_handle ?? null,
+    account_email: connection.account_email ?? null,
+    context_cron_auto_fetch_enabled:
+      connection.context_cron_auto_fetch_enabled ?? true,
+    last_context_fetch_attempted_at:
+      connection.last_context_fetch_attempted_at ?? null,
+    last_context_fetch_completed_at:
+      connection.last_context_fetch_completed_at ?? null,
+    last_context_fetch_status: connection.last_context_fetch_status ?? null,
+  };
 }
 
 interface OAuthAppConfigPayload {
@@ -9528,123 +9532,6 @@ async function requestDesktopControlPlaneJson<T>({
   }
 }
 
-async function ingestWorkspaceHeartbeat(params: {
-  workspaceId: string;
-  actorId: string;
-  sourceRef: string;
-  correlationId: string;
-}): Promise<RemoteTaskProposalGenerationResponsePayload> {
-  const workspaceId = params.workspaceId.trim();
-  if (!workspaceId) {
-    throw new Error("workspace_id is required to ingest a heartbeat event.");
-  }
-
-  const correlationId = params.correlationId.trim();
-  if (!correlationId) {
-    throw new Error("correlation_id is required to ingest a heartbeat event.");
-  }
-
-  appendRuntimeEventLog({
-    category: "workspace",
-    event: "workspace.heartbeat.emit",
-    outcome: "start",
-    detail:
-      `workspace_id=${workspaceId} source=${params.sourceRef} ` +
-      `correlation_id=${correlationId}`,
-  });
-
-  try {
-    const bundledContext =
-      await requestWorkspaceRuntimeJson<ProactiveContextCaptureResponsePayload>(
-        workspaceId,
-        {
-          method: "POST",
-          path: "/api/v1/proactive/context/capture",
-          payload: {
-            workspace_id: workspaceId,
-          },
-          retryTransientErrors: true,
-        },
-      );
-    const results = await requestControlPlaneJson<
-      ProactiveIngestItemResultPayload[]
-    >({
-      service: "proactive",
-      method: "POST",
-      path: "/api/v1/proactive/ingest",
-      payload: {
-        events: [
-          {
-            event_id: `evt-heartbeat-${crypto.randomUUID().replace(/-/g, "")}`,
-            event_type: "heartbeat",
-            workspace_id: workspaceId,
-            actor: {
-              type: "system",
-              id: params.actorId,
-            },
-            correlation_id: correlationId,
-            origin: "system",
-            timestamp: utcNowIso(),
-            source_refs: [params.sourceRef],
-            window: "24h",
-            proposal_scope: "window",
-            captured_context: bundledContext.context,
-          },
-        ],
-      },
-    });
-    const acceptedCount = results.filter(
-      (item) => (item?.status || "").trim().toLowerCase() === "accepted",
-    ).length;
-    appendRuntimeEventLog({
-      category: "workspace",
-      event: "workspace.heartbeat.emit",
-      outcome: "success",
-      detail:
-        `workspace_id=${workspaceId} source=${params.sourceRef} ` +
-        `correlation_id=${correlationId} accepted=${acceptedCount}/${results.length}`,
-    });
-    return {
-      accepted: acceptedCount > 0,
-      accepted_count: acceptedCount,
-      event_count: results.length,
-      correlation_id: correlationId,
-    };
-  } catch (error) {
-    appendRuntimeEventLog({
-      category: "workspace",
-      event: "workspace.heartbeat.emit",
-      outcome: "error",
-      detail:
-        `workspace_id=${workspaceId} source=${params.sourceRef} ` +
-        `correlation_id=${correlationId} error=${error instanceof Error ? error.message : String(error)}`,
-    });
-    throw error;
-  }
-}
-
-async function emitWorkspaceReadyHeartbeat(params: {
-  workspaceId: string;
-  holabossUserId: string;
-}): Promise<void> {
-  const workspaceId = params.workspaceId.trim();
-  const holabossUserId = params.holabossUserId.trim();
-  if (
-    !workspaceId ||
-    !holabossUserId ||
-    holabossUserId === LOCAL_OSS_TEMPLATE_USER_ID
-  ) {
-    return;
-  }
-
-  await ingestWorkspaceHeartbeat({
-    workspaceId,
-    actorId: "desktop_workspace_create",
-    sourceRef: "workspace-created:ready",
-    correlationId: `workspace-ready-${workspaceId}`,
-  });
-}
-
 function getHolabossClientConfig(): HolabossClientConfigPayload {
   return {
     projectsUrl: projectsBaseUrl(),
@@ -9880,29 +9767,6 @@ async function archiveBackgroundTask(
   );
 }
 
-async function listMemoryUpdateProposals(
-  payload: MemoryUpdateProposalListRequestPayload,
-): Promise<MemoryUpdateProposalListResponsePayload> {
-  if (!payload.workspaceId.trim()) {
-    return { proposals: [], count: 0 };
-  }
-  return requestWorkspaceRuntimeJson<MemoryUpdateProposalListResponsePayload>(
-    payload.workspaceId,
-    {
-      method: "GET",
-      path: "/api/v1/memory-update-proposals",
-      params: {
-        workspace_id: payload.workspaceId,
-        session_id: payload.sessionId ?? undefined,
-        input_id: payload.inputId ?? undefined,
-        state: payload.state ?? undefined,
-        limit: payload.limit ?? 200,
-        offset: payload.offset ?? 0,
-      },
-    },
-  );
-}
-
 async function acceptTaskProposal(
   payload: TaskProposalAcceptPayload,
 ): Promise<TaskProposalAcceptResponsePayload> {
@@ -9920,38 +9784,6 @@ async function acceptTaskProposal(
         created_by: payload.created_by,
         priority: payload.priority ?? 0,
         model: payload.model ?? null,
-      },
-    },
-  );
-}
-
-async function acceptMemoryUpdateProposal(
-  payload: MemoryUpdateProposalAcceptPayload,
-): Promise<MemoryUpdateProposalAcceptResponsePayload> {
-  return requestWorkspaceRuntimeJson<MemoryUpdateProposalAcceptResponsePayload>(
-    payload.workspaceId,
-    {
-      method: "POST",
-      path: `/api/v1/memory-update-proposals/${encodeURIComponent(payload.proposalId)}/accept`,
-      payload: {
-        workspace_id: payload.workspaceId,
-        summary: payload.summary ?? undefined,
-      },
-    },
-  );
-}
-
-async function dismissMemoryUpdateProposal(
-  workspaceId: string,
-  proposalId: string,
-): Promise<MemoryUpdateProposalDismissResponsePayload> {
-  return requestWorkspaceRuntimeJson<MemoryUpdateProposalDismissResponsePayload>(
-    workspaceId,
-    {
-      method: "POST",
-      path: `/api/v1/memory-update-proposals/${encodeURIComponent(proposalId)}/dismiss`,
-      payload: {
-        workspace_id: workspaceId,
       },
     },
   );
@@ -10248,6 +10080,63 @@ interface WorkspaceIntegrationsListResponse {
   integrations: WorkspaceIntegrationView[];
 }
 
+interface MemoryBrowserTreeNode {
+  name: string;
+  path: string;
+  kind: "directory" | "file";
+  size_bytes: number | null;
+  modified_at: string | null;
+  children?: MemoryBrowserTreeNode[];
+}
+
+interface MemoryBrowserTreeResponse {
+  workspace_id: string;
+  root: MemoryBrowserTreeNode;
+  counts: {
+    directories: number;
+    files: number;
+  };
+}
+
+interface MemoryBrowserFileResponse {
+  workspace_id: string;
+  path: string;
+  name: string;
+  size_bytes: number;
+  modified_at: string;
+  content: string;
+}
+
+type MemoryBrowserGraphForest = "workspace" | "integrations";
+type MemoryBrowserGraphNodeKind = "root" | "tree" | "entity" | "branch" | "summary" | "leaf";
+
+interface MemoryBrowserGraphNode {
+  id: string;
+  kind: MemoryBrowserGraphNodeKind;
+  category: "interaction" | "integration";
+  tree_id: string | null;
+  label: string;
+  subtitle: string | null;
+  status: string | null;
+  level: number | null;
+  child_count: number | null;
+  path: string | null;
+}
+
+interface MemoryBrowserGraphEdge {
+  from: string;
+  to: string;
+  kind: "contains" | "parent_child" | "reference";
+}
+
+interface MemoryBrowserGraphResponse {
+  workspace_id: string;
+  forest: MemoryBrowserGraphForest;
+  focus_tree_id: string | null;
+  nodes: MemoryBrowserGraphNode[];
+  edges: MemoryBrowserGraphEdge[];
+}
+
 async function listWorkspaceIntegrations(
   workspaceId: string,
 ): Promise<WorkspaceIntegrationsListResponse> {
@@ -10279,6 +10168,59 @@ async function clearWorkspaceIntegrationOverride(
   });
 }
 
+async function listMemoryBrowserTree(
+  workspaceId: string,
+): Promise<MemoryBrowserTreeResponse> {
+  return requestWorkspaceRuntimeJson<MemoryBrowserTreeResponse>(workspaceId, {
+    method: "GET",
+    path: "/api/v1/memory/browser/tree",
+    params: {
+      workspace_id: workspaceId,
+    },
+  });
+}
+
+async function readMemoryBrowserFile(
+  workspaceId: string,
+  targetPath: string,
+): Promise<MemoryBrowserFileResponse> {
+  const normalizedPath =
+    typeof targetPath === "string" ? targetPath.trim() : "";
+  if (!normalizedPath) {
+    throw new Error("readMemoryBrowserFile: path is required");
+  }
+  return requestWorkspaceRuntimeJson<MemoryBrowserFileResponse>(workspaceId, {
+    method: "GET",
+    path: "/api/v1/memory/browser/file",
+    params: {
+      workspace_id: workspaceId,
+      path: normalizedPath,
+    },
+  });
+}
+
+async function listMemoryBrowserGraph(
+  workspaceId: string,
+  params: {
+    forest: MemoryBrowserGraphForest;
+    treeId?: string | null;
+  },
+): Promise<MemoryBrowserGraphResponse> {
+  const forest = params.forest;
+  if (forest !== "workspace" && forest !== "integrations") {
+    throw new Error("listMemoryBrowserGraph: forest must be workspace or integrations");
+  }
+  return requestWorkspaceRuntimeJson<MemoryBrowserGraphResponse>(workspaceId, {
+    method: "GET",
+    path: "/api/v1/memory/browser/graph",
+    params: {
+      workspace_id: workspaceId,
+      forest,
+      tree_id: params.treeId?.trim() || undefined,
+    },
+  });
+}
+
 // Restarts a single workspace app via the runtime's capabilities tool. Used
 // after an integration binding is added/changed so the app re-reads
 // HOLABOSS_APP_GRANT (which is captured at boot in the bridge-transport
@@ -10305,10 +10247,50 @@ async function createIntegrationConnection(
   return localIntegrationMetadataStore.createConnection(payload);
 }
 
+function runtimeIntegrationConnectionUpdatePayload(
+  payload: IntegrationUpdateConnectionPayload,
+): Record<string, unknown> {
+  const update: Record<string, unknown> = {};
+  if (payload.status !== undefined) {
+    update.status = payload.status;
+  }
+  if (payload.secret_ref !== undefined) {
+    update.secret_ref = payload.secret_ref;
+  }
+  if (payload.account_label !== undefined) {
+    update.account_label = payload.account_label;
+  }
+  if (payload.account_handle !== undefined) {
+    update.account_handle = payload.account_handle;
+  }
+  if (payload.account_email !== undefined) {
+    update.account_email = payload.account_email;
+  }
+  if (payload.context_cron_auto_fetch_enabled !== undefined) {
+    update.context_cron_auto_fetch_enabled =
+      payload.context_cron_auto_fetch_enabled;
+  }
+  return update;
+}
+
 async function updateIntegrationConnection(
   connectionId: string,
   payload: IntegrationUpdateConnectionPayload,
 ): Promise<IntegrationConnectionPayload> {
+  const runtimeUpdate = runtimeIntegrationConnectionUpdatePayload(payload);
+  if (Object.keys(runtimeUpdate).length > 0) {
+    try {
+      await requestRuntimeJson<IntegrationConnectionPayload>({
+        method: "PATCH",
+        path: `/api/v1/integrations/connections/${encodeURIComponent(connectionId)}`,
+        payload: runtimeUpdate,
+      });
+    } catch (error) {
+      if (payload.context_cron_auto_fetch_enabled !== undefined) {
+        throw error;
+      }
+    }
+  }
   return localIntegrationMetadataStore.updateConnection(connectionId, payload);
 }
 
@@ -10566,13 +10548,14 @@ function authBearerToken(): string {
   return extractSessionTokenFromCookieHeader(cookie) ?? "";
 }
 
-// Temporary diagnostic — hits the runtime's /api/v1/debug/composio-
+// Diagnostic helper — hits the runtime's /api/v1/debug/composio-
 // runtime-test endpoint, which exercises ComposioApiClient end-to-end
 // (runtime env-injected bearer token → Hono /internal/tools/execute →
 // Composio). Wired to a button in IntegrationsPane so we can confirm
-// the full server-side stack before any product consumer lands. Safe
-// to delete with the matching runtime endpoint once a real consumer
-// is in place.
+// the full server-side stack. Also useful for low-level debugging
+// while provider fetch plans are still expanding (the product
+// integration context fetch flow now uses
+// /api/v1/integrations/context-fetch).
 async function debugComposioRuntimeTest(
   params: {
     providerSlug?: string;
@@ -10588,6 +10571,78 @@ async function debugComposioRuntimeTest(
       ...(params.toolSlug ? { tool_slug: params.toolSlug } : {}),
       ...(params.arguments ? { arguments: params.arguments } : {}),
     },
+  });
+}
+
+type IntegrationContextFetchStatusPayload = {
+  connection_id: string;
+  provider_id: string;
+  run_id: string;
+  supported: boolean;
+  status: "running" | "completed" | "failed" | "unsupported";
+  account_key: string | null;
+  account_label: string | null;
+  tree_id: string | null;
+  current_chunk_label: string | null;
+  chunks_total: number;
+  chunks_completed: number;
+  messages_seen: number;
+  messages_persisted: number;
+  leaves_created: number;
+  leaves_superseding: number;
+  leaves_unchanged: number;
+  summary_nodes: number;
+  actions: string[];
+  started_at: string | null;
+  updated_at: string;
+  completed_at: string | null;
+  fetched_at: string | null;
+  error_message: string | null;
+  reason: string | null;
+};
+
+type IntegrationContextFetchStartResponsePayload = {
+  ok: true;
+  started: boolean;
+  deduped: boolean;
+  status: IntegrationContextFetchStatusPayload;
+};
+
+type IntegrationContextFetchStatusListResponsePayload = {
+  ok: true;
+  statuses: IntegrationContextFetchStatusPayload[];
+};
+
+async function fetchIntegrationContext(
+  connectionId: string,
+): Promise<IntegrationContextFetchStartResponsePayload> {
+  const trimmed = typeof connectionId === "string" ? connectionId.trim() : "";
+  if (!trimmed) {
+    throw new Error("fetchIntegrationContext: connection_id required");
+  }
+  return requestRuntimeJson<IntegrationContextFetchStartResponsePayload>({
+    method: "POST",
+    path: "/api/v1/integrations/context-fetch",
+    payload: {
+      connection_id: trimmed,
+    },
+  });
+}
+
+async function listIntegrationContextFetchStatuses(
+  connectionIds: string[] = [],
+): Promise<IntegrationContextFetchStatusListResponsePayload> {
+  const normalized = connectionIds
+    .map((connectionId) =>
+      typeof connectionId === "string" ? connectionId.trim() : "",
+    )
+    .filter((connectionId) => connectionId.length > 0);
+  return requestRuntimeJson<IntegrationContextFetchStatusListResponsePayload>({
+    method: "GET",
+    path: "/api/v1/integrations/context-fetch",
+    params: normalized.length > 0
+      ? { connection_ids: normalized.join(",") }
+      : undefined,
   });
 }
 
@@ -11270,11 +11325,47 @@ async function composioFinalize(payload: {
     }
   }
 
-  return runtimeClient.integrations.composioFinalize({
-    ...payload,
-    ...(resolvedLabel ? { account_label: resolvedLabel } : {}),
-    account_handle: enrichedHandle,
-    account_email: enrichedEmail,
+  return normalizeIntegrationConnectionPayload(
+    await runtimeClient.integrations.composioFinalize({
+      ...payload,
+      ...(resolvedLabel ? { account_label: resolvedLabel } : {}),
+      account_handle: enrichedHandle,
+      account_email: enrichedEmail,
+    }),
+  );
+}
+
+async function composioDeleteUpstream(
+  connectedAccountId: string,
+): Promise<{ deleted: boolean; missing: boolean }> {
+  const trimmed = typeof connectedAccountId === "string" ? connectedAccountId.trim() : "";
+  if (!trimmed) {
+    return { deleted: false, missing: false };
+  }
+  try {
+    await composioFetch<{ deleted?: boolean }>(
+      `/api/composio/connections/${encodeURIComponent(trimmed)}`,
+      "DELETE",
+    );
+    return { deleted: true, missing: false };
+  } catch (err) {
+    if (isComposioAccountMissingError(err)) {
+      return { deleted: false, missing: true };
+    }
+    // Composio's DELETE returns the upstream's body on non-2xx — 404 there
+    // surfaces as "Composio API error (404)" via composioFetch.
+    if (err instanceof Error && /\(404\)/.test(err.message)) {
+      return { deleted: false, missing: true };
+    }
+    throw err;
+  }
+}
+
+async function composioMcpEnsureRunning(workspaceId: string): Promise<unknown> {
+  return requestRuntimeJson<unknown>({
+    method: "POST",
+    path: "/api/v1/composio-mcp/ensure-running",
+    payload: { workspace_id: workspaceId },
   });
 }
 
@@ -15744,6 +15835,18 @@ async function continueDeterministicOnboarding(
   if (status === "completed" || status === "not_required") {
     return withWorkspaceResponseLocation(current);
   }
+  const currentState = (current.workspace.onboarding_state || "")
+    .trim()
+    .toLowerCase();
+  if (currentState === "deterministic_intro") {
+    return withWorkspaceResponseLocation(
+      await runtimeClient.workspaces.update(safeWorkspaceId, {
+        onboarding_status: "in_progress",
+        onboarding_state: "deterministic_context_fetching",
+        error_message: null,
+      }),
+    );
+  }
   return withWorkspaceResponseLocation(
     await runtimeClient.workspaces.update(safeWorkspaceId, {
       onboarding_status: "completed",
@@ -15840,6 +15943,8 @@ async function approveOnboardingAlignment(
 async function answerOnboardingAlignmentQuestion(
   workspaceId: string,
   payload: {
+    model?: string | null;
+    thinkingValue?: string | null;
     optionId?: string | null;
     responseText?: string | null;
     notes?: string | null;
@@ -15858,6 +15963,8 @@ async function answerOnboardingAlignmentQuestion(
       path: "/api/v1/capabilities/runtime-tools/onboarding/alignment-question/answer",
       payload: {
         workspace_id: workspaceId,
+        model: payload.model ?? undefined,
+        thinking_value: payload.thinkingValue ?? undefined,
         option_id: payload.optionId ?? undefined,
         response_text: payload.responseText ?? undefined,
         notes: payload.notes ?? undefined,
@@ -18326,6 +18433,14 @@ function toPreviewTableCellValue(value: unknown): string {
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? "" : value.toISOString();
   }
+  if (
+    typeof value === "object" &&
+    "text" in value &&
+    typeof (value as { text?: unknown }).text === "function"
+  ) {
+    const textValue = (value as { text: () => unknown }).text();
+    return typeof textValue === "string" ? textValue : String(textValue ?? "");
+  }
   return String(value);
 }
 
@@ -18886,25 +19001,129 @@ async function stripWorkbookVisualArtifactsForPreview(
   return Buffer.from(sanitizedBuffer);
 }
 
-function worksheetPreviewRows(worksheet: ExcelJS.Worksheet): {
+function workbookRangeRows(range: XlsxPopulateRange | undefined): unknown[][] {
+  if (!range) {
+    return [];
+  }
+
+  const matrix = range.value();
+  if (!Array.isArray(matrix)) {
+    return [[matrix]];
+  }
+
+  return matrix.map((row) => (Array.isArray(row) ? row : [row]));
+}
+
+function workbookOutputToBuffer(
+  output: Buffer | Uint8Array | ArrayBuffer,
+): Buffer {
+  if (Buffer.isBuffer(output)) {
+    return output;
+  }
+  if (output instanceof Uint8Array) {
+    return Buffer.from(output);
+  }
+  return Buffer.from(output);
+}
+
+function parseCsvRows(text: string): string[][] {
+  if (!text) {
+    return [];
+  }
+
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentCell = "";
+  let inQuotes = false;
+  let sawAnyCharacter = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    sawAnyCharacter = true;
+
+    if (inQuotes) {
+      if (char === '"') {
+        if (text[index + 1] === '"') {
+          currentCell += '"';
+          index += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        currentCell += char;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = true;
+      continue;
+    }
+    if (char === ",") {
+      currentRow.push(currentCell);
+      currentCell = "";
+      continue;
+    }
+    if (char === "\r" || char === "\n") {
+      currentRow.push(currentCell);
+      rows.push(currentRow);
+      currentRow = [];
+      currentCell = "";
+      if (char === "\r" && text[index + 1] === "\n") {
+        index += 1;
+      }
+      continue;
+    }
+
+    currentCell += char;
+  }
+
+  if (
+    sawAnyCharacter &&
+    (
+      currentCell.length > 0 ||
+      currentRow.length > 0 ||
+      (!text.endsWith("\n") && !text.endsWith("\r"))
+    )
+  ) {
+    currentRow.push(currentCell);
+    rows.push(currentRow);
+  }
+
+  return rows;
+}
+
+function serializeCsvCell(value: string): string {
+  return /[",\n\r]/.test(value)
+    ? `"${value.replace(/"/g, "\"\"")}"`
+    : value;
+}
+
+function stringifyCsvRows(rows: string[][]): string {
+  return rows
+    .map((row) => row.map((cell) => serializeCsvCell(cell)).join(","))
+    .join("\r\n");
+}
+
+function worksheetPreviewRows(worksheet: XlsxPopulateWorksheet): {
   rows: string[][];
   links: (string | null)[][];
 } {
   const rows: string[][] = [];
   const links: (string | null)[][] = [];
-  worksheet.eachRow({ includeEmpty: false }, (row) => {
-    const values: string[] = [];
-    const rowLinks: (string | null)[] = [];
-    row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
-      values[columnNumber - 1] = toPreviewTableCellValue(cell.text);
-      rowLinks[columnNumber - 1] = normalizePreviewTableLinkTarget(
-        typeof cell.hyperlink === "string" ? cell.hyperlink : cell.text,
-      );
+  const worksheetRows = workbookRangeRows(worksheet.usedRange());
+
+  worksheetRows.forEach((row, rowIndex) => {
+    const values = row.map((cell) => toPreviewTableCellValue(cell));
+    const rowLinks = values.map((value, columnIndex) => {
+      const hyperlink = worksheet.cell(rowIndex + 1, columnIndex + 1).hyperlink();
+      return normalizePreviewTableLinkTarget(hyperlink ?? value);
     });
     const trimmedValues = trimTrailingEmptyTableCells(values);
     rows.push(trimmedValues);
     links.push(trimTrailingEmptyTableLinkRow(rowLinks, trimmedValues.length));
   });
+
   return { rows, links };
 }
 
@@ -19078,20 +19297,22 @@ function sourceLinksFromTablePreviewSheet(
 }
 
 function applyPreviewSheetEditsToWorksheet(
-  worksheet: ExcelJS.Worksheet,
+  worksheet: XlsxPopulateWorksheet,
   sheet: FilePreviewTableSheetPayload,
 ) {
   const sourceRows = sourceRowsFromTablePreviewSheet(sheet);
   const sourceLinks = sourceLinksFromTablePreviewSheet(sheet);
   for (const [rowIndex, row] of sourceRows.entries()) {
-    const worksheetRow = worksheet.getRow(rowIndex + 1);
     for (const [columnIndex, value] of row.entries()) {
+      const cell = worksheet.cell(rowIndex + 1, columnIndex + 1);
       const hyperlink = sourceLinks[rowIndex]?.[columnIndex] ?? null;
-      worksheetRow.getCell(columnIndex + 1).value = hyperlink
-        ? { text: value, hyperlink }
-        : value;
+      cell.value(value);
+      if (hyperlink) {
+        cell.hyperlink(hyperlink);
+      } else {
+        worksheet.hyperlink(cell.address(), undefined);
+      }
     }
-    worksheetRow.commit();
   }
 }
 
@@ -19099,22 +19320,8 @@ async function writeCsvTablePreview(
   absolutePath: string,
   sheet: FilePreviewTableSheetPayload,
 ): Promise<void> {
-  const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet(sheet.name || "Sheet 1");
   const sourceRows = sourceRowsFromTablePreviewSheet(sheet);
-  if (sourceRows.length > 0) {
-    worksheet.addRows(sourceRows);
-  }
-  const outputBuffer = await workbook.csv.writeBuffer({
-    sheetName: worksheet.name,
-    formatterOptions: {
-      delimiter: ",",
-      quote: '"',
-      escape: '"',
-      rowDelimiter: "\r\n",
-    },
-  });
-  await fs.writeFile(absolutePath, Buffer.from(outputBuffer as ArrayBuffer));
+  await fs.writeFile(absolutePath, stringifyCsvRows(sourceRows), "utf-8");
 }
 
 async function writeWorkbookTablePreview(
@@ -19122,44 +19329,36 @@ async function writeWorkbookTablePreview(
   buffer: Buffer,
   tableSheets: FilePreviewTableSheetPayload[],
 ): Promise<void> {
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(
-    buffer as unknown as Parameters<ExcelJS.Workbook["xlsx"]["load"]>[0],
-  );
+  const workbook = await XlsxPopulate.fromDataAsync(buffer);
 
   for (const sheet of tableSheets) {
-    const worksheet = workbook.worksheets[sheet.index];
+    const worksheet = workbook.sheet(sheet.index);
     if (!worksheet) {
       continue;
     }
     applyPreviewSheetEditsToWorksheet(worksheet, sheet);
   }
 
-  const outputBuffer = await workbook.xlsx.writeBuffer();
-  await fs.writeFile(absolutePath, Buffer.from(outputBuffer as ArrayBuffer));
+  const outputBuffer = await workbook.outputAsync();
+  await fs.writeFile(absolutePath, workbookOutputToBuffer(outputBuffer));
 }
 
 async function buildWorkbookPreviewSheets(
   buffer: Buffer,
 ): Promise<FilePreviewTableSheetPayload[]> {
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(
-    buffer as unknown as Parameters<ExcelJS.Workbook["xlsx"]["load"]>[0],
-  );
+  const workbook = await XlsxPopulate.fromDataAsync(buffer);
+  const worksheets = workbook.sheets();
 
-  const worksheets = workbook.worksheets.slice(0, MAX_TABLE_PREVIEW_SHEETS);
-  return worksheets.map((worksheet, sheetIndex) =>
-    {
-      const preview = worksheetPreviewRows(worksheet);
-      return tablePreviewSheetFromRows(
-        worksheet.name,
-        sheetIndex,
-        preview.rows,
-        preview.links,
-        workbook.worksheets.length,
-      );
-    },
-  );
+  return worksheets.slice(0, MAX_TABLE_PREVIEW_SHEETS).map((worksheet, sheetIndex) => {
+    const preview = worksheetPreviewRows(worksheet);
+    return tablePreviewSheetFromRows(
+      worksheet.name(),
+      sheetIndex,
+      preview.rows,
+      preview.links,
+      worksheets.length,
+    );
+  });
 }
 
 async function buildWorkbookPreviewSheetsWithFallback(
@@ -19190,30 +19389,16 @@ async function buildWorkbookPreviewSheetsWithFallback(
 async function buildCsvPreviewSheets(
   buffer: Buffer,
 ): Promise<FilePreviewTableSheetPayload[]> {
-  const workbook = new ExcelJS.Workbook();
-  const worksheet = await workbook.csv.read(
-    Readable.from([buffer.toString("utf8")]),
-    {
-      parserOptions: {
-        delimiter: ",",
-        quote: '"',
-        escape: '"',
-        trim: false,
-      },
-    },
+  const rows = parseCsvRows(buffer.toString("utf8").replace(/^\uFEFF/, ""));
+  const normalizedRows = rows.map((row) =>
+    trimTrailingEmptyTableCells(
+      row.map((cell) => toPreviewTableCellValue(cell)),
+    ),
   );
+  const links = normalizedRows.map((row) => row.map(() => null));
 
   return [
-    (() => {
-      const preview = worksheetPreviewRows(worksheet);
-      return tablePreviewSheetFromRows(
-        worksheet.name,
-        0,
-        preview.rows,
-        preview.links,
-        1,
-      );
-    })(),
+    tablePreviewSheetFromRows("Sheet 1", 0, normalizedRows, links, 1),
   ];
 }
 
@@ -23512,24 +23697,6 @@ app.whenReady().then(async () => {
       acceptTaskProposal(payload),
   );
   handleTrustedIpc(
-    "workspace:listMemoryUpdateProposals",
-    ["main"],
-    async (_event, payload: MemoryUpdateProposalListRequestPayload) =>
-      listMemoryUpdateProposals(payload),
-  );
-  handleTrustedIpc(
-    "workspace:acceptMemoryUpdateProposal",
-    ["main"],
-    async (_event, payload: MemoryUpdateProposalAcceptPayload) =>
-      acceptMemoryUpdateProposal(payload),
-  );
-  handleTrustedIpc(
-    "workspace:dismissMemoryUpdateProposal",
-    ["main"],
-    async (_event, workspaceId: string, proposalId: string) =>
-      dismissMemoryUpdateProposal(workspaceId, proposalId),
-  );
-  handleTrustedIpc(
     "workspace:updateTaskProposalState",
     ["main"],
     async (_event, workspaceId: string, proposalId: string, state: string) =>
@@ -23768,6 +23935,26 @@ app.whenReady().then(async () => {
     async (_event, workspaceId: string) => listWorkspaceIntegrations(workspaceId),
   );
   handleTrustedIpc(
+    "workspace:listMemoryBrowserTree",
+    ["main"],
+    async (_event, workspaceId: string) => listMemoryBrowserTree(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:readMemoryBrowserFile",
+    ["main"],
+    async (_event, workspaceId: string, targetPath: string) =>
+      readMemoryBrowserFile(workspaceId, targetPath),
+  );
+  handleTrustedIpc(
+    "workspace:listMemoryBrowserGraph",
+    ["main"],
+    async (
+      _event,
+      workspaceId: string,
+      params: { forest: MemoryBrowserGraphForest; treeId?: string | null },
+    ) => listMemoryBrowserGraph(workspaceId, params),
+  );
+  handleTrustedIpc(
     "workspace:setWorkspaceIntegrationOverride",
     ["main"],
     async (
@@ -23881,6 +24068,19 @@ app.whenReady().then(async () => {
         arguments?: Record<string, unknown>;
       },
     ) => debugComposioRuntimeTest(params ?? {}),
+  );
+  handleTrustedIpc(
+    "workspace:fetchIntegrationContext",
+    ["main"],
+    async (_event, connectionId: string) => fetchIntegrationContext(connectionId),
+  );
+  handleTrustedIpc(
+    "workspace:listIntegrationContextFetchStatuses",
+    ["main"],
+    async (_event, connectionIds?: string[]) =>
+      listIntegrationContextFetchStatuses(
+        Array.isArray(connectionIds) ? connectionIds : [],
+      ),
   );
   handleTrustedIpc(
     "workspace:composioConnect",

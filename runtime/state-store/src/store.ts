@@ -182,6 +182,10 @@ export interface IntegrationConnectionRecord {
    */
   accountHandle: string | null;
   accountEmail: string | null;
+  contextCronAutoFetchEnabled: boolean;
+  lastContextFetchAttemptedAt: string | null;
+  lastContextFetchCompletedAt: string | null;
+  lastContextFetchStatus: string | null;
   authMode: string;
   grantedScopes: string[];
   status: string;
@@ -493,6 +497,194 @@ export interface MemoryVectorSearchResult {
   workspaceId: string | null;
   scopeBucket: MemoryEmbeddingScopeBucket;
   memoryType: string;
+}
+
+export type InteractionEntityType =
+  | "project"
+  | "workflow"
+  | "preference"
+  | "identity"
+  | "person"
+  | "customer"
+  | "system"
+  | "misc";
+export type InteractionEntityStatus = "active" | "archived";
+export type InteractionLeafStatus = "active" | "superseded" | "archived";
+export type InteractionSummaryStatus = "active" | "retired";
+export type InteractionTreeChildKind = "leaf" | "summary";
+export type IntegrationTreeStatus = "active" | "archived";
+export type IntegrationLeafStatus = "active" | "superseded" | "archived";
+export type IntegrationSummaryStatus = "active" | "retired";
+export type IntegrationNodeKind = "tree" | "entity" | "branch" | "summary" | "leaf";
+
+export interface InteractionEntityRecord {
+  workspaceId: string;
+  entityId: string;
+  entityType: InteractionEntityType;
+  canonicalName: string;
+  slug: string;
+  summary: string | null;
+  aliases: string[];
+  isSystem: boolean;
+  status: InteractionEntityStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InteractionLeafRecord {
+  workspaceId: string;
+  leafId: string;
+  entityId: string;
+  subjectKey: string;
+  path: string;
+  title: string;
+  summary: string;
+  fingerprint: string;
+  bodySha256: string;
+  tags: string[];
+  secondaryEntityIds: string[];
+  sourceType: string | null;
+  sourceEventId: string | null;
+  sourceMessageId: string | null;
+  sourceTurnInputId: string | null;
+  admissionConfidence: number | null;
+  entityConfidence: number | null;
+  observedAt: string | null;
+  supersedesLeafId: string | null;
+  supersededAt: string | null;
+  status: InteractionLeafStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InteractionSummaryNodeRecord {
+  workspaceId: string;
+  nodeId: string;
+  entityId: string;
+  level: number;
+  ordinal: number;
+  path: string;
+  title: string;
+  summary: string;
+  bodySha256: string;
+  childCount: number;
+  status: InteractionSummaryStatus;
+  sealedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InteractionTreeEdgeRecord {
+  workspaceId: string;
+  entityId: string;
+  parentNodeId: string;
+  childKind: InteractionTreeChildKind;
+  childId: string;
+  position: number;
+  createdAt: string;
+}
+
+export interface InteractionNodeEmbeddingRecord {
+  workspaceId: string;
+  nodeKind: InteractionTreeChildKind;
+  nodeId: string;
+  entityId: string;
+  embeddingModel: string;
+  contentFingerprint: string;
+  dimensions: number;
+  vector: number[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IntegrationTreeRecord {
+  treeId: string;
+  provider: string;
+  ownerUserId: string;
+  accountKey: string;
+  accountLabel: string;
+  slug: string;
+  summary: string | null;
+  status: IntegrationTreeStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IntegrationLeafRecord {
+  leafId: string;
+  treeId: string;
+  subjectKey: string;
+  entityKey: string | null;
+  entityLabel: string | null;
+  branchKey: string | null;
+  branchLabel: string | null;
+  path: string;
+  title: string;
+  summary: string;
+  fingerprint: string;
+  bodySha256: string;
+  tags: string[];
+  sourceType: string | null;
+  sourceEventId: string | null;
+  sourceMessageId: string | null;
+  externalObjectId: string | null;
+  externalObjectType: string | null;
+  admissionConfidence: number | null;
+  observedAt: string | null;
+  supersedesLeafId: string | null;
+  supersededAt: string | null;
+  status: IntegrationLeafStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IntegrationSummaryNodeRecord {
+  nodeId: string;
+  treeId: string;
+  level: number;
+  ordinal: number;
+  path: string;
+  title: string;
+  summary: string;
+  bodySha256: string;
+  childCount: number;
+  status: IntegrationSummaryStatus;
+  sealedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IntegrationTreeEdgeRecord {
+  treeId: string;
+  parentNodeId: string;
+  childKind: InteractionTreeChildKind;
+  childId: string;
+  position: number;
+  createdAt: string;
+}
+
+export interface IntegrationNodeEmbeddingRecord {
+  nodeKind: InteractionTreeChildKind;
+  nodeId: string;
+  treeId: string;
+  embeddingModel: string;
+  contentFingerprint: string;
+  dimensions: number;
+  vector: number[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IntegrationNodeRelationRecord {
+  treeId: string;
+  fromNodeKind: IntegrationNodeKind;
+  fromNodeId: string;
+  toNodeKind: IntegrationNodeKind;
+  toNodeId: string;
+  relationType: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface OutputFolderRecord {
@@ -3352,6 +3544,10 @@ export class RuntimeStateStore {
     accountExternalId?: string | null;
     accountHandle?: string | null;
     accountEmail?: string | null;
+    contextCronAutoFetchEnabled?: boolean;
+    lastContextFetchAttemptedAt?: string | null;
+    lastContextFetchCompletedAt?: string | null;
+    lastContextFetchStatus?: string | null;
     authMode: string;
     grantedScopes: string[];
     status: string;
@@ -3363,8 +3559,10 @@ export class RuntimeStateStore {
         INSERT INTO integration_connections (
             connection_id, provider_id, owner_user_id, account_label, account_external_id,
             account_handle, account_email,
+            context_cron_auto_fetch_enabled, last_context_fetch_attempted_at,
+            last_context_fetch_completed_at, last_context_fetch_status,
             auth_mode, granted_scopes, status, secret_ref, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(connection_id) DO UPDATE SET
             provider_id = excluded.provider_id,
             owner_user_id = excluded.owner_user_id,
@@ -3372,6 +3570,10 @@ export class RuntimeStateStore {
             account_external_id = excluded.account_external_id,
             account_handle = excluded.account_handle,
             account_email = excluded.account_email,
+            context_cron_auto_fetch_enabled = excluded.context_cron_auto_fetch_enabled,
+            last_context_fetch_attempted_at = excluded.last_context_fetch_attempted_at,
+            last_context_fetch_completed_at = excluded.last_context_fetch_completed_at,
+            last_context_fetch_status = excluded.last_context_fetch_status,
             auth_mode = excluded.auth_mode,
             granted_scopes = excluded.granted_scopes,
             status = excluded.status,
@@ -3386,6 +3588,14 @@ export class RuntimeStateStore {
         params.accountExternalId ?? null,
         normalizeIdentityValue(params.accountHandle),
         normalizeIdentityValue(params.accountEmail),
+        params.contextCronAutoFetchEnabled === undefined
+          ? 1
+          : params.contextCronAutoFetchEnabled
+            ? 1
+            : 0,
+        params.lastContextFetchAttemptedAt ?? null,
+        params.lastContextFetchCompletedAt ?? null,
+        params.lastContextFetchStatus ?? null,
         params.authMode,
         JSON.stringify(params.grantedScopes ?? []),
         params.status,
@@ -5189,6 +5399,7 @@ export class RuntimeStateStore {
     sessionId: string;
     inputId?: string;
     status?: string;
+    order?: "asc" | "desc";
     limit?: number;
     offset?: number;
   }): TurnResultRecord[] {
@@ -5207,13 +5418,43 @@ export class RuntimeStateStore {
       query += " AND status = ?";
       values.push(params.status);
     }
+    const order = params.order === "asc" ? "ASC" : "DESC";
     query += `
-      ORDER BY datetime(COALESCE(completed_at, started_at)) DESC, created_at DESC, input_id DESC
+      ORDER BY datetime(COALESCE(completed_at, started_at)) ${order}, created_at ${order}, input_id ${order}
       LIMIT ? OFFSET ?
     `;
     values.push(params.limit ?? 100, params.offset ?? 0);
     const rows = this.workspaceRuntimeDb(params.workspaceId).prepare(query).all(...values) as Array<Record<string, unknown>>;
     return rows.map((row) => this.rowToTurnResult(row));
+  }
+
+  getWorkspaceRuntimeMetadata(params: {
+    workspaceId: string;
+    key: string;
+  }): string | null {
+    const row = this.workspaceRuntimeDb(params.workspaceId)
+      .prepare<[string], { value?: string }>("SELECT value FROM workspace_runtime_metadata WHERE key = ? LIMIT 1")
+      .get(params.key);
+    return typeof row?.value === "string" ? row.value : null;
+  }
+
+  setWorkspaceRuntimeMetadata(params: {
+    workspaceId: string;
+    key: string;
+    value: string;
+    updatedAt?: string;
+  }): void {
+    this.workspaceRuntimeDb(params.workspaceId)
+      .prepare(
+        `
+          INSERT INTO workspace_runtime_metadata (key, value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = excluded.updated_at
+        `,
+      )
+      .run(params.key, params.value, params.updatedAt ?? utcNowIso());
   }
 
   getRuntimeUserProfile(params: { profileId?: string } = {}): RuntimeUserProfileRecord | null {
@@ -5538,6 +5779,1470 @@ export class RuntimeStateStore {
     });
     counts.sort((left, right) => left.workspaceId.localeCompare(right.workspaceId));
     return counts;
+  }
+
+  upsertInteractionEntity(params: {
+    workspaceId: string;
+    entityId: string;
+    entityType: InteractionEntityType;
+    canonicalName: string;
+    slug: string;
+    summary?: string | null;
+    aliases?: string[] | null;
+    isSystem?: boolean;
+    status?: InteractionEntityStatus;
+    createdAt?: string;
+    updatedAt?: string;
+  }): InteractionEntityRecord {
+    const existing = this.getInteractionEntity({
+      workspaceId: params.workspaceId,
+      entityId: params.entityId,
+    });
+    const now = params.updatedAt ?? utcNowIso();
+    const createdAt = existing?.createdAt ?? params.createdAt ?? now;
+    this.workspaceRuntimeDb(params.workspaceId)
+      .prepare(`
+        INSERT INTO interaction_entities (
+          workspace_id,
+          entity_id,
+          entity_type,
+          canonical_name,
+          slug,
+          summary,
+          aliases,
+          is_system,
+          status,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(workspace_id, entity_id) DO UPDATE SET
+          entity_type = excluded.entity_type,
+          canonical_name = excluded.canonical_name,
+          slug = excluded.slug,
+          summary = excluded.summary,
+          aliases = excluded.aliases,
+          is_system = excluded.is_system,
+          status = excluded.status,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        params.workspaceId,
+        params.entityId,
+        params.entityType,
+        params.canonicalName,
+        params.slug,
+        params.summary ?? null,
+        JSON.stringify(params.aliases ?? []),
+        params.isSystem ? 1 : 0,
+        params.status ?? "active",
+        createdAt,
+        now,
+      );
+    const record = this.getInteractionEntity({
+      workspaceId: params.workspaceId,
+      entityId: params.entityId,
+    });
+    if (!record) {
+      throw new Error("interaction entity row not found after upsert");
+    }
+    return record;
+  }
+
+  getInteractionEntity(params: {
+    workspaceId: string;
+    entityId: string;
+  }): InteractionEntityRecord | null {
+    const row = this.workspaceRuntimeDb(params.workspaceId)
+      .prepare<[string, string], Record<string, unknown>>(
+        "SELECT * FROM interaction_entities WHERE workspace_id = ? AND entity_id = ? LIMIT 1",
+      )
+      .get(params.workspaceId, params.entityId);
+    return row ? this.rowToInteractionEntity(row) : null;
+  }
+
+  getInteractionEntityBySlug(params: {
+    workspaceId: string;
+    slug: string;
+  }): InteractionEntityRecord | null {
+    const row = this.workspaceRuntimeDb(params.workspaceId)
+      .prepare<[string, string], Record<string, unknown>>(
+        "SELECT * FROM interaction_entities WHERE workspace_id = ? AND slug = ? LIMIT 1",
+      )
+      .get(params.workspaceId, params.slug);
+    return row ? this.rowToInteractionEntity(row) : null;
+  }
+
+  listInteractionEntities(params: {
+    workspaceId: string;
+    status?: InteractionEntityStatus | null;
+    includeSystem?: boolean;
+    limit?: number;
+    offset?: number;
+  }): InteractionEntityRecord[] {
+    let query = `
+      SELECT *
+      FROM interaction_entities
+      WHERE workspace_id = ?
+    `;
+    const values: Array<string | number> = [params.workspaceId];
+    if (params.status !== undefined) {
+      if (params.status === null) {
+        query += " AND status IS NULL";
+      } else {
+        query += " AND status = ?";
+        values.push(params.status);
+      }
+    }
+    if (!(params.includeSystem ?? true)) {
+      query += " AND is_system = 0";
+    }
+    query += `
+      ORDER BY updated_at DESC, created_at DESC, canonical_name COLLATE NOCASE ASC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 200, params.offset ?? 0);
+    const rows = this.workspaceRuntimeDb(params.workspaceId).prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToInteractionEntity(row));
+  }
+
+  upsertInteractionLeaf(params: {
+    workspaceId: string;
+    leafId: string;
+    entityId: string;
+    subjectKey: string;
+    path: string;
+    title: string;
+    summary: string;
+    fingerprint: string;
+    bodySha256: string;
+    tags?: string[] | null;
+    secondaryEntityIds?: string[] | null;
+    sourceType?: string | null;
+    sourceEventId?: string | null;
+    sourceMessageId?: string | null;
+    sourceTurnInputId?: string | null;
+    admissionConfidence?: number | null;
+    entityConfidence?: number | null;
+    observedAt?: string | null;
+    supersedesLeafId?: string | null;
+    supersededAt?: string | null;
+    status?: InteractionLeafStatus;
+    createdAt?: string;
+    updatedAt?: string;
+  }): InteractionLeafRecord {
+    const existing = this.getInteractionLeaf({
+      workspaceId: params.workspaceId,
+      leafId: params.leafId,
+    });
+    const now = params.updatedAt ?? utcNowIso();
+    const createdAt = existing?.createdAt ?? params.createdAt ?? now;
+    this.workspaceRuntimeDb(params.workspaceId)
+      .prepare(`
+        INSERT INTO interaction_leaves (
+          workspace_id,
+          leaf_id,
+          entity_id,
+          subject_key,
+          path,
+          title,
+          summary,
+          fingerprint,
+          body_sha256,
+          tags,
+          secondary_entity_ids,
+          source_type,
+          source_event_id,
+          source_message_id,
+          source_turn_input_id,
+          admission_confidence,
+          entity_confidence,
+          observed_at,
+          supersedes_leaf_id,
+          superseded_at,
+          status,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(workspace_id, leaf_id) DO UPDATE SET
+          entity_id = excluded.entity_id,
+          subject_key = excluded.subject_key,
+          path = excluded.path,
+          title = excluded.title,
+          summary = excluded.summary,
+          fingerprint = excluded.fingerprint,
+          body_sha256 = excluded.body_sha256,
+          tags = excluded.tags,
+          secondary_entity_ids = excluded.secondary_entity_ids,
+          source_type = excluded.source_type,
+          source_event_id = excluded.source_event_id,
+          source_message_id = excluded.source_message_id,
+          source_turn_input_id = excluded.source_turn_input_id,
+          admission_confidence = excluded.admission_confidence,
+          entity_confidence = excluded.entity_confidence,
+          observed_at = excluded.observed_at,
+          supersedes_leaf_id = excluded.supersedes_leaf_id,
+          superseded_at = excluded.superseded_at,
+          status = excluded.status,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        params.workspaceId,
+        params.leafId,
+        params.entityId,
+        params.subjectKey,
+        params.path,
+        params.title,
+        params.summary,
+        params.fingerprint,
+        params.bodySha256,
+        JSON.stringify(params.tags ?? []),
+        JSON.stringify(params.secondaryEntityIds ?? []),
+        params.sourceType ?? null,
+        params.sourceEventId ?? null,
+        params.sourceMessageId ?? null,
+        params.sourceTurnInputId ?? null,
+        params.admissionConfidence ?? null,
+        params.entityConfidence ?? null,
+        params.observedAt ?? null,
+        params.supersedesLeafId ?? null,
+        params.supersededAt ?? null,
+        params.status ?? "active",
+        createdAt,
+        now,
+      );
+    const record = this.getInteractionLeaf({
+      workspaceId: params.workspaceId,
+      leafId: params.leafId,
+    });
+    if (!record) {
+      throw new Error("interaction leaf row not found after upsert");
+    }
+    return record;
+  }
+
+  getInteractionLeaf(params: {
+    workspaceId: string;
+    leafId: string;
+  }): InteractionLeafRecord | null {
+    const row = this.workspaceRuntimeDb(params.workspaceId)
+      .prepare<[string, string], Record<string, unknown>>(
+        "SELECT * FROM interaction_leaves WHERE workspace_id = ? AND leaf_id = ? LIMIT 1",
+      )
+      .get(params.workspaceId, params.leafId);
+    return row ? this.rowToInteractionLeaf(row) : null;
+  }
+
+  getInteractionLeafByPath(params: {
+    workspaceId: string;
+    path: string;
+  }): InteractionLeafRecord | null {
+    const row = this.workspaceRuntimeDb(params.workspaceId)
+      .prepare<[string, string], Record<string, unknown>>(
+        "SELECT * FROM interaction_leaves WHERE workspace_id = ? AND path = ? LIMIT 1",
+      )
+      .get(params.workspaceId, params.path);
+    return row ? this.rowToInteractionLeaf(row) : null;
+  }
+
+  getInteractionLeafByFingerprint(params: {
+    workspaceId: string;
+    entityId: string;
+    fingerprint: string;
+  }): InteractionLeafRecord | null {
+    const row = this.workspaceRuntimeDb(params.workspaceId)
+      .prepare<[string, string, string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM interaction_leaves
+          WHERE workspace_id = ?
+            AND entity_id = ?
+            AND fingerprint = ?
+          ORDER BY updated_at DESC, created_at DESC
+          LIMIT 1
+        `,
+      )
+      .get(params.workspaceId, params.entityId, params.fingerprint);
+    return row ? this.rowToInteractionLeaf(row) : null;
+  }
+
+  getLatestActiveInteractionLeafBySubject(params: {
+    workspaceId: string;
+    entityId: string;
+    subjectKey: string;
+  }): InteractionLeafRecord | null {
+    const row = this.workspaceRuntimeDb(params.workspaceId)
+      .prepare<[string, string, string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM interaction_leaves
+          WHERE workspace_id = ?
+            AND entity_id = ?
+            AND subject_key = ?
+            AND status = 'active'
+          ORDER BY observed_at DESC, updated_at DESC, created_at DESC
+          LIMIT 1
+        `,
+      )
+      .get(params.workspaceId, params.entityId, params.subjectKey);
+    return row ? this.rowToInteractionLeaf(row) : null;
+  }
+
+  listInteractionLeaves(params: {
+    workspaceId: string;
+    entityId?: string | null;
+    status?: InteractionLeafStatus | null;
+    limit?: number;
+    offset?: number;
+  }): InteractionLeafRecord[] {
+    let query = `
+      SELECT *
+      FROM interaction_leaves
+      WHERE workspace_id = ?
+    `;
+    const values: Array<string | number> = [params.workspaceId];
+    if (params.entityId !== undefined) {
+      if (params.entityId === null) {
+        query += " AND entity_id IS NULL";
+      } else {
+        query += " AND entity_id = ?";
+        values.push(params.entityId);
+      }
+    }
+    if (params.status !== undefined) {
+      if (params.status === null) {
+        query += " AND status IS NULL";
+      } else {
+        query += " AND status = ?";
+        values.push(params.status);
+      }
+    }
+    query += `
+      ORDER BY COALESCE(observed_at, updated_at) DESC, created_at DESC, leaf_id ASC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 200, params.offset ?? 0);
+    const rows = this.workspaceRuntimeDb(params.workspaceId).prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToInteractionLeaf(row));
+  }
+
+  updateInteractionLeafStatus(params: {
+    workspaceId: string;
+    leafId: string;
+    status: InteractionLeafStatus;
+    supersededAt?: string | null;
+    updatedAt?: string;
+  }): InteractionLeafRecord | null {
+    const now = params.updatedAt ?? utcNowIso();
+    this.workspaceRuntimeDb(params.workspaceId)
+      .prepare(`
+        UPDATE interaction_leaves
+        SET status = ?,
+            superseded_at = ?,
+            updated_at = ?
+        WHERE workspace_id = ? AND leaf_id = ?
+      `)
+      .run(
+        params.status,
+        params.supersededAt ?? null,
+        now,
+        params.workspaceId,
+        params.leafId,
+      );
+    return this.getInteractionLeaf({
+      workspaceId: params.workspaceId,
+      leafId: params.leafId,
+    });
+  }
+
+  replaceInteractionSummaryTree(params: {
+    workspaceId: string;
+    entityId: string;
+    nodes: Array<{
+      nodeId: string;
+      level: number;
+      ordinal: number;
+      path: string;
+      title: string;
+      summary: string;
+      bodySha256: string;
+      childCount: number;
+      sealedAt: string;
+      createdAt?: string;
+      updatedAt?: string;
+    }>;
+    edges: Array<{
+      parentNodeId: string;
+      childKind: InteractionTreeChildKind;
+      childId: string;
+      position: number;
+      createdAt?: string;
+    }>;
+  }): InteractionSummaryNodeRecord[] {
+    const db = this.workspaceRuntimeDb(params.workspaceId);
+    const replace = db.transaction(() => {
+      const now = utcNowIso();
+      db.prepare(`
+        DELETE FROM interaction_tree_edges
+        WHERE workspace_id = ? AND entity_id = ?
+      `).run(params.workspaceId, params.entityId);
+      db.prepare(`
+        DELETE FROM interaction_summary_nodes
+        WHERE workspace_id = ? AND entity_id = ?
+      `).run(params.workspaceId, params.entityId);
+
+      const insertNode = db.prepare(`
+        INSERT INTO interaction_summary_nodes (
+          workspace_id,
+          node_id,
+          entity_id,
+          level,
+          ordinal,
+          path,
+          title,
+          summary,
+          body_sha256,
+          child_count,
+          status,
+          sealed_at,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+      `);
+      for (const node of params.nodes) {
+        insertNode.run(
+          params.workspaceId,
+          node.nodeId,
+          params.entityId,
+          node.level,
+          node.ordinal,
+          node.path,
+          node.title,
+          node.summary,
+          node.bodySha256,
+          node.childCount,
+          node.sealedAt,
+          node.createdAt ?? now,
+          node.updatedAt ?? now,
+        );
+      }
+
+      const insertEdge = db.prepare(`
+        INSERT INTO interaction_tree_edges (
+          workspace_id,
+          entity_id,
+          parent_node_id,
+          child_kind,
+          child_id,
+          position,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const edge of params.edges) {
+        insertEdge.run(
+          params.workspaceId,
+          params.entityId,
+          edge.parentNodeId,
+          edge.childKind,
+          edge.childId,
+          edge.position,
+          edge.createdAt ?? now,
+        );
+      }
+    });
+    replace();
+    return this.listInteractionSummaryNodes({
+      workspaceId: params.workspaceId,
+      entityId: params.entityId,
+      status: "active",
+      limit: Math.max(200, params.nodes.length + 10),
+    });
+  }
+
+  getInteractionSummaryNode(params: {
+    workspaceId: string;
+    nodeId: string;
+  }): InteractionSummaryNodeRecord | null {
+    const row = this.workspaceRuntimeDb(params.workspaceId)
+      .prepare<[string, string], Record<string, unknown>>(
+        "SELECT * FROM interaction_summary_nodes WHERE workspace_id = ? AND node_id = ? LIMIT 1",
+      )
+      .get(params.workspaceId, params.nodeId);
+    return row ? this.rowToInteractionSummaryNode(row) : null;
+  }
+
+  getInteractionSummaryNodeByPath(params: {
+    workspaceId: string;
+    path: string;
+  }): InteractionSummaryNodeRecord | null {
+    const row = this.workspaceRuntimeDb(params.workspaceId)
+      .prepare<[string, string], Record<string, unknown>>(
+        "SELECT * FROM interaction_summary_nodes WHERE workspace_id = ? AND path = ? LIMIT 1",
+      )
+      .get(params.workspaceId, params.path);
+    return row ? this.rowToInteractionSummaryNode(row) : null;
+  }
+
+  listInteractionSummaryNodes(params: {
+    workspaceId: string;
+    entityId?: string | null;
+    status?: InteractionSummaryStatus | null;
+    level?: number | null;
+    limit?: number;
+    offset?: number;
+  }): InteractionSummaryNodeRecord[] {
+    let query = `
+      SELECT *
+      FROM interaction_summary_nodes
+      WHERE workspace_id = ?
+    `;
+    const values: Array<string | number> = [params.workspaceId];
+    if (params.entityId !== undefined) {
+      if (params.entityId === null) {
+        query += " AND entity_id IS NULL";
+      } else {
+        query += " AND entity_id = ?";
+        values.push(params.entityId);
+      }
+    }
+    if (params.status !== undefined) {
+      if (params.status === null) {
+        query += " AND status IS NULL";
+      } else {
+        query += " AND status = ?";
+        values.push(params.status);
+      }
+    }
+    if (params.level !== undefined) {
+      if (params.level === null) {
+        query += " AND level IS NULL";
+      } else {
+        query += " AND level = ?";
+        values.push(params.level);
+      }
+    }
+    query += `
+      ORDER BY level ASC, ordinal ASC, updated_at DESC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 200, params.offset ?? 0);
+    const rows = this.workspaceRuntimeDb(params.workspaceId).prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToInteractionSummaryNode(row));
+  }
+
+  listInteractionTreeChildren(params: {
+    workspaceId: string;
+    parentNodeId: string;
+  }): InteractionTreeEdgeRecord[] {
+    const rows = this.workspaceRuntimeDb(params.workspaceId)
+      .prepare<[string, string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM interaction_tree_edges
+          WHERE workspace_id = ? AND parent_node_id = ?
+          ORDER BY position ASC, child_id ASC
+        `,
+      )
+      .all(params.workspaceId, params.parentNodeId) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToInteractionTreeEdge(row));
+  }
+
+  upsertInteractionNodeEmbedding(params: {
+    workspaceId: string;
+    nodeKind: InteractionTreeChildKind;
+    nodeId: string;
+    entityId: string;
+    embeddingModel: string;
+    contentFingerprint: string;
+    dimensions: number;
+    vector: number[];
+    createdAt?: string;
+    updatedAt?: string;
+  }): InteractionNodeEmbeddingRecord {
+    const existing = this.getInteractionNodeEmbedding({
+      workspaceId: params.workspaceId,
+      nodeKind: params.nodeKind,
+      nodeId: params.nodeId,
+      embeddingModel: params.embeddingModel,
+    });
+    const now = params.updatedAt ?? utcNowIso();
+    const createdAt = existing?.createdAt ?? params.createdAt ?? now;
+    this.workspaceRuntimeDb(params.workspaceId)
+      .prepare(`
+        INSERT INTO interaction_node_embeddings (
+          workspace_id,
+          node_kind,
+          node_id,
+          entity_id,
+          embedding_model,
+          content_fingerprint,
+          dimensions,
+          vector_json,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(workspace_id, node_kind, node_id, embedding_model) DO UPDATE SET
+          entity_id = excluded.entity_id,
+          content_fingerprint = excluded.content_fingerprint,
+          dimensions = excluded.dimensions,
+          vector_json = excluded.vector_json,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        params.workspaceId,
+        params.nodeKind,
+        params.nodeId,
+        params.entityId,
+        params.embeddingModel,
+        params.contentFingerprint,
+        params.dimensions,
+        JSON.stringify(params.vector),
+        createdAt,
+        now,
+      );
+    const record = this.getInteractionNodeEmbedding({
+      workspaceId: params.workspaceId,
+      nodeKind: params.nodeKind,
+      nodeId: params.nodeId,
+      embeddingModel: params.embeddingModel,
+    });
+    if (!record) {
+      throw new Error("interaction embedding row not found after upsert");
+    }
+    return record;
+  }
+
+  getInteractionNodeEmbedding(params: {
+    workspaceId: string;
+    nodeKind: InteractionTreeChildKind;
+    nodeId: string;
+    embeddingModel: string;
+  }): InteractionNodeEmbeddingRecord | null {
+    const row = this.workspaceRuntimeDb(params.workspaceId)
+      .prepare<[string, string, string, string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM interaction_node_embeddings
+          WHERE workspace_id = ?
+            AND node_kind = ?
+            AND node_id = ?
+            AND embedding_model = ?
+          LIMIT 1
+        `,
+      )
+      .get(params.workspaceId, params.nodeKind, params.nodeId, params.embeddingModel);
+    return row ? this.rowToInteractionNodeEmbedding(row) : null;
+  }
+
+  listInteractionNodeEmbeddings(params: {
+    workspaceId: string;
+    entityId?: string | null;
+    embeddingModel?: string | null;
+  }): InteractionNodeEmbeddingRecord[] {
+    let query = `
+      SELECT *
+      FROM interaction_node_embeddings
+      WHERE workspace_id = ?
+    `;
+    const values: Array<string | number> = [params.workspaceId];
+    if (params.entityId !== undefined) {
+      if (params.entityId === null) {
+        query += " AND entity_id IS NULL";
+      } else {
+        query += " AND entity_id = ?";
+        values.push(params.entityId);
+      }
+    }
+    if (params.embeddingModel !== undefined) {
+      if (params.embeddingModel === null) {
+        query += " AND embedding_model IS NULL";
+      } else {
+        query += " AND embedding_model = ?";
+        values.push(params.embeddingModel);
+      }
+    }
+    query += " ORDER BY updated_at DESC, created_at DESC, node_id ASC";
+    const rows = this.workspaceRuntimeDb(params.workspaceId).prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToInteractionNodeEmbedding(row));
+  }
+
+  upsertIntegrationTree(params: {
+    treeId: string;
+    provider: string;
+    ownerUserId: string;
+    accountKey: string;
+    accountLabel: string;
+    slug: string;
+    summary?: string | null;
+    status?: IntegrationTreeStatus;
+    createdAt?: string;
+    updatedAt?: string;
+  }): IntegrationTreeRecord {
+    const existing = this.getIntegrationTree({ treeId: params.treeId });
+    const now = params.updatedAt ?? utcNowIso();
+    const createdAt = existing?.createdAt ?? params.createdAt ?? now;
+    this.controlPlaneDb()
+      .prepare(`
+        INSERT INTO integration_trees (
+          tree_id,
+          provider,
+          owner_user_id,
+          account_key,
+          account_label,
+          slug,
+          summary,
+          status,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(tree_id) DO UPDATE SET
+          provider = excluded.provider,
+          owner_user_id = excluded.owner_user_id,
+          account_key = excluded.account_key,
+          account_label = excluded.account_label,
+          slug = excluded.slug,
+          summary = excluded.summary,
+          status = excluded.status,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        params.treeId,
+        params.provider,
+        params.ownerUserId,
+        params.accountKey,
+        params.accountLabel,
+        params.slug,
+        params.summary ?? null,
+        params.status ?? "active",
+        createdAt,
+        now,
+      );
+    const record = this.getIntegrationTree({ treeId: params.treeId });
+    if (!record) {
+      throw new Error("integration tree row not found after upsert");
+    }
+    return record;
+  }
+
+  getIntegrationTree(params: {
+    treeId: string;
+  }): IntegrationTreeRecord | null {
+    const row = this.controlPlaneDb()
+      .prepare<[string], Record<string, unknown>>(
+        "SELECT * FROM integration_trees WHERE tree_id = ? LIMIT 1",
+      )
+      .get(params.treeId);
+    return row ? this.rowToIntegrationTree(row) : null;
+  }
+
+  getIntegrationTreeBySlug(params: {
+    slug: string;
+  }): IntegrationTreeRecord | null {
+    const row = this.controlPlaneDb()
+      .prepare<[string], Record<string, unknown>>(
+        "SELECT * FROM integration_trees WHERE slug = ? LIMIT 1",
+      )
+      .get(params.slug);
+    return row ? this.rowToIntegrationTree(row) : null;
+  }
+
+  getIntegrationTreeByAccountIdentity(params: {
+    provider: string;
+    ownerUserId: string;
+    accountKey: string;
+  }): IntegrationTreeRecord | null {
+    const row = this.controlPlaneDb()
+      .prepare<[string, string, string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM integration_trees
+          WHERE provider = ?
+            AND owner_user_id = ?
+            AND account_key = ?
+          LIMIT 1
+        `,
+      )
+      .get(params.provider, params.ownerUserId, params.accountKey);
+    return row ? this.rowToIntegrationTree(row) : null;
+  }
+
+  listIntegrationTrees(params: {
+    status?: IntegrationTreeStatus | null;
+    provider?: string | null;
+    ownerUserId?: string | null;
+    limit?: number;
+    offset?: number;
+  } = {}): IntegrationTreeRecord[] {
+    let query = `
+      SELECT *
+      FROM integration_trees
+      WHERE 1 = 1
+    `;
+    const values: Array<string | number> = [];
+    if (params.status !== undefined) {
+      if (params.status === null) {
+        query += " AND status IS NULL";
+      } else {
+        query += " AND status = ?";
+        values.push(params.status);
+      }
+    }
+    if (params.provider !== undefined) {
+      if (params.provider === null) {
+        query += " AND provider IS NULL";
+      } else {
+        query += " AND provider = ?";
+        values.push(params.provider);
+      }
+    }
+    if (params.ownerUserId !== undefined) {
+      if (params.ownerUserId === null) {
+        query += " AND owner_user_id IS NULL";
+      } else {
+        query += " AND owner_user_id = ?";
+        values.push(params.ownerUserId);
+      }
+    }
+    query += `
+      ORDER BY updated_at DESC, created_at DESC, account_label COLLATE NOCASE ASC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 200, params.offset ?? 0);
+    const rows = this.controlPlaneDb().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToIntegrationTree(row));
+  }
+
+  upsertIntegrationLeaf(params: {
+    leafId: string;
+    treeId: string;
+    subjectKey: string;
+    entityKey?: string | null;
+    entityLabel?: string | null;
+    branchKey?: string | null;
+    branchLabel?: string | null;
+    path: string;
+    title: string;
+    summary: string;
+    fingerprint: string;
+    bodySha256: string;
+    tags?: string[] | null;
+    sourceType?: string | null;
+    sourceEventId?: string | null;
+    sourceMessageId?: string | null;
+    externalObjectId?: string | null;
+    externalObjectType?: string | null;
+    admissionConfidence?: number | null;
+    observedAt?: string | null;
+    supersedesLeafId?: string | null;
+    supersededAt?: string | null;
+    status?: IntegrationLeafStatus;
+    createdAt?: string;
+    updatedAt?: string;
+  }): IntegrationLeafRecord {
+    const existing = this.getIntegrationLeaf({ leafId: params.leafId });
+    const now = params.updatedAt ?? utcNowIso();
+    const createdAt = existing?.createdAt ?? params.createdAt ?? now;
+    this.controlPlaneDb()
+      .prepare(`
+        INSERT INTO integration_leaves (
+          leaf_id,
+          tree_id,
+          subject_key,
+          entity_key,
+          entity_label,
+          branch_key,
+          branch_label,
+          path,
+          title,
+          summary,
+          fingerprint,
+          body_sha256,
+          tags,
+          source_type,
+          source_event_id,
+          source_message_id,
+          external_object_id,
+          external_object_type,
+          admission_confidence,
+          observed_at,
+          supersedes_leaf_id,
+          superseded_at,
+          status,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(leaf_id) DO UPDATE SET
+          tree_id = excluded.tree_id,
+          subject_key = excluded.subject_key,
+          entity_key = excluded.entity_key,
+          entity_label = excluded.entity_label,
+          branch_key = excluded.branch_key,
+          branch_label = excluded.branch_label,
+          path = excluded.path,
+          title = excluded.title,
+          summary = excluded.summary,
+          fingerprint = excluded.fingerprint,
+          body_sha256 = excluded.body_sha256,
+          tags = excluded.tags,
+          source_type = excluded.source_type,
+          source_event_id = excluded.source_event_id,
+          source_message_id = excluded.source_message_id,
+          external_object_id = excluded.external_object_id,
+          external_object_type = excluded.external_object_type,
+          admission_confidence = excluded.admission_confidence,
+          observed_at = excluded.observed_at,
+          supersedes_leaf_id = excluded.supersedes_leaf_id,
+          superseded_at = excluded.superseded_at,
+          status = excluded.status,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        params.leafId,
+        params.treeId,
+        params.subjectKey,
+        params.entityKey ?? null,
+        params.entityLabel ?? null,
+        params.branchKey ?? null,
+        params.branchLabel ?? null,
+        params.path,
+        params.title,
+        params.summary,
+        params.fingerprint,
+        params.bodySha256,
+        JSON.stringify(params.tags ?? []),
+        params.sourceType ?? null,
+        params.sourceEventId ?? null,
+        params.sourceMessageId ?? null,
+        params.externalObjectId ?? null,
+        params.externalObjectType ?? null,
+        params.admissionConfidence ?? null,
+        params.observedAt ?? null,
+        params.supersedesLeafId ?? null,
+        params.supersededAt ?? null,
+        params.status ?? "active",
+        createdAt,
+        now,
+      );
+    const record = this.getIntegrationLeaf({ leafId: params.leafId });
+    if (!record) {
+      throw new Error("integration leaf row not found after upsert");
+    }
+    return record;
+  }
+
+  getIntegrationLeaf(params: {
+    leafId: string;
+  }): IntegrationLeafRecord | null {
+    const row = this.controlPlaneDb()
+      .prepare<[string], Record<string, unknown>>(
+        "SELECT * FROM integration_leaves WHERE leaf_id = ? LIMIT 1",
+      )
+      .get(params.leafId);
+    return row ? this.rowToIntegrationLeaf(row) : null;
+  }
+
+  getIntegrationLeafByPath(params: {
+    path: string;
+  }): IntegrationLeafRecord | null {
+    const row = this.controlPlaneDb()
+      .prepare<[string], Record<string, unknown>>(
+        "SELECT * FROM integration_leaves WHERE path = ? LIMIT 1",
+      )
+      .get(params.path);
+    return row ? this.rowToIntegrationLeaf(row) : null;
+  }
+
+  getIntegrationLeafByFingerprint(params: {
+    treeId: string;
+    fingerprint: string;
+  }): IntegrationLeafRecord | null {
+    const row = this.controlPlaneDb()
+      .prepare<[string, string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM integration_leaves
+          WHERE tree_id = ?
+            AND fingerprint = ?
+          ORDER BY updated_at DESC, created_at DESC
+          LIMIT 1
+        `,
+      )
+      .get(params.treeId, params.fingerprint);
+    return row ? this.rowToIntegrationLeaf(row) : null;
+  }
+
+  getLatestActiveIntegrationLeafBySubject(params: {
+    treeId: string;
+    subjectKey: string;
+  }): IntegrationLeafRecord | null {
+    const row = this.controlPlaneDb()
+      .prepare<[string, string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM integration_leaves
+          WHERE tree_id = ?
+            AND subject_key = ?
+            AND status = 'active'
+          ORDER BY observed_at DESC, updated_at DESC, created_at DESC
+          LIMIT 1
+        `,
+      )
+      .get(params.treeId, params.subjectKey);
+    return row ? this.rowToIntegrationLeaf(row) : null;
+  }
+
+  listIntegrationLeaves(params: {
+    treeId?: string | null;
+    status?: IntegrationLeafStatus | null;
+    limit?: number;
+    offset?: number;
+  } = {}): IntegrationLeafRecord[] {
+    let query = `
+      SELECT *
+      FROM integration_leaves
+      WHERE 1 = 1
+    `;
+    const values: Array<string | number> = [];
+    if (params.treeId !== undefined) {
+      if (params.treeId === null) {
+        query += " AND tree_id IS NULL";
+      } else {
+        query += " AND tree_id = ?";
+        values.push(params.treeId);
+      }
+    }
+    if (params.status !== undefined) {
+      if (params.status === null) {
+        query += " AND status IS NULL";
+      } else {
+        query += " AND status = ?";
+        values.push(params.status);
+      }
+    }
+    query += `
+      ORDER BY COALESCE(observed_at, updated_at) DESC, created_at DESC, leaf_id ASC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 200, params.offset ?? 0);
+    const rows = this.controlPlaneDb().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToIntegrationLeaf(row));
+  }
+
+  updateIntegrationLeafStatus(params: {
+    leafId: string;
+    status: IntegrationLeafStatus;
+    supersededAt?: string | null;
+    updatedAt?: string;
+  }): IntegrationLeafRecord | null {
+    const now = params.updatedAt ?? utcNowIso();
+    this.controlPlaneDb()
+      .prepare(`
+        UPDATE integration_leaves
+        SET status = ?,
+            superseded_at = ?,
+            updated_at = ?
+        WHERE leaf_id = ?
+      `)
+      .run(
+        params.status,
+        params.supersededAt ?? null,
+        now,
+        params.leafId,
+      );
+    return this.getIntegrationLeaf({ leafId: params.leafId });
+  }
+
+  replaceIntegrationSummaryTree(params: {
+    treeId: string;
+    nodes: Array<{
+      nodeId: string;
+      level: number;
+      ordinal: number;
+      path: string;
+      title: string;
+      summary: string;
+      bodySha256: string;
+      childCount: number;
+      sealedAt: string;
+      createdAt?: string;
+      updatedAt?: string;
+    }>;
+    edges: Array<{
+      parentNodeId: string;
+      childKind: InteractionTreeChildKind;
+      childId: string;
+      position: number;
+      createdAt?: string;
+    }>;
+  }): IntegrationSummaryNodeRecord[] {
+    const db = this.controlPlaneDb();
+    const replace = db.transaction(() => {
+      const now = utcNowIso();
+      db.prepare(`
+        DELETE FROM integration_tree_edges
+        WHERE tree_id = ?
+      `).run(params.treeId);
+      db.prepare(`
+        DELETE FROM integration_summary_nodes
+        WHERE tree_id = ?
+      `).run(params.treeId);
+
+      const insertNode = db.prepare(`
+        INSERT INTO integration_summary_nodes (
+          node_id,
+          tree_id,
+          level,
+          ordinal,
+          path,
+          title,
+          summary,
+          body_sha256,
+          child_count,
+          status,
+          sealed_at,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+      `);
+      for (const node of params.nodes) {
+        insertNode.run(
+          node.nodeId,
+          params.treeId,
+          node.level,
+          node.ordinal,
+          node.path,
+          node.title,
+          node.summary,
+          node.bodySha256,
+          node.childCount,
+          node.sealedAt,
+          node.createdAt ?? now,
+          node.updatedAt ?? now,
+        );
+      }
+
+      const insertEdge = db.prepare(`
+        INSERT INTO integration_tree_edges (
+          tree_id,
+          parent_node_id,
+          child_kind,
+          child_id,
+          position,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      for (const edge of params.edges) {
+        insertEdge.run(
+          params.treeId,
+          edge.parentNodeId,
+          edge.childKind,
+          edge.childId,
+          edge.position,
+          edge.createdAt ?? now,
+        );
+      }
+    });
+    replace();
+    return this.listIntegrationSummaryNodes({
+      treeId: params.treeId,
+      status: "active",
+      limit: Math.max(200, params.nodes.length + 10),
+    });
+  }
+
+  getIntegrationSummaryNode(params: {
+    nodeId: string;
+  }): IntegrationSummaryNodeRecord | null {
+    const row = this.controlPlaneDb()
+      .prepare<[string], Record<string, unknown>>(
+        "SELECT * FROM integration_summary_nodes WHERE node_id = ? LIMIT 1",
+      )
+      .get(params.nodeId);
+    return row ? this.rowToIntegrationSummaryNode(row) : null;
+  }
+
+  getIntegrationSummaryNodeByPath(params: {
+    path: string;
+  }): IntegrationSummaryNodeRecord | null {
+    const row = this.controlPlaneDb()
+      .prepare<[string], Record<string, unknown>>(
+        "SELECT * FROM integration_summary_nodes WHERE path = ? LIMIT 1",
+      )
+      .get(params.path);
+    return row ? this.rowToIntegrationSummaryNode(row) : null;
+  }
+
+  listIntegrationSummaryNodes(params: {
+    treeId?: string | null;
+    status?: IntegrationSummaryStatus | null;
+    level?: number | null;
+    limit?: number;
+    offset?: number;
+  } = {}): IntegrationSummaryNodeRecord[] {
+    let query = `
+      SELECT *
+      FROM integration_summary_nodes
+      WHERE 1 = 1
+    `;
+    const values: Array<string | number> = [];
+    if (params.treeId !== undefined) {
+      if (params.treeId === null) {
+        query += " AND tree_id IS NULL";
+      } else {
+        query += " AND tree_id = ?";
+        values.push(params.treeId);
+      }
+    }
+    if (params.status !== undefined) {
+      if (params.status === null) {
+        query += " AND status IS NULL";
+      } else {
+        query += " AND status = ?";
+        values.push(params.status);
+      }
+    }
+    if (params.level !== undefined) {
+      if (params.level === null) {
+        query += " AND level IS NULL";
+      } else {
+        query += " AND level = ?";
+        values.push(params.level);
+      }
+    }
+    query += `
+      ORDER BY level ASC, ordinal ASC, updated_at DESC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 200, params.offset ?? 0);
+    const rows = this.controlPlaneDb().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToIntegrationSummaryNode(row));
+  }
+
+  listIntegrationTreeChildren(params: {
+    parentNodeId: string;
+  }): IntegrationTreeEdgeRecord[] {
+    const rows = this.controlPlaneDb()
+      .prepare<[string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM integration_tree_edges
+          WHERE parent_node_id = ?
+          ORDER BY position ASC, child_id ASC
+        `,
+      )
+      .all(params.parentNodeId) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToIntegrationTreeEdge(row));
+  }
+
+  replaceIntegrationNodeRelations(params: {
+    treeId: string;
+    relations: Array<{
+      fromNodeKind: IntegrationNodeKind;
+      fromNodeId: string;
+      toNodeKind: IntegrationNodeKind;
+      toNodeId: string;
+      relationType: string;
+      metadata?: Record<string, unknown> | null;
+      createdAt?: string;
+      updatedAt?: string;
+    }>;
+  }): IntegrationNodeRelationRecord[] {
+    const db = this.controlPlaneDb();
+    const replace = db.transaction(() => {
+      db.prepare(`
+        DELETE FROM integration_node_relations
+        WHERE tree_id = ?
+      `).run(params.treeId);
+
+      const insertRelation = db.prepare(`
+        INSERT INTO integration_node_relations (
+          tree_id,
+          from_node_kind,
+          from_node_id,
+          to_node_kind,
+          to_node_id,
+          relation_type,
+          metadata,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const now = utcNowIso();
+      for (const relation of params.relations) {
+        insertRelation.run(
+          params.treeId,
+          relation.fromNodeKind,
+          relation.fromNodeId,
+          relation.toNodeKind,
+          relation.toNodeId,
+          relation.relationType,
+          JSON.stringify(relation.metadata ?? {}),
+          relation.createdAt ?? now,
+          relation.updatedAt ?? now,
+        );
+      }
+    });
+    replace();
+    return this.listIntegrationNodeRelations({
+      treeId: params.treeId,
+      limit: Math.max(200, params.relations.length + 10),
+    });
+  }
+
+  listIntegrationNodeRelations(params: {
+    treeId?: string | null;
+    fromNodeId?: string | null;
+    relationType?: string | null;
+    limit?: number;
+    offset?: number;
+  } = {}): IntegrationNodeRelationRecord[] {
+    let query = `
+      SELECT *
+      FROM integration_node_relations
+      WHERE 1 = 1
+    `;
+    const values: Array<string | number> = [];
+    if (params.treeId !== undefined) {
+      if (params.treeId === null) {
+        query += " AND tree_id IS NULL";
+      } else {
+        query += " AND tree_id = ?";
+        values.push(params.treeId);
+      }
+    }
+    if (params.fromNodeId !== undefined) {
+      if (params.fromNodeId === null) {
+        query += " AND from_node_id IS NULL";
+      } else {
+        query += " AND from_node_id = ?";
+        values.push(params.fromNodeId);
+      }
+    }
+    if (params.relationType !== undefined) {
+      if (params.relationType === null) {
+        query += " AND relation_type IS NULL";
+      } else {
+        query += " AND relation_type = ?";
+        values.push(params.relationType);
+      }
+    }
+    query += `
+      ORDER BY relation_type ASC, from_node_id ASC, to_node_id ASC, updated_at DESC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 200, params.offset ?? 0);
+    const rows = this.controlPlaneDb().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToIntegrationNodeRelation(row));
+  }
+
+  upsertIntegrationNodeEmbedding(params: {
+    nodeKind: InteractionTreeChildKind;
+    nodeId: string;
+    treeId: string;
+    embeddingModel: string;
+    contentFingerprint: string;
+    dimensions: number;
+    vector: number[];
+    createdAt?: string;
+    updatedAt?: string;
+  }): IntegrationNodeEmbeddingRecord {
+    const existing = this.getIntegrationNodeEmbedding({
+      nodeKind: params.nodeKind,
+      nodeId: params.nodeId,
+      embeddingModel: params.embeddingModel,
+    });
+    const now = params.updatedAt ?? utcNowIso();
+    const createdAt = existing?.createdAt ?? params.createdAt ?? now;
+    this.controlPlaneDb()
+      .prepare(`
+        INSERT INTO integration_node_embeddings (
+          node_kind,
+          node_id,
+          tree_id,
+          embedding_model,
+          content_fingerprint,
+          dimensions,
+          vector_json,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(node_kind, node_id, embedding_model) DO UPDATE SET
+          tree_id = excluded.tree_id,
+          content_fingerprint = excluded.content_fingerprint,
+          dimensions = excluded.dimensions,
+          vector_json = excluded.vector_json,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        params.nodeKind,
+        params.nodeId,
+        params.treeId,
+        params.embeddingModel,
+        params.contentFingerprint,
+        params.dimensions,
+        JSON.stringify(params.vector),
+        createdAt,
+        now,
+      );
+    const record = this.getIntegrationNodeEmbedding({
+      nodeKind: params.nodeKind,
+      nodeId: params.nodeId,
+      embeddingModel: params.embeddingModel,
+    });
+    if (!record) {
+      throw new Error("integration embedding row not found after upsert");
+    }
+    return record;
+  }
+
+  getIntegrationNodeEmbedding(params: {
+    nodeKind: InteractionTreeChildKind;
+    nodeId: string;
+    embeddingModel: string;
+  }): IntegrationNodeEmbeddingRecord | null {
+    const row = this.controlPlaneDb()
+      .prepare<[string, string, string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM integration_node_embeddings
+          WHERE node_kind = ?
+            AND node_id = ?
+            AND embedding_model = ?
+          LIMIT 1
+        `,
+      )
+      .get(params.nodeKind, params.nodeId, params.embeddingModel);
+    return row ? this.rowToIntegrationNodeEmbedding(row) : null;
+  }
+
+  listIntegrationNodeEmbeddings(params: {
+    treeId?: string | null;
+    embeddingModel?: string | null;
+  } = {}): IntegrationNodeEmbeddingRecord[] {
+    let query = `
+      SELECT *
+      FROM integration_node_embeddings
+      WHERE 1 = 1
+    `;
+    const values: Array<string | number> = [];
+    if (params.treeId !== undefined) {
+      if (params.treeId === null) {
+        query += " AND tree_id IS NULL";
+      } else {
+        query += " AND tree_id = ?";
+        values.push(params.treeId);
+      }
+    }
+    if (params.embeddingModel !== undefined) {
+      if (params.embeddingModel === null) {
+        query += " AND embedding_model IS NULL";
+      } else {
+        query += " AND embedding_model = ?";
+        values.push(params.embeddingModel);
+      }
+    }
+    query += " ORDER BY updated_at DESC, created_at DESC, node_id ASC";
+    const rows = this.controlPlaneDb().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToIntegrationNodeEmbedding(row));
   }
 
   getMemoryEmbeddingIndexByMemoryId(params: {
@@ -8047,6 +9752,10 @@ export class RuntimeStateStore {
           account_external_id TEXT,
           account_handle TEXT,
           account_email TEXT,
+          context_cron_auto_fetch_enabled INTEGER NOT NULL DEFAULT 1,
+          last_context_fetch_attempted_at TEXT,
+          last_context_fetch_completed_at TEXT,
+          last_context_fetch_status TEXT,
           auth_mode TEXT NOT NULL,
           granted_scopes TEXT NOT NULL DEFAULT '[]',
           status TEXT NOT NULL,
@@ -8074,6 +9783,125 @@ export class RuntimeStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_integration_bindings_workspace_updated
           ON integration_bindings (workspace_id, is_default DESC, updated_at DESC, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS integration_trees (
+          tree_id TEXT PRIMARY KEY,
+          provider TEXT NOT NULL,
+          owner_user_id TEXT NOT NULL,
+          account_key TEXT NOT NULL,
+          account_label TEXT NOT NULL,
+          slug TEXT NOT NULL UNIQUE,
+          summary TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE (provider, owner_user_id, account_key)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_integration_trees_provider_owner_status_updated
+          ON integration_trees (provider, owner_user_id, status, updated_at DESC, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS integration_leaves (
+          leaf_id TEXT PRIMARY KEY,
+          tree_id TEXT NOT NULL,
+          subject_key TEXT NOT NULL,
+          entity_key TEXT,
+          entity_label TEXT,
+          branch_key TEXT,
+          branch_label TEXT,
+          path TEXT NOT NULL UNIQUE,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          fingerprint TEXT NOT NULL,
+          body_sha256 TEXT NOT NULL,
+          tags TEXT NOT NULL DEFAULT '[]',
+          source_type TEXT,
+          source_event_id TEXT,
+          source_message_id TEXT,
+          external_object_id TEXT,
+          external_object_type TEXT,
+          admission_confidence REAL,
+          observed_at TEXT,
+          supersedes_leaf_id TEXT,
+          superseded_at TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_integration_leaves_tree_status_observed
+          ON integration_leaves (tree_id, status, observed_at DESC, updated_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_integration_leaves_tree_subject
+          ON integration_leaves (tree_id, subject_key, status, updated_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_integration_leaves_tree_fingerprint
+          ON integration_leaves (tree_id, fingerprint);
+
+      CREATE TABLE IF NOT EXISTS integration_summary_nodes (
+          node_id TEXT PRIMARY KEY,
+          tree_id TEXT NOT NULL,
+          level INTEGER NOT NULL,
+          ordinal INTEGER NOT NULL,
+          path TEXT NOT NULL UNIQUE,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          body_sha256 TEXT NOT NULL,
+          child_count INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'active',
+          sealed_at TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_integration_summary_nodes_tree_status_level
+          ON integration_summary_nodes (tree_id, status, level ASC, ordinal ASC, updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS integration_tree_edges (
+          tree_id TEXT NOT NULL,
+          parent_node_id TEXT NOT NULL,
+          child_kind TEXT NOT NULL,
+          child_id TEXT NOT NULL,
+          position INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (parent_node_id, child_kind, child_id),
+          UNIQUE (parent_node_id, position)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_integration_tree_edges_parent_position
+          ON integration_tree_edges (parent_node_id, position ASC);
+
+      CREATE TABLE IF NOT EXISTS integration_node_relations (
+          tree_id TEXT NOT NULL,
+          from_node_kind TEXT NOT NULL,
+          from_node_id TEXT NOT NULL,
+          to_node_kind TEXT NOT NULL,
+          to_node_id TEXT NOT NULL,
+          relation_type TEXT NOT NULL,
+          metadata TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (tree_id, from_node_kind, from_node_id, to_node_kind, to_node_id, relation_type)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_integration_node_relations_tree_type
+          ON integration_node_relations (tree_id, relation_type, updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS integration_node_embeddings (
+          node_kind TEXT NOT NULL,
+          node_id TEXT NOT NULL,
+          tree_id TEXT NOT NULL,
+          embedding_model TEXT NOT NULL,
+          content_fingerprint TEXT NOT NULL,
+          dimensions INTEGER NOT NULL,
+          vector_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (node_kind, node_id, embedding_model)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_integration_node_embeddings_tree_updated
+          ON integration_node_embeddings (tree_id, embedding_model, updated_at DESC);
 
       -- Workspace-scoped opt-out / pin override for Composio toolkits.
       -- No row: workspace inherits the account active pool.
@@ -8127,6 +9955,7 @@ export class RuntimeStateStore {
     `);
     this.ensureMemoryEntriesTableSchema(db);
     this.ensureMemoryEmbeddingIndexSchema(db);
+    this.ensureIntegrationLeavesTableSchema(db);
     this.migrateIntegrationConnectionIdentityColumns(db);
     this.migrateAppCatalogProviderColumns(db);
   }
@@ -8549,6 +10378,230 @@ export class RuntimeStateStore {
       CREATE INDEX IF NOT EXISTS idx_memory_update_proposals_workspace_state_created
           ON memory_update_proposals (workspace_id, state, created_at DESC);
 
+      CREATE TABLE IF NOT EXISTS interaction_entities (
+          workspace_id TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          entity_type TEXT NOT NULL,
+          canonical_name TEXT NOT NULL,
+          slug TEXT NOT NULL,
+          summary TEXT,
+          aliases TEXT NOT NULL DEFAULT '[]',
+          is_system INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, entity_id),
+          UNIQUE (workspace_id, slug)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_interaction_entities_workspace_status_updated
+          ON interaction_entities (workspace_id, status, updated_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_interaction_entities_workspace_slug
+          ON interaction_entities (workspace_id, slug);
+
+      CREATE TABLE IF NOT EXISTS interaction_leaves (
+          workspace_id TEXT NOT NULL,
+          leaf_id TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          subject_key TEXT NOT NULL,
+          path TEXT NOT NULL,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          fingerprint TEXT NOT NULL,
+          body_sha256 TEXT NOT NULL,
+          tags TEXT NOT NULL DEFAULT '[]',
+          secondary_entity_ids TEXT NOT NULL DEFAULT '[]',
+          source_type TEXT,
+          source_event_id TEXT,
+          source_message_id TEXT,
+          source_turn_input_id TEXT,
+          admission_confidence REAL,
+          entity_confidence REAL,
+          observed_at TEXT,
+          supersedes_leaf_id TEXT,
+          superseded_at TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, leaf_id),
+          UNIQUE (workspace_id, path)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_interaction_leaves_workspace_entity_status_observed
+          ON interaction_leaves (workspace_id, entity_id, status, observed_at DESC, updated_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_interaction_leaves_workspace_entity_subject
+          ON interaction_leaves (workspace_id, entity_id, subject_key, status, updated_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_interaction_leaves_workspace_entity_fingerprint
+          ON interaction_leaves (workspace_id, entity_id, fingerprint);
+
+      CREATE TABLE IF NOT EXISTS interaction_summary_nodes (
+          workspace_id TEXT NOT NULL,
+          node_id TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          level INTEGER NOT NULL,
+          ordinal INTEGER NOT NULL,
+          path TEXT NOT NULL,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          body_sha256 TEXT NOT NULL,
+          child_count INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'active',
+          sealed_at TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, node_id),
+          UNIQUE (workspace_id, path)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_interaction_summary_nodes_workspace_entity_status_level
+          ON interaction_summary_nodes (workspace_id, entity_id, status, level ASC, ordinal ASC, updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS interaction_tree_edges (
+          workspace_id TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          parent_node_id TEXT NOT NULL,
+          child_kind TEXT NOT NULL,
+          child_id TEXT NOT NULL,
+          position INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, parent_node_id, child_kind, child_id),
+          UNIQUE (workspace_id, parent_node_id, position)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_interaction_tree_edges_workspace_parent_position
+          ON interaction_tree_edges (workspace_id, parent_node_id, position ASC);
+
+      CREATE TABLE IF NOT EXISTS interaction_node_embeddings (
+          workspace_id TEXT NOT NULL,
+          node_kind TEXT NOT NULL,
+          node_id TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          embedding_model TEXT NOT NULL,
+          content_fingerprint TEXT NOT NULL,
+          dimensions INTEGER NOT NULL,
+          vector_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, node_kind, node_id, embedding_model)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_interaction_node_embeddings_workspace_entity_updated
+          ON interaction_node_embeddings (workspace_id, entity_id, embedding_model, updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS integration_trees (
+          workspace_id TEXT NOT NULL,
+          tree_id TEXT NOT NULL,
+          provider TEXT NOT NULL,
+          account_id TEXT NOT NULL,
+          account_label TEXT NOT NULL,
+          slug TEXT NOT NULL,
+          summary TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, tree_id),
+          UNIQUE (workspace_id, slug)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_integration_trees_workspace_status_updated
+          ON integration_trees (workspace_id, status, updated_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_integration_trees_workspace_provider_account
+          ON integration_trees (workspace_id, provider, account_id);
+
+      CREATE TABLE IF NOT EXISTS integration_leaves (
+          workspace_id TEXT NOT NULL,
+          leaf_id TEXT NOT NULL,
+          tree_id TEXT NOT NULL,
+          subject_key TEXT NOT NULL,
+          path TEXT NOT NULL,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          fingerprint TEXT NOT NULL,
+          body_sha256 TEXT NOT NULL,
+          tags TEXT NOT NULL DEFAULT '[]',
+          source_type TEXT,
+          source_event_id TEXT,
+          source_message_id TEXT,
+          external_object_id TEXT,
+          external_object_type TEXT,
+          admission_confidence REAL,
+          observed_at TEXT,
+          supersedes_leaf_id TEXT,
+          superseded_at TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, leaf_id),
+          UNIQUE (workspace_id, path)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_integration_leaves_workspace_tree_status_observed
+          ON integration_leaves (workspace_id, tree_id, status, observed_at DESC, updated_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_integration_leaves_workspace_tree_subject
+          ON integration_leaves (workspace_id, tree_id, subject_key, status, updated_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_integration_leaves_workspace_tree_fingerprint
+          ON integration_leaves (workspace_id, tree_id, fingerprint);
+
+      CREATE TABLE IF NOT EXISTS integration_summary_nodes (
+          workspace_id TEXT NOT NULL,
+          node_id TEXT NOT NULL,
+          tree_id TEXT NOT NULL,
+          level INTEGER NOT NULL,
+          ordinal INTEGER NOT NULL,
+          path TEXT NOT NULL,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          body_sha256 TEXT NOT NULL,
+          child_count INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'active',
+          sealed_at TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, node_id),
+          UNIQUE (workspace_id, path)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_integration_summary_nodes_workspace_tree_status_level
+          ON integration_summary_nodes (workspace_id, tree_id, status, level ASC, ordinal ASC, updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS integration_tree_edges (
+          workspace_id TEXT NOT NULL,
+          tree_id TEXT NOT NULL,
+          parent_node_id TEXT NOT NULL,
+          child_kind TEXT NOT NULL,
+          child_id TEXT NOT NULL,
+          position INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, parent_node_id, child_kind, child_id),
+          UNIQUE (workspace_id, parent_node_id, position)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_integration_tree_edges_workspace_parent_position
+          ON integration_tree_edges (workspace_id, parent_node_id, position ASC);
+
+      CREATE TABLE IF NOT EXISTS integration_node_embeddings (
+          workspace_id TEXT NOT NULL,
+          node_kind TEXT NOT NULL,
+          node_id TEXT NOT NULL,
+          tree_id TEXT NOT NULL,
+          embedding_model TEXT NOT NULL,
+          content_fingerprint TEXT NOT NULL,
+          dimensions INTEGER NOT NULL,
+          vector_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, node_kind, node_id, embedding_model)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_integration_node_embeddings_workspace_tree_updated
+          ON integration_node_embeddings (workspace_id, tree_id, embedding_model, updated_at DESC);
+
       CREATE TABLE IF NOT EXISTS output_folders (
           id TEXT PRIMARY KEY,
           workspace_id TEXT NOT NULL,
@@ -8670,6 +10723,7 @@ export class RuntimeStateStore {
     `);
     this.ensureMemoryEntriesTableSchema(db);
     this.ensureMemoryEmbeddingIndexSchema(db);
+    this.ensureSessionMessagesTableSchema(db);
     this.ensureConversationBindingsTableSchema(db);
     this.migrateLegacyMainSessionLabels(db);
     this.ensureSubagentRunsTableSchema(db);
@@ -8737,6 +10791,32 @@ export class RuntimeStateStore {
     );
     if (!columns.has("metadata")) {
       db.exec("ALTER TABLE session_messages ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}';");
+    }
+  }
+
+  private ensureIntegrationLeavesTableSchema(db: Database.Database): void {
+    const tableNames = new Set<string>(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(
+        (row) => row.name,
+      ),
+    );
+    if (!tableNames.has("integration_leaves")) {
+      return;
+    }
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(integration_leaves)").all() as Array<{ name: string }>).map((row) => row.name),
+    );
+    if (!columns.has("entity_key")) {
+      db.exec("ALTER TABLE integration_leaves ADD COLUMN entity_key TEXT;");
+    }
+    if (!columns.has("entity_label")) {
+      db.exec("ALTER TABLE integration_leaves ADD COLUMN entity_label TEXT;");
+    }
+    if (!columns.has("branch_key")) {
+      db.exec("ALTER TABLE integration_leaves ADD COLUMN branch_key TEXT;");
+    }
+    if (!columns.has("branch_label")) {
+      db.exec("ALTER TABLE integration_leaves ADD COLUMN branch_label TEXT;");
     }
   }
 
@@ -9043,6 +11123,18 @@ export class RuntimeStateStore {
     }
     if (!columns.has("account_email")) {
       db.exec("ALTER TABLE integration_connections ADD COLUMN account_email TEXT;");
+    }
+    if (!columns.has("context_cron_auto_fetch_enabled")) {
+      db.exec("ALTER TABLE integration_connections ADD COLUMN context_cron_auto_fetch_enabled INTEGER NOT NULL DEFAULT 1;");
+    }
+    if (!columns.has("last_context_fetch_attempted_at")) {
+      db.exec("ALTER TABLE integration_connections ADD COLUMN last_context_fetch_attempted_at TEXT;");
+    }
+    if (!columns.has("last_context_fetch_completed_at")) {
+      db.exec("ALTER TABLE integration_connections ADD COLUMN last_context_fetch_completed_at TEXT;");
+    }
+    if (!columns.has("last_context_fetch_status")) {
+      db.exec("ALTER TABLE integration_connections ADD COLUMN last_context_fetch_status TEXT;");
     }
     db.exec(
       "CREATE INDEX IF NOT EXISTS idx_integration_connections_provider_owner_handle ON integration_connections (provider_id, owner_user_id, account_handle);"
@@ -10427,6 +12519,204 @@ export class RuntimeStateStore {
     };
   }
 
+  private rowToInteractionEntity(row: Record<string, unknown>): InteractionEntityRecord {
+    return {
+      workspaceId: String(row.workspace_id),
+      entityId: String(row.entity_id),
+      entityType: String(row.entity_type) as InteractionEntityType,
+      canonicalName: String(row.canonical_name),
+      slug: String(row.slug),
+      summary: row.summary == null ? null : String(row.summary),
+      aliases: this.parseJsonList(row.aliases).filter((item): item is string => typeof item === "string"),
+      isSystem: Number(row.is_system ?? 0) === 1,
+      status: String(row.status) as InteractionEntityStatus,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private rowToInteractionLeaf(row: Record<string, unknown>): InteractionLeafRecord {
+    return {
+      workspaceId: String(row.workspace_id),
+      leafId: String(row.leaf_id),
+      entityId: String(row.entity_id),
+      subjectKey: String(row.subject_key),
+      path: String(row.path),
+      title: String(row.title),
+      summary: String(row.summary),
+      fingerprint: String(row.fingerprint),
+      bodySha256: String(row.body_sha256),
+      tags: this.parseJsonList(row.tags).filter((item): item is string => typeof item === "string"),
+      secondaryEntityIds: this.parseJsonList(row.secondary_entity_ids).filter(
+        (item): item is string => typeof item === "string",
+      ),
+      sourceType: row.source_type == null ? null : String(row.source_type),
+      sourceEventId: row.source_event_id == null ? null : String(row.source_event_id),
+      sourceMessageId: row.source_message_id == null ? null : String(row.source_message_id),
+      sourceTurnInputId: row.source_turn_input_id == null ? null : String(row.source_turn_input_id),
+      admissionConfidence: row.admission_confidence == null ? null : Number(row.admission_confidence),
+      entityConfidence: row.entity_confidence == null ? null : Number(row.entity_confidence),
+      observedAt: row.observed_at == null ? null : String(row.observed_at),
+      supersedesLeafId: row.supersedes_leaf_id == null ? null : String(row.supersedes_leaf_id),
+      supersededAt: row.superseded_at == null ? null : String(row.superseded_at),
+      status: String(row.status) as InteractionLeafStatus,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private rowToInteractionSummaryNode(row: Record<string, unknown>): InteractionSummaryNodeRecord {
+    return {
+      workspaceId: String(row.workspace_id),
+      nodeId: String(row.node_id),
+      entityId: String(row.entity_id),
+      level: Number(row.level),
+      ordinal: Number(row.ordinal),
+      path: String(row.path),
+      title: String(row.title),
+      summary: String(row.summary),
+      bodySha256: String(row.body_sha256),
+      childCount: Number(row.child_count ?? 0),
+      status: String(row.status) as InteractionSummaryStatus,
+      sealedAt: String(row.sealed_at),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private rowToInteractionTreeEdge(row: Record<string, unknown>): InteractionTreeEdgeRecord {
+    return {
+      workspaceId: String(row.workspace_id),
+      entityId: String(row.entity_id),
+      parentNodeId: String(row.parent_node_id),
+      childKind: String(row.child_kind) as InteractionTreeChildKind,
+      childId: String(row.child_id),
+      position: Number(row.position),
+      createdAt: String(row.created_at),
+    };
+  }
+
+  private rowToInteractionNodeEmbedding(row: Record<string, unknown>): InteractionNodeEmbeddingRecord {
+    return {
+      workspaceId: String(row.workspace_id),
+      nodeKind: String(row.node_kind) as InteractionTreeChildKind,
+      nodeId: String(row.node_id),
+      entityId: String(row.entity_id),
+      embeddingModel: String(row.embedding_model),
+      contentFingerprint: String(row.content_fingerprint),
+      dimensions: Number(row.dimensions),
+      vector: this.parseJsonList(row.vector_json)
+        .map((value) => (typeof value === "number" ? value : Number(value)))
+        .filter((value) => Number.isFinite(value)),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private rowToIntegrationTree(row: Record<string, unknown>): IntegrationTreeRecord {
+    return {
+      treeId: String(row.tree_id),
+      provider: String(row.provider),
+      ownerUserId: String(row.owner_user_id),
+      accountKey: String(row.account_key),
+      accountLabel: String(row.account_label),
+      slug: String(row.slug),
+      summary: row.summary == null ? null : String(row.summary),
+      status: String(row.status) as IntegrationTreeStatus,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private rowToIntegrationLeaf(row: Record<string, unknown>): IntegrationLeafRecord {
+    return {
+      leafId: String(row.leaf_id),
+      treeId: String(row.tree_id),
+      subjectKey: String(row.subject_key),
+      entityKey: row.entity_key == null ? null : String(row.entity_key),
+      entityLabel: row.entity_label == null ? null : String(row.entity_label),
+      branchKey: row.branch_key == null ? null : String(row.branch_key),
+      branchLabel: row.branch_label == null ? null : String(row.branch_label),
+      path: String(row.path),
+      title: String(row.title),
+      summary: String(row.summary),
+      fingerprint: String(row.fingerprint),
+      bodySha256: String(row.body_sha256),
+      tags: this.parseJsonList(row.tags).filter((item): item is string => typeof item === "string"),
+      sourceType: row.source_type == null ? null : String(row.source_type),
+      sourceEventId: row.source_event_id == null ? null : String(row.source_event_id),
+      sourceMessageId: row.source_message_id == null ? null : String(row.source_message_id),
+      externalObjectId: row.external_object_id == null ? null : String(row.external_object_id),
+      externalObjectType: row.external_object_type == null ? null : String(row.external_object_type),
+      admissionConfidence: row.admission_confidence == null ? null : Number(row.admission_confidence),
+      observedAt: row.observed_at == null ? null : String(row.observed_at),
+      supersedesLeafId: row.supersedes_leaf_id == null ? null : String(row.supersedes_leaf_id),
+      supersededAt: row.superseded_at == null ? null : String(row.superseded_at),
+      status: String(row.status) as IntegrationLeafStatus,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private rowToIntegrationSummaryNode(row: Record<string, unknown>): IntegrationSummaryNodeRecord {
+    return {
+      nodeId: String(row.node_id),
+      treeId: String(row.tree_id),
+      level: Number(row.level),
+      ordinal: Number(row.ordinal),
+      path: String(row.path),
+      title: String(row.title),
+      summary: String(row.summary),
+      bodySha256: String(row.body_sha256),
+      childCount: Number(row.child_count ?? 0),
+      status: String(row.status) as IntegrationSummaryStatus,
+      sealedAt: String(row.sealed_at),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private rowToIntegrationTreeEdge(row: Record<string, unknown>): IntegrationTreeEdgeRecord {
+    return {
+      treeId: String(row.tree_id),
+      parentNodeId: String(row.parent_node_id),
+      childKind: String(row.child_kind) as InteractionTreeChildKind,
+      childId: String(row.child_id),
+      position: Number(row.position),
+      createdAt: String(row.created_at),
+    };
+  }
+
+  private rowToIntegrationNodeRelation(row: Record<string, unknown>): IntegrationNodeRelationRecord {
+    return {
+      treeId: String(row.tree_id),
+      fromNodeKind: String(row.from_node_kind) as IntegrationNodeKind,
+      fromNodeId: String(row.from_node_id),
+      toNodeKind: String(row.to_node_kind) as IntegrationNodeKind,
+      toNodeId: String(row.to_node_id),
+      relationType: String(row.relation_type),
+      metadata: this.parseJsonDict(row.metadata),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private rowToIntegrationNodeEmbedding(row: Record<string, unknown>): IntegrationNodeEmbeddingRecord {
+    return {
+      nodeKind: String(row.node_kind) as InteractionTreeChildKind,
+      nodeId: String(row.node_id),
+      treeId: String(row.tree_id),
+      embeddingModel: String(row.embedding_model),
+      contentFingerprint: String(row.content_fingerprint),
+      dimensions: Number(row.dimensions),
+      vector: this.parseJsonList(row.vector_json)
+        .map((value) => (typeof value === "number" ? value : Number(value)))
+        .filter((value) => Number.isFinite(value)),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
   private vectorResultsForRows(
     db: Database.Database,
     rows: Array<{ vec_rowid: number; distance: number }>
@@ -10478,6 +12768,22 @@ export class RuntimeStateStore {
       accountExternalId: row.account_external_id == null ? null : String(row.account_external_id),
       accountHandle: row.account_handle == null ? null : String(row.account_handle),
       accountEmail: row.account_email == null ? null : String(row.account_email),
+      contextCronAutoFetchEnabled:
+        row.context_cron_auto_fetch_enabled === false
+          ? false
+          : Number(row.context_cron_auto_fetch_enabled ?? 1) !== 0,
+      lastContextFetchAttemptedAt:
+        row.last_context_fetch_attempted_at == null
+          ? null
+          : String(row.last_context_fetch_attempted_at),
+      lastContextFetchCompletedAt:
+        row.last_context_fetch_completed_at == null
+          ? null
+          : String(row.last_context_fetch_completed_at),
+      lastContextFetchStatus:
+        row.last_context_fetch_status == null
+          ? null
+          : String(row.last_context_fetch_status),
       authMode: String(row.auth_mode),
       grantedScopes: this.parseJsonList(row.granted_scopes).filter((item): item is string => typeof item === "string"),
       status: String(row.status),

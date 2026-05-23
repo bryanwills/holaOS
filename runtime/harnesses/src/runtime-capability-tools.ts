@@ -189,7 +189,20 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         properties: {
           report: {
             type: "object",
-            description: "Structured onboarding report payload.",
+            description:
+              "Structured onboarding report payload. Include a human-readable `markdown` string for the review card, then add any machine-readable fields the implementation phase should keep.",
+            properties: {
+              markdown: {
+                type: "string",
+                description:
+                  "Primary human-readable onboarding report body rendered in the review card as markdown.",
+              },
+              summary: {
+                type: "string",
+                description:
+                  "Optional short summary kept for fallback surfaces and machine-readable state.",
+              },
+            },
             additionalProperties: true,
           },
         },
@@ -204,6 +217,26 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
           requested_by: { type: "string", description: "Actor requesting completion." },
         },
         required: ["summary"],
+        additionalProperties: false,
+      };
+    case "memory_retrieve":
+      return {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Memory retrieval query or question." },
+          mode: literalStringUnion(
+            ["mixed", "summaries", "leaves"],
+            "Retrieval mode. Use `mixed` by default, `summaries` for broad context, and `leaves` for exact evidence.",
+          ),
+          tree_id: { type: "string", description: "Optional interaction tree id to scope retrieval." },
+          node_id: { type: "string", description: "Optional summary node id to expand or drill into." },
+          max_results: {
+            type: "integer",
+            description: "Optional maximum number of hits to return.",
+            minimum: 1,
+          },
+        },
+        required: ["query"],
         additionalProperties: false,
       };
     case "cronjobs_list":
@@ -1105,6 +1138,15 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "After recording durable guidance in `AGENTS.md`, if it is conditional, situational, or procedural rather than always-on policy, also create or update a workspace-local skill and keep a short skills index entry in `AGENTS.md`.",
       "Use `read_current` before replacing the managed section when you need to preserve or refine existing workspace instructions.",
       "Use `append_rule` for concise rules, `remove_rule` to retract one, and `replace_managed_section` for structured markdown templates, indexes, or larger rule sets.",
+    ];
+  }
+  if (toolId === "memory_retrieve") {
+    return [
+      "Use `memory_retrieve` when you need durable interaction memory that is not already available in the current prompt context.",
+      "Prefer `mixed` mode for general recall, `summaries` for broad background, and `leaves` when you need exact supporting facts.",
+      "Pass `tree_id` when you already know the relevant interaction entity tree, and `node_id` when drilling into a previously returned summary branch.",
+      "Treat returned summaries as compressed memory context and leaf hits as the underlying evidence.",
+      "Treat the returned hit payload as the answer surface. Do not inspect backing memory files with generic file tools unless a future dedicated memory follow-up tool explicitly requires it.",
     ];
   }
   if (toolId === "skill") {

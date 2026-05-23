@@ -148,7 +148,15 @@ interface BrowserAnchorBoundsPayload {
   height: number;
 }
 
-type UiSettingsPaneSection = "account" | "billing" | "providers" | "integrations" | "submissions" | "settings" | "about";
+type UiSettingsPaneSection =
+  | "account"
+  | "billing"
+  | "providers"
+  | "integrations"
+  | "memory"
+  | "submissions"
+  | "settings"
+  | "experimental";
 
 interface DesktopWindowStatePayload {
   isFullScreen: boolean;
@@ -567,57 +575,6 @@ interface TaskProposalAcceptResponsePayload {
   input: EnqueueSessionInputResponsePayload;
 }
 
-type MemoryUpdateProposalKind = "preference" | "identity" | "profile";
-type MemoryUpdateProposalState = "pending" | "accepted" | "dismissed";
-
-interface MemoryUpdateProposalRecordPayload {
-  proposal_id: string;
-  workspace_id: string;
-  session_id: string;
-  input_id: string;
-  proposal_kind: MemoryUpdateProposalKind;
-  target_key: string;
-  title: string;
-  summary: string;
-  payload: Record<string, unknown>;
-  evidence: string | null;
-  confidence: number | null;
-  source_message_id: string | null;
-  state: MemoryUpdateProposalState;
-  persisted_memory_id: string | null;
-  created_at: string;
-  updated_at: string;
-  accepted_at: string | null;
-  dismissed_at: string | null;
-}
-
-interface MemoryUpdateProposalListRequestPayload {
-  workspaceId: string;
-  sessionId?: string | null;
-  inputId?: string | null;
-  state?: MemoryUpdateProposalState | null;
-  limit?: number;
-  offset?: number;
-}
-
-interface MemoryUpdateProposalListResponsePayload {
-  proposals: MemoryUpdateProposalRecordPayload[];
-  count: number;
-}
-
-interface MemoryUpdateProposalAcceptPayload {
-  proposalId: string;
-  summary?: string | null;
-}
-
-interface MemoryUpdateProposalAcceptResponsePayload {
-  proposal: MemoryUpdateProposalRecordPayload;
-}
-
-interface MemoryUpdateProposalDismissResponsePayload {
-  proposal: MemoryUpdateProposalRecordPayload;
-}
-
 interface CronjobDeliveryPayload {
   mode: string;
   channel: string;
@@ -983,6 +940,12 @@ interface IntegrationConnectionPayload {
   owner_user_id: string;
   account_label: string;
   account_external_id: string | null;
+  account_handle: string | null;
+  account_email: string | null;
+  context_cron_auto_fetch_enabled: boolean;
+  last_context_fetch_attempted_at: string | null;
+  last_context_fetch_completed_at: string | null;
+  last_context_fetch_status: string | null;
   auth_mode: string;
   granted_scopes: string[];
   status: string;
@@ -1025,6 +988,19 @@ interface IntegrationUpsertBindingPayload {
   connection_id: string;
   is_default?: boolean;
 }
+
+interface IntegrationUpdateConnectionPayload {
+  status?: string;
+  secret_ref?: string;
+  account_label?: string;
+  account_handle?: string | null;
+  account_email?: string | null;
+  context_cron_auto_fetch_enabled?: boolean;
+  last_context_fetch_attempted_at?: string | null;
+  last_context_fetch_completed_at?: string | null;
+  last_context_fetch_status?: string | null;
+}
+
 
 interface ConnectionWorkspaceUsageEntry {
   connection_id: string;
@@ -1103,12 +1079,6 @@ interface IntegrationCreateConnectionPayload {
   auth_mode: string;
   granted_scopes: string[];
   secret_ref?: string;
-}
-
-interface IntegrationUpdateConnectionPayload {
-  status?: string;
-  secret_ref?: string;
-  account_label?: string;
 }
 
 interface OAuthAppConfigPayload {
@@ -1513,12 +1483,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:archiveBackgroundTask", payload) as Promise<ArchiveBackgroundTaskResponsePayload>,
     acceptTaskProposal: (payload: TaskProposalAcceptPayload) =>
       ipcRenderer.invoke("workspace:acceptTaskProposal", payload) as Promise<TaskProposalAcceptResponsePayload>,
-    listMemoryUpdateProposals: (payload: MemoryUpdateProposalListRequestPayload) =>
-      ipcRenderer.invoke("workspace:listMemoryUpdateProposals", payload) as Promise<MemoryUpdateProposalListResponsePayload>,
-    acceptMemoryUpdateProposal: (payload: MemoryUpdateProposalAcceptPayload) =>
-      ipcRenderer.invoke("workspace:acceptMemoryUpdateProposal", payload) as Promise<MemoryUpdateProposalAcceptResponsePayload>,
-    dismissMemoryUpdateProposal: (workspaceId: string, proposalId: string) =>
-      ipcRenderer.invoke("workspace:dismissMemoryUpdateProposal", workspaceId, proposalId) as Promise<MemoryUpdateProposalDismissResponsePayload>,
     updateTaskProposalState: (workspaceId: string, proposalId: string, state: string) =>
       ipcRenderer.invoke("workspace:updateTaskProposalState", workspaceId, proposalId, state) as Promise<TaskProposalStateUpdatePayload>,
     ensureMainSession: (workspaceId: string) =>
@@ -1548,6 +1512,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     answerOnboardingAlignmentQuestion: (
       workspaceId: string,
       payload: {
+        model?: string | null;
+        thinkingValue?: string | null;
         optionId?: string | null;
         responseText?: string | null;
         notes?: string | null;
@@ -1624,6 +1590,23 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:listAllWorkspaceIntegrationOverrides") as Promise<AllWorkspaceIntegrationOverridesPayload>,
     listWorkspaceIntegrations: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listWorkspaceIntegrations", workspaceId) as Promise<WorkspaceIntegrationsListResponsePayload>,
+    listMemoryBrowserTree: (workspaceId: string) =>
+      ipcRenderer.invoke("workspace:listMemoryBrowserTree", workspaceId) as Promise<MemoryBrowserTreeResponsePayload>,
+    readMemoryBrowserFile: (workspaceId: string, targetPath: string) =>
+      ipcRenderer.invoke(
+        "workspace:readMemoryBrowserFile",
+        workspaceId,
+        targetPath,
+      ) as Promise<MemoryBrowserFileResponsePayload>,
+    listMemoryBrowserGraph: (
+      workspaceId: string,
+      params: { forest: "workspace" | "integrations"; treeId?: string | null },
+    ) =>
+      ipcRenderer.invoke(
+        "workspace:listMemoryBrowserGraph",
+        workspaceId,
+        params,
+      ) as Promise<MemoryBrowserGraphResponsePayload>,
     setWorkspaceIntegrationOverride: (
       workspaceId: string,
       toolkitSlug: string,
@@ -1671,6 +1654,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
       arguments?: Record<string, unknown>;
     }) =>
       ipcRenderer.invoke("workspace:debugComposioRuntimeTest", params) as Promise<unknown>,
+    fetchIntegrationContext: (connectionId: string) =>
+      ipcRenderer.invoke("workspace:fetchIntegrationContext", connectionId) as Promise<IntegrationContextFetchStartResponsePayload>,
+    listIntegrationContextFetchStatuses: (connectionIds?: string[]) =>
+      ipcRenderer.invoke(
+        "workspace:listIntegrationContextFetchStatuses",
+        connectionIds ?? [],
+      ) as Promise<IntegrationContextFetchStatusListResponsePayload>,
     composioConnect: (payload: {
       provider: string;
       owner_user_id: string;

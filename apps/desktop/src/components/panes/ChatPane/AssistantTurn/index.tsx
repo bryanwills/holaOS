@@ -9,7 +9,6 @@ import type {
   ChatMessage,
 } from "../types";
 import { AssistantTurnActionsMenu } from "./ActionsMenu";
-import { AssistantTurnMemoryProposals } from "./MemoryProposals";
 import { AssistantTurnOutputs } from "./Outputs";
 import {
   AssistantTurnIntegrationConnects,
@@ -53,7 +52,6 @@ export const AssistantTurn = memo(AssistantTurnComponent, (prev, next) =>
   prev.tone === next.tone &&
   prev.segments === next.segments &&
   prev.executionItems === next.executionItems &&
-  prev.memoryProposals === next.memoryProposals &&
   prev.outputs === next.outputs &&
   prev.pendingIntegrations === next.pendingIntegrations &&
   prev.proposedIntegrations === next.proposedIntegrations &&
@@ -76,7 +74,6 @@ function AssistantTurnComponent({
   tone = "default",
   segments,
   executionItems,
-  memoryProposals,
   outputs,
   pendingIntegrations = [],
   proposedIntegrations = [],
@@ -111,7 +108,6 @@ function AssistantTurnComponent({
   tone?: ChatMessage["tone"];
   segments: ChatAssistantSegment[];
   executionItems: ChatExecutionTimelineItem[];
-  memoryProposals: MemoryUpdateProposalRecordPayload[];
   outputs: WorkspaceOutputRecordPayload[];
   pendingIntegrations?: AssistantTurnPendingIntegration[];
   proposedIntegrations?: AssistantTurnProposedIntegration[];
@@ -315,19 +311,6 @@ function AssistantTurnComponent({
 
         {footerAccessory ? (
           <div className="mt-2 flex justify-start">{footerAccessory}</div>
-        ) : null}
-
-        {memoryProposals.length > 0 ? (
-          <AssistantTurnMemoryProposals
-            proposals={memoryProposals}
-            proposalAction={memoryProposalAction}
-            editingProposalId={editingMemoryProposalId}
-            drafts={memoryProposalDrafts}
-            onEditProposal={onEditMemoryProposal}
-            onDraftChange={onMemoryProposalDraftChange}
-            onAcceptProposal={onAcceptMemoryProposal}
-            onDismissProposal={onDismissMemoryProposal}
-          />
         ) : null}
 
         {outputs.length > 0 ? (

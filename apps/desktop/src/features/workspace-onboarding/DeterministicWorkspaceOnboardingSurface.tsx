@@ -22,28 +22,47 @@ const HERO_PRIORITY = [
   "linkedin",
 ];
 
-const FIRST_RUN_STARTERS: Record<string, string> = {
-  gmail:
-    "Open my Gmail and summarize unread messages from the last 24 hours. Highlight anything urgent or that needs a reply today.",
-  googlecalendar:
-    "Pull my calendar for this week. Flag conflicts, prep that's needed before any meeting, and gaps where I could deep-work.",
-  slack:
-    "Scan my Slack DMs and channels — which threads are waiting on me to reply today?",
-  notion:
-    "Walk through my Notion workspace and tell me which pages I started but never finished, and which ones look like they could use a follow-up.",
-  linear:
-    "List my Linear issues — what's blocked, what's overdue, and what's been sitting in 'In Progress' the longest.",
-  github:
-    "Pull my GitHub assigned PRs and review requests. Flag what's been waiting the longest and what's likely blocking someone else.",
-  twitter:
-    "Look at my Twitter mentions and DMs from the last 24 hours. Surface anything I should reply to.",
-  linkedin:
-    "Pull my LinkedIn inbox and connection requests. Surface anything worth responding to today.",
-  reddit:
-    "Check my Reddit inbox and recent post activity. Surface threads I should reply to.",
-  googledrive:
-    "Look through my recent Google Drive activity. Flag anything shared with me that needs my attention.",
-};
+const FETCH_TERMINAL_STATUSES = new Set(["completed", "failed", "unsupported"]);
+
+function contextFetchDisplayName(status: IntegrationContextFetchStatusPayload) {
+  return status.account_label || status.account_key || status.provider_id;
+}
+
+function contextFetchChunkTotal(status: IntegrationContextFetchStatusPayload) {
+  if (status.chunks_total > 0) {
+    return status.chunks_total;
+  }
+  if (status.status === "completed") {
+    return Math.max(status.chunks_completed, 1);
+  }
+  return 0;
+}
+
+function contextFetchProgressPercent(
+  status: IntegrationContextFetchStatusPayload,
+) {
+  const total = contextFetchChunkTotal(status);
+  if (total <= 0) {
+    return status.status === "completed" ? 100 : 0;
+  }
+  return Math.max(
+    0,
+    Math.min(100, Math.round((status.chunks_completed / total) * 100)),
+  );
+}
+
+function contextFetchStateLabel(status: IntegrationContextFetchStatusPayload) {
+  if (status.status === "completed") {
+    return "Completed";
+  }
+  if (status.status === "failed") {
+    return "Failed";
+  }
+  if (status.status === "unsupported") {
+    return "Unsupported";
+  }
+  return "Running";
+}
 
 export function DeterministicWorkspaceOnboardingSurface() {
   const {
@@ -61,7 +80,24 @@ export function DeterministicWorkspaceOnboardingSurface() {
   const [errorByToolkit, setErrorByToolkit] = useState<
     Record<string, string | null>
   >({});
+  const [connectionIdByToolkit, setConnectionIdByToolkit] = useState<
+    Record<string, string>
+  >({});
+  const [contextFetchStatusByConnectionId, setContextFetchStatusByConnectionId] =
+    useState<Record<string, IntegrationContextFetchStatusPayload>>({});
   const [isContinuing, setIsContinuing] = useState(false);
+  const onboardingFlowState = (selectedWorkspace?.onboarding_state || "")
+    .trim()
+    .toLowerCase();
+  const isFetchingContext =
+    onboardingFlowState === "deterministic_context_fetching";
+
+  useEffect(() => {
+    setPhaseByToolkit({});
+    setErrorByToolkit({});
+    setConnectionIdByToolkit({});
+    setContextFetchStatusByConnectionId({});
+  }, [selectedWorkspace?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -107,30 +143,103 @@ export function DeterministicWorkspaceOnboardingSurface() {
     [phaseByToolkit],
   );
   const connectedCount = connectedSlugs.length;
+  const trackedConnectionIds = useMemo(
+    () =>
+      Object.values(connectionIdByToolkit)
+        .map((connectionId) => connectionId.trim())
+        .filter((connectionId) => connectionId.length > 0)
+        .sort(),
+    [connectionIdByToolkit],
+  );
+  const trackedConnectionIdsKey = trackedConnectionIds.join("|");
+  const trackedFetchStatuses = useMemo(
+    () =>
+      trackedConnectionIds
+        .map((connectionId) => contextFetchStatusByConnectionId[connectionId])
+        .filter(
+          (
+            status,
+          ): status is IntegrationContextFetchStatusPayload => Boolean(status),
+        ),
+    [contextFetchStatusByConnectionId, trackedConnectionIds],
+  );
+  const supportedFetchStatuses = trackedFetchStatuses.filter(
+    (status) => status.supported,
+  );
+  const unsupportedFetchStatuses = trackedFetchStatuses.filter(
+    (status) => !status.supported,
+  );
+  const shouldPollFetchStatuses =
+    trackedConnectionIds.length > 0 &&
+    (trackedFetchStatuses.length < trackedConnectionIds.length ||
+      trackedFetchStatuses.some((status) => status.status === "running"));
 
-  function pickStarterSlug(): string | null {
-    for (const slug of HERO_PRIORITY) {
-      if (
-        connectedSlugs.includes(slug) &&
-        slug in FIRST_RUN_STARTERS
-      ) {
-        return slug;
+  useEffect(() => {
+    if (!isFetchingContext || !shouldPollFetchStatuses) {
+      return;
+    }
+    let cancelled = false;
+    async function pollStatuses() {
+      try {
+        const response =
+          await window.electronAPI.workspace.listIntegrationContextFetchStatuses(
+            trackedConnectionIds,
+          );
+        if (cancelled) {
+          return;
+        }
+        setContextFetchStatusByConnectionId((prev) => {
+          const next = { ...prev };
+          for (const status of response.statuses) {
+            next[status.connection_id] = status;
+          }
+          return next;
+        });
+      } catch {
+        // Keep the onboarding surface resilient while background fetches run.
       }
     }
-    for (const slug of connectedSlugs) {
-      if (slug in FIRST_RUN_STARTERS) return slug;
-    }
-    return null;
-  }
+    void pollStatuses();
+    const intervalId = window.setInterval(() => {
+      void pollStatuses();
+    }, 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [isFetchingContext, shouldPollFetchStatuses, trackedConnectionIds, trackedConnectionIdsKey]);
 
   async function handleConnect(entry: HeroEntry) {
     setPhaseByToolkit((prev) => ({ ...prev, [entry.slug]: "connecting" }));
     setErrorByToolkit((prev) => ({ ...prev, [entry.slug]: null }));
     try {
-      await connectIntegrationProvider({
+      const { connectionId } = await connectIntegrationProvider({
         provider: entry.slug,
         accountLabel: `${entry.displayName} (Managed)`,
       });
+      setConnectionIdByToolkit((prev) => ({
+        ...prev,
+        [entry.slug]: connectionId,
+      }));
+      try {
+        const response =
+          await window.electronAPI.workspace.fetchIntegrationContext(
+            connectionId,
+          );
+        setContextFetchStatusByConnectionId((prev) => ({
+          ...prev,
+          [connectionId]: response.status,
+        }));
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Context fetch could not be started.";
+        setErrorByToolkit((prev) => ({
+          ...prev,
+          [entry.slug]: `Connected, but context fetch could not be started: ${message}`,
+        }));
+      }
       setPhaseByToolkit((prev) => ({ ...prev, [entry.slug]: "done" }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Connection failed.";
@@ -142,71 +251,210 @@ export function DeterministicWorkspaceOnboardingSurface() {
   async function handleContinue() {
     setIsContinuing(true);
     try {
-      const starterSlug = pickStarterSlug();
-      const workspaceId = selectedWorkspace?.id ?? null;
       await continueDeterministicOnboarding();
-      if (starterSlug && workspaceId) {
-        try {
-          const ensured =
-            await window.electronAPI.workspace.ensureMainSession(workspaceId);
-          await window.electronAPI.workspace.queueSessionInput({
-            text: FIRST_RUN_STARTERS[starterSlug],
-            workspace_id: workspaceId,
-            session_id: ensured.session.session_id,
-            image_urls: null,
-            attachments: [],
-          });
-        } catch {
-          // Starter is a nice-to-have — never block the user from
-          // entering the workspace if the queue / session ensure fails.
-        }
-      }
     } finally {
       setIsContinuing(false);
     }
   }
 
   const workspaceName = selectedWorkspace?.name?.trim() || "Workspace";
+  const fetchingContextMessage =
+    connectedCount > 0
+      ? `We're importing the first batch of context from your ${connectedCount} connected ${connectedCount === 1 ? "tool" : "tools"} now. You can enter the workspace while that keeps running in the background.`
+      : "We're preparing your workspace context now. If you connected tools, they'll keep importing in the background while you enter the workspace.";
+  const aggregateChunkTotal = supportedFetchStatuses.reduce(
+    (total, status) => total + contextFetchChunkTotal(status),
+    0,
+  );
+  const aggregateChunkCompleted = supportedFetchStatuses.reduce(
+    (total, status) =>
+      total + Math.min(status.chunks_completed, contextFetchChunkTotal(status)),
+    0,
+  );
+  const aggregateProgressPercent =
+    aggregateChunkTotal > 0
+      ? Math.max(
+          0,
+          Math.min(
+            100,
+            Math.round((aggregateChunkCompleted / aggregateChunkTotal) * 100),
+          ),
+        )
+      : supportedFetchStatuses.every((status) =>
+            FETCH_TERMINAL_STATUSES.has(status.status),
+          ) && supportedFetchStatuses.length > 0
+        ? 100
+        : 0;
+  const runningFetchStatuses = supportedFetchStatuses.filter(
+    (status) => status.status === "running",
+  );
+  const completedFetchCount = supportedFetchStatuses.filter(
+    (status) => status.status === "completed",
+  ).length;
+  const failedFetchStatuses = supportedFetchStatuses.filter(
+    (status) => status.status === "failed",
+  );
+  const aggregateStatusLine =
+    aggregateChunkTotal > 0
+      ? `${aggregateChunkCompleted}/${aggregateChunkTotal} chunks complete`
+      : runningFetchStatuses.length > 0
+        ? "Starting background import"
+        : completedFetchCount > 0
+          ? `${completedFetchCount} import${completedFetchCount === 1 ? "" : "s"} completed`
+          : "Waiting for import status";
+  const aggregateDetailLine =
+    runningFetchStatuses.length > 0
+      ? runningFetchStatuses[0]?.current_chunk_label ||
+        "Importing the first chunks now."
+      : failedFetchStatuses.length > 0
+        ? failedFetchStatuses[0]?.error_message ||
+          "One of the background imports failed."
+        : completedFetchCount > 0
+          ? "Your connected context is ready inside the workspace memory browser."
+          : "Context fetch status will appear here as soon as the imports start.";
 
   return (
     <div className="flex h-full min-h-0 w-full flex-1 items-center justify-center overflow-y-auto px-6 py-10 sm:px-10">
       <div className="flex w-full max-w-2xl flex-col items-center gap-6">
         <div className="w-full rounded-[32px] border border-border/70 bg-background/90 px-8 py-10 shadow-[0_28px_90px_rgba(15,23,42,0.08)] backdrop-blur sm:px-12 sm:py-12">
-          <div className="space-y-3 text-center">
-            <p className="text-xs font-semibold uppercase tracking-[0.32em] text-muted-foreground">
-              Set up {workspaceName}
-            </p>
-            <h1 className="text-3xl font-semibold tracking-tight text-foreground">
-              Hook up your tools
-            </h1>
-            <p className="mx-auto max-w-md text-sm leading-7 text-muted-foreground">
-              Connect anything you want the agent to use. One click each — you
-              can always add more from Settings later.
-            </p>
-          </div>
+          {isFetchingContext ? (
+            <div className="flex flex-col items-center justify-center gap-6 py-6 text-center">
+              <div className="grid size-14 place-items-center rounded-full bg-accent/60 text-foreground">
+                <LoaderCircle className="size-6 animate-spin" />
+              </div>
+              <div className="space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.32em] text-muted-foreground">
+                  Set up {workspaceName}
+                </p>
+                <h1 className="text-3xl font-semibold tracking-tight text-foreground">
+                  Fetching your context
+                </h1>
+                <p className="mx-auto max-w-md text-sm leading-7 text-muted-foreground">
+                  {fetchingContextMessage}
+                </p>
+                <p className="mx-auto max-w-md text-sm leading-7 text-muted-foreground">
+                  This can take a minute depending on the accounts you linked.
+                </p>
+              </div>
+              {supportedFetchStatuses.length > 0 ? (
+                <div className="mx-auto w-full max-w-lg rounded-2xl border border-border/70 bg-background/70 p-4 text-left">
+                  <div className="flex items-center justify-between gap-3 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                    <span>Overall progress</span>
+                    <span>{aggregateStatusLine}</span>
+                  </div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-foreground transition-[width] duration-300"
+                      style={{ width: `${aggregateProgressPercent}%` }}
+                    />
+                  </div>
+                  <p className="mt-3 text-xs leading-5 text-muted-foreground">
+                    {aggregateDetailLine}
+                  </p>
+                </div>
+              ) : null}
+              {trackedFetchStatuses.length > 0 ? (
+                <ul className="w-full space-y-3 text-left">
+                  {trackedFetchStatuses.map((status) => {
+                    const progressPercent = contextFetchProgressPercent(status);
+                    const chunkTotal = contextFetchChunkTotal(status);
+                    return (
+                      <li
+                        className="rounded-2xl border border-border/70 bg-background/70 p-4"
+                        key={status.connection_id}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-foreground">
+                              {contextFetchDisplayName(status)}
+                            </p>
+                            <p className="text-xs leading-5 text-muted-foreground">
+                              {status.current_chunk_label ||
+                                (status.supported
+                                  ? "Preparing background import."
+                                  : status.reason ||
+                                    "Context fetch is not supported yet for this integration.")}
+                            </p>
+                          </div>
+                          <p className="shrink-0 text-xs font-medium text-muted-foreground">
+                            {contextFetchStateLabel(status)}
+                          </p>
+                        </div>
+                        {status.supported ? (
+                          <>
+                            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+                              <div
+                                className="h-full rounded-full bg-foreground transition-[width] duration-300"
+                                style={{ width: `${progressPercent}%` }}
+                              />
+                            </div>
+                            <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
+                              {chunkTotal > 0
+                                ? `${Math.min(status.chunks_completed, chunkTotal)}/${chunkTotal} chunks complete`
+                                : "Waiting for chunk progress"}
+                              {status.error_message
+                                ? ` - ${status.error_message}`
+                                : ""}
+                            </p>
+                          </>
+                        ) : (
+                          <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
+                            {status.reason ||
+                              "Context fetch is not available yet for this provider."}
+                          </p>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
+              {unsupportedFetchStatuses.length > 0 ? (
+                <p className="mx-auto max-w-lg text-xs leading-5 text-muted-foreground">
+                  Some connected tools do not support context import yet. You
+                  can still enter the workspace now.
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <>
+              <div className="space-y-3 text-center">
+                <p className="text-xs font-semibold uppercase tracking-[0.32em] text-muted-foreground">
+                  Set up {workspaceName}
+                </p>
+                <h1 className="text-3xl font-semibold tracking-tight text-foreground">
+                  Hook up your tools
+                </h1>
+                <p className="mx-auto max-w-md text-sm leading-7 text-muted-foreground">
+                  Connect anything you want the agent to use. One click each —
+                  you can always add more from Settings later.
+                </p>
+              </div>
 
-          <div className="mt-8">
-            {heroEntries === null ? (
-              <HeroGridSkeleton />
-            ) : heroEntries.length === 0 ? (
-              <p className="text-center text-sm text-muted-foreground">
-                Integration catalog is unavailable right now. You can connect
-                tools from Settings → Integrations after continuing.
-              </p>
-            ) : (
-              <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {heroEntries.map((entry) => (
-                  <HeroConnectCard
-                    entry={entry}
-                    error={errorByToolkit[entry.slug] ?? null}
-                    key={entry.slug}
-                    onConnect={() => void handleConnect(entry)}
-                    phase={phaseByToolkit[entry.slug] ?? "idle"}
-                  />
-                ))}
-              </ul>
-            )}
-          </div>
+              <div className="mt-8">
+                {heroEntries === null ? (
+                  <HeroGridSkeleton />
+                ) : heroEntries.length === 0 ? (
+                  <p className="text-center text-sm text-muted-foreground">
+                    Integration catalog is unavailable right now. You can
+                    connect tools from Settings → Integrations after
+                    continuing.
+                  </p>
+                ) : (
+                  <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {heroEntries.map((entry) => (
+                      <HeroConnectCard
+                        entry={entry}
+                        error={errorByToolkit[entry.slug] ?? null}
+                        key={entry.slug}
+                        onConnect={() => void handleConnect(entry)}
+                        phase={phaseByToolkit[entry.slug] ?? "idle"}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </>
+          )}
         </div>
 
         <div className="flex items-center gap-4">
@@ -218,8 +466,12 @@ export function DeterministicWorkspaceOnboardingSurface() {
             type="button"
           >
             {isContinuing
-              ? "Opening..."
-              : connectedCount > 0
+              ? isFetchingContext
+                ? "Opening workspace..."
+                : "Continuing..."
+              : isFetchingContext
+                ? "Enter workspace now"
+                : connectedCount > 0
                 ? `Continue (${connectedCount} connected)`
                 : "Continue"}
           </Button>

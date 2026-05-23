@@ -213,6 +213,11 @@ function hasWorkspaceInstructionUpdateTool(request: ComposeBaseAgentPromptReques
   return available.has("update_workspace_instructions");
 }
 
+function hasMemoryRetrieveTool(request: ComposeBaseAgentPromptRequest): boolean {
+  const available = collectAvailableToolNames(request);
+  return available.has("memory_retrieve");
+}
+
 function hasWorkspaceIntegrationCatalogTool(request: ComposeBaseAgentPromptRequest): boolean {
   const available = collectAvailableToolNames(request);
   return available.has("workspace_integrations_list_catalog");
@@ -643,17 +648,15 @@ function recalledMemoryPromptSection(context: AgentRecalledMemoryContext | null 
     const memoryType = nonEmptyText(entry.memory_type) || "memory";
     const title = nonEmptyText(entry.title) || "Untitled memory";
     const summary = nonEmptyText(entry.summary) || "No summary available.";
-    const path = nonEmptyText(entry.path);
     const verificationPolicy = nonEmptyText(entry.verification_policy) || "none";
     const stalenessPolicy = nonEmptyText(entry.staleness_policy) || "stable";
     const freshnessState = nonEmptyText(entry.freshness_state) || "fresh";
     const freshnessNote = nonEmptyText(entry.freshness_note);
     const excerpt = nonEmptyText(entry.excerpt);
-    const pathSuffix = path ? ` (\`${path}\`)` : "";
     const freshnessSuffix = freshnessNote
       ? ` Freshness: \`${freshnessState}\` (\`${stalenessPolicy}\`) - ${freshnessNote}`
       : ` Freshness: \`${freshnessState}\` (\`${stalenessPolicy}\`).`;
-    lines.push(`- [${scope}/${memoryType}] ${title}${pathSuffix}: ${summary} Verification: \`${verificationPolicy}\`.${freshnessSuffix}`);
+    lines.push(`- [${scope}/${memoryType}] ${title}: ${summary} Verification: \`${verificationPolicy}\`.${freshnessSuffix}`);
     if (excerpt) {
       lines.push(`Excerpt: ${excerpt}`);
     }
@@ -916,13 +919,26 @@ export function buildBaseAgentPromptSections(
     "Use tools, not hidden state. The newest user message is primary.",
     "Resume unfinished work only when the newest message asks to continue it; otherwise respond to the new message directly.",
     "Ask for missing identity details instead of guessing.",
-    "Use `AGENTS.md` as the durable workspace ledger for stable instructions, procedures, facts, conventions, decisions, and recurring blockers; use local skills for situational workflows."
+    "Use `AGENTS.md` for workspace-wide operating rules, defaults, conventions, and recurring commands that should shape behavior by default on future runs; use local skills for situational workflows."
   ];
   if (hasWorkspaceInstructionUpdateTool(request)) {
     executionLines.push(
-      "Record durable workspace knowledge in root `AGENTS.md` with `update_workspace_instructions` when it is clearly stable, likely to recur, or explicitly confirmed by the user instead of relying only on transient context.",
-      "This includes durable requirements or preferences, verified commands or procedures, stable facts, conventions, decisions, and recurring blockers from the user, direct inspection, or grounded tool or subagent results.",
-      "Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state. When in doubt, leave it out until the pattern repeats or the user confirms it should persist."
+      "Record workspace-wide operating defaults in root `AGENTS.md` with `update_workspace_instructions` when they are clearly stable, likely to recur, or explicitly confirmed by the user instead of relying only on transient context.",
+      "Before writing to `AGENTS.md`, ask whether the agent should obey the information by default on most future runs in this workspace even when the current subject is not in scope.",
+      "This includes durable requirements or preferences, verified recurring commands, default procedures, conventions, policies, decisions, and recurring blockers that should shape behavior by default in future runs.",
+      "Do not record named-subject knowledge in `AGENTS.md` unless it is explicitly intended to become a workspace-wide default instruction. This includes customer, project, vendor, person, system, or workflow-specific facts such as contacts, owners, thresholds, URLs, channels, prior outcomes, and subject-specific procedures.",
+      "A statement being durable or phrased as `remember this` does not by itself make it an `AGENTS.md` item; if it is mainly contextual knowledge to recall later, keep it in memory instead.",
+      "Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state. When in doubt, prefer memory or transient context over `AGENTS.md`, and leave it out until the pattern repeats or the user confirms it should persist as a default."
+    );
+  }
+  if (hasMemoryRetrieveTool(request)) {
+    executionLines.push(
+      "Before choosing a retrieval path, first infer the most likely source of truth for the answer and prefer the most local authoritative source.",
+      "If the answer is not already established by the current turn, currently loaded context, or a direct tool result in this run, probe `memory_retrieve` before broadening to browser, web, file search, connected integrations, or other external retrieval routes.",
+      "If the answer is likely to be workspace-specific or previously learned contextual knowledge such as customer, project, person, workflow, decision, procedure, owner, threshold, contact, internal URL, or other facts that could plausibly have come from prior interactions or previously ingested knowledge in this workspace, use `memory_retrieve` first.",
+      "Do not open a browser tab or other live external surface first for an unknown fact lookup when memory could plausibly already contain the answer.",
+      "Use browser, web, or other live external sources before memory only when the user is explicitly asking for current live state, current UI state, or other freshness-sensitive information that memory is unlikely to settle on its own.",
+      "If memory does not return a strong relevant result, then broaden outward to the next most plausible source, which may include local file search, connected integrations, workspace data/tools, or web search depending on where the answer is most likely to live."
     );
   }
   if (capabilityManifest?.browser_tools.length) {
@@ -1025,13 +1041,26 @@ export function buildMainSessionPromptSections(
     "Use coordination tools instead of hidden state. The newest user message is primary.",
     "Resume unfinished work only when the newest message clearly asks to continue it; otherwise respond to the new message directly.",
     "Ask for missing identity details instead of guessing.",
-    "Use `AGENTS.md` as the durable workspace ledger. Keep durable instructions, verified procedures, stable facts, conventions, decisions, and recurring blockers there; turn conditional or situational guidance into indexed local skills, using `skill-creator` when available."
+    "Use `AGENTS.md` for workspace-wide operating rules, defaults, conventions, and recurring commands that should shape behavior by default in future runs; turn conditional or situational guidance into indexed local skills, using `skill-creator` when available."
   ];
   if (hasWorkspaceInstructionUpdateTool(request)) {
     conversationLines.push(
-      "Record durable workspace knowledge in root `AGENTS.md` with `update_workspace_instructions` when it is clearly stable, likely to recur, or explicitly confirmed by the user instead of relying only on transient context.",
-      "This includes durable requirements or preferences, verified commands or procedures, stable facts, conventions, decisions, and recurring blockers from the user, direct inspection, or grounded tool or subagent results.",
-      "Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state. When in doubt, leave it out until the pattern repeats or the user confirms it should persist."
+      "Record workspace-wide operating defaults in root `AGENTS.md` with `update_workspace_instructions` when they are clearly stable, likely to recur, or explicitly confirmed by the user instead of relying only on transient context.",
+      "Before writing to `AGENTS.md`, ask whether the agent should obey the information by default on most future runs in this workspace even when the current subject is not in scope.",
+      "This includes durable requirements or preferences, verified recurring commands, default procedures, conventions, policies, decisions, and recurring blockers that should shape behavior by default in future runs.",
+      "Do not record named-subject knowledge in `AGENTS.md` unless it is explicitly intended to become a workspace-wide default instruction. This includes customer, project, vendor, person, system, or workflow-specific facts such as contacts, owners, thresholds, URLs, channels, prior outcomes, and subject-specific procedures.",
+      "A statement being durable or phrased as `remember this` does not by itself make it an `AGENTS.md` item; if it is mainly contextual knowledge to recall later, keep it in memory instead.",
+      "Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state. When in doubt, prefer memory or transient context over `AGENTS.md`, and leave it out until the pattern repeats or the user confirms it should persist as a default."
+    );
+  }
+  if (hasMemoryRetrieveTool(request)) {
+    conversationLines.push(
+      "Before choosing a retrieval path, first infer the most likely source of truth for the answer and prefer the most local authoritative source.",
+      "If the answer is not already established by the current turn, currently loaded context, or a direct tool result in this run, probe `memory_retrieve` before broadening to browser, web, file search, connected integrations, or other external retrieval routes.",
+      "If the answer is likely to be workspace-specific or previously learned contextual knowledge such as customer, project, person, workflow, decision, procedure, owner, threshold, contact, internal URL, or other facts that could plausibly have come from prior interactions or previously ingested knowledge in this workspace, use `memory_retrieve` first.",
+      "Do not open a browser tab or other live external surface first for an unknown fact lookup when memory could plausibly already contain the answer.",
+      "Use browser, web, or other live external sources before memory only when the user is explicitly asking for current live state, current UI state, or other freshness-sensitive information that memory is unlikely to settle on its own.",
+      "If memory does not return a strong relevant result, then broaden outward to the next most plausible source, which may include local file search, connected integrations, workspace data/tools, or web search depending on where the answer is most likely to live."
     );
   }
   if (normalizedSessionKind === "onboarding") {
@@ -1045,10 +1074,10 @@ export function buildMainSessionPromptSections(
       "Actively obtain the required workspace alignment inputs: cronjobs or recurring work, apps to install, custom apps to create, workspace file and folder organization, skills or repeatable workflows, and AI manager personality and behavior.",
       "Use `onboarding_status` to ground the current onboarding state before changing phases or claiming what comes next.",
       "While aligning, if one or several concrete decisions would move the design forward faster as closed choices, call `holaboss_create_alignment_question` to surface a multiple-choice question (or short deck of 2-5 tightly related multiple-choice questions) and wait for the inline answer card instead of asking the user to answer in freeform chat. Allow freeform inline responses when the user may want to answer in their own words.",
-      "While aligning, converse first, then when ready, call `holaboss_create_alignment_report` to converge the answers into a concise alignment report that states the proposed workspace structure, apps, custom apps design and features, skills, cronjobs, and AI manager behavior.",
+      "While aligning, converse first, then when ready, call `holaboss_create_alignment_report` to converge the answers into a concise alignment report that states the proposed workspace structure, apps, custom apps design and features, skills, cronjobs, and AI manager behavior. Include a human-readable `markdown` body in the report for the review card, and keep any structured fields needed for implementation alongside it.",
       "After creating the alignment report, stop and wait for the alignment review card. Do not ask the user to type approval words such as `approve`, and do not restate the report as a freeform chat approval handoff.",
       "Once onboarding state moves to implementing through the review UI, delegate the approved implementation inside the lab workspace. Keep onboarding sequential by waiting for implementation results before moving to verification.",
-      "After delegated implementation finishes, inspect or verify the lab result yourself, then create the verification handoff with `holaboss_create_verification_report`.",
+      "After delegated implementation finishes, inspect or verify the lab result yourself, then create the verification handoff with `holaboss_create_verification_report`, again including a concise human-readable `markdown` body plus any structured verification fields that should remain machine-readable.",
       "After creating the verification report, stop and wait for the verification review card. Final acceptance, revision, and merge are handled by the UI, not by a runtime tool call from the model."
     );
   } else if (normalizedSessionKind === "meeting_mode") {
