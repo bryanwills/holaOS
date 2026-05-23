@@ -2003,6 +2003,8 @@ interface RuntimeNotificationListOptionsPayload {
       listIntegrationCatalog: () => Promise<IntegrationCatalogResponsePayload>;
       listIntegrationConnections: (params?: { providerId?: string; ownerUserId?: string }) => Promise<IntegrationConnectionListResponsePayload>;
       listIntegrationBindings: (workspaceId: string) => Promise<IntegrationBindingListResponsePayload>;
+      getWorkspaceDefaultAccount: (workspaceId: string, providerId: string) => Promise<{ connection_id: string | null }>;
+      setWorkspaceDefaultAccount: (workspaceId: string, providerId: string, connectionId: string) => Promise<{ connection_id: string }>;
       upsertIntegrationBinding: (workspaceId: string, targetType: string, targetId: string, integrationKey: string, payload: IntegrationUpsertBindingPayload) => Promise<IntegrationBindingPayload>;
       createIntegrationConnection: (payload: IntegrationCreateConnectionPayload) => Promise<IntegrationConnectionPayload>;
       updateIntegrationConnection: (connectionId: string, payload: IntegrationUpdateConnectionPayload) => Promise<IntegrationConnectionPayload>;

@@ -1594,6 +1594,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:listIntegrationConnections", params) as Promise<IntegrationConnectionListResponsePayload>,
     listIntegrationBindings: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listIntegrationBindings", workspaceId) as Promise<IntegrationBindingListResponsePayload>,
+    getWorkspaceDefaultAccount: (workspaceId: string, providerId: string) =>
+      ipcRenderer.invoke("workspace:getWorkspaceDefaultAccount", workspaceId, providerId) as Promise<{ connection_id: string | null }>,
+    setWorkspaceDefaultAccount: (workspaceId: string, providerId: string, connectionId: string) =>
+      ipcRenderer.invoke("workspace:setWorkspaceDefaultAccount", workspaceId, providerId, connectionId) as Promise<{ connection_id: string }>,
     upsertIntegrationBinding: (workspaceId: string, targetType: string, targetId: string, integrationKey: string, payload: IntegrationUpsertBindingPayload) =>
       ipcRenderer.invoke("workspace:upsertIntegrationBinding", workspaceId, targetType, targetId, integrationKey, payload) as Promise<IntegrationBindingPayload>,
     createIntegrationConnection: (payload: IntegrationCreateConnectionPayload) =>
