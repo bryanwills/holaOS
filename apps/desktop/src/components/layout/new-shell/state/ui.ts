@@ -62,6 +62,31 @@ export const appsExpandedAtom = atomWithStorage(
   true,
 );
 
+/**
+ * Manual "focus on chat" override. When true AND at least one tab exists,
+ * the shell collapses to a chat-only canvas with a tabs-hidden pill on
+ * the chat. When no tabs exist the shell goes chat-only automatically,
+ * regardless of this flag. Persists so users who prefer focus keep it.
+ */
+export const focusModeAtom = atomWithStorage(
+  "holaboss-new-shell-focus-mode-v1",
+  false,
+);
+
+/**
+ * Chat panel width in split mode (canvas modes ignore this and flex-1
+ * across the middle). Resizable via the left-edge drag handle on the
+ * chat panel. Clamped to [CHAT_PANEL_MIN_WIDTH, CHAT_PANEL_MAX_WIDTH] at
+ * the consumer. Persists.
+ */
+export const CHAT_PANEL_MIN_WIDTH = 360;
+export const CHAT_PANEL_MAX_WIDTH = 720;
+export const CHAT_PANEL_DEFAULT_WIDTH = 480;
+export const chatPanelWidthAtom = atomWithStorage<number>(
+  "holaboss-new-shell-chat-panel-width-v1",
+  CHAT_PANEL_DEFAULT_WIDTH,
+);
+
 /** Active section inside the Settings overlay. */
 export const settingsSectionAtom = atom<UiSettingsPaneSection>("settings");
 
