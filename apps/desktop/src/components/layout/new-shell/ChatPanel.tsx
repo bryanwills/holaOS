@@ -34,6 +34,7 @@ import {
   CHAT_PANEL_DEFAULT_WIDTH,
   CHAT_PANEL_MAX_WIDTH,
   CHAT_PANEL_MIN_WIDTH,
+  chatComposerPrefillAtom,
   chatPanelViewAtom,
   chatPanelWidthAtom,
   focusModeAtom,
@@ -63,12 +64,32 @@ export function ChatPanel({ layout = "split" }: { layout?: ChatLayout }) {
   const [sessionOpenRequest, setSessionOpenRequest] =
     useState<ChatSessionOpenRequest | null>(null);
   const sessionRequestKeyRef = useRef(0);
+  const composerPrefill = useAtomValue(chatComposerPrefillAtom);
 
   // Reset to chat whenever the workspace changes — the sessions list is
   // workspace-scoped and would otherwise show stale items briefly.
   useEffect(() => {
     setView("chat");
   }, [selectedWorkspaceId, setView]);
+
+  // When a prefill request arrives from outside (e.g. Automations "New
+  // schedule"), open a fresh draft session so the prefill lands in a clean
+  // composer rather than appending to an in-flight conversation.
+  const lastPrefillRequestKeyRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!composerPrefill) return;
+    if (composerPrefill.requestKey === lastPrefillRequestKeyRef.current) {
+      return;
+    }
+    lastPrefillRequestKeyRef.current = composerPrefill.requestKey;
+    sessionRequestKeyRef.current += 1;
+    setSessionOpenRequest({
+      sessionId: "",
+      requestKey: sessionRequestKeyRef.current,
+      mode: "draft",
+    });
+    setView("chat");
+  }, [composerPrefill, setView]);
 
   const handleOpenSessionsView = useCallback(() => {
     setView("sessions");
@@ -187,6 +208,7 @@ export function ChatPanel({ layout = "split" }: { layout?: ChatLayout }) {
         onOpenLocalLink={handleOpenLocalLink}
         onPreviewImageAttachment={handlePreviewImageAttachment}
         sessionOpenRequest={sessionOpenRequest}
+        composerPrefillRequest={composerPrefill}
         onEnterFocusMode={isCanvas ? undefined : handleEnterFocusMode}
       />
     );
