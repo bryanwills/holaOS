@@ -17,6 +17,13 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
 import { accountDisplayLabel } from "@/lib/integrationDisplay";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
@@ -1199,7 +1206,10 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
           open={Boolean(pendingDisconnect)}
           title="Disconnect this account?"
         />
-        <ComposioRuntimeDebugRow />
+        <ComposioRuntimeDebugRow
+          capabilitiesByToolkit={capabilitiesByToolkit}
+          connections={connections}
+        />
       </div>
     );
   }
@@ -1566,12 +1576,56 @@ function WorkspaceScopeSection({
 // feature lands. Editable provider + tool slug + args via small inputs;
 // defaults are the canonical Gmail fetch case. Safe to delete alongside
 // the runtime endpoint once a real consumer is in product.
-function ComposioRuntimeDebugRow() {
+function ComposioRuntimeDebugRow({
+  connections,
+  capabilitiesByToolkit,
+}: {
+  connections: IntegrationConnectionPayload[];
+  capabilitiesByToolkit: Record<string, ComposioToolkitCapability[]>;
+}) {
   const [providerSlug, setProviderSlug] = useState("gmail");
   const [toolSlug, setToolSlug] = useState("GMAIL_FETCH_EMAILS");
   const [argsText, setArgsText] = useState(
     JSON.stringify({ max_results: 5 }, null, 2),
   );
+
+  // One preset per connected provider whose toolkit catalog has at
+  // least one capability. Picking a preset fills all three inputs
+  // together so we never end up with e.g. linkedin + GMAIL_FETCH_EMAILS,
+  // which is the failure mode that made every non-gmail probe error.
+  const presets = useMemo(() => {
+    const seen = new Set<string>();
+    const list: {
+      providerSlug: string;
+      label: string;
+      toolSlug: string;
+      args: string;
+    }[] = [];
+    for (const c of connections) {
+      const slug = c.provider_id.trim().toLowerCase();
+      if (!slug || seen.has(slug)) continue;
+      seen.add(slug);
+      const caps = capabilitiesByToolkit[slug] ?? [];
+      const preferred = caps.find((cap) => cap.read_only) ?? caps[0];
+      if (!preferred) continue;
+      list.push({
+        providerSlug: slug,
+        label: `${slug} — ${preferred.tool_slug}`,
+        toolSlug: preferred.tool_slug,
+        args: slug === "gmail" ? JSON.stringify({ max_results: 5 }, null, 2) : "{}",
+      });
+    }
+    return list;
+  }, [connections, capabilitiesByToolkit]);
+
+  function applyPreset(value: string | null) {
+    if (!value) return;
+    const preset = presets.find((p) => p.providerSlug === value);
+    if (!preset) return;
+    setProviderSlug(preset.providerSlug);
+    setToolSlug(preset.toolSlug);
+    setArgsText(preset.args);
+  }
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<unknown>(null);
   const [errorMessage, setErrorMessage] = useState("");
@@ -1633,6 +1687,25 @@ function ComposioRuntimeDebugRow() {
           {busy ? "Running…" : "Run probe"}
         </Button>
       </div>
+      {presets.length > 0 ? (
+        <label className="mt-3 flex flex-col gap-1">
+          <span className="text-[11px] text-muted-foreground">
+            preset (connected provider → first cataloged tool)
+          </span>
+          <Select onValueChange={applyPreset} value={providerSlug}>
+            <SelectTrigger className="h-7 text-xs">
+              <SelectValue placeholder="Pick a connected provider…" />
+            </SelectTrigger>
+            <SelectContent>
+              {presets.map((preset) => (
+                <SelectItem key={preset.providerSlug} value={preset.providerSlug}>
+                  {preset.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </label>
+      ) : null}
       <div className="mt-3 grid grid-cols-2 gap-2">
         <label className="flex flex-col gap-1">
           <span className="text-[11px] text-muted-foreground">
