@@ -1552,7 +1552,7 @@ test("runTsRunnerCli exposes workspace-instructions updates only to main workspa
   assert.deepEqual(
     (capturedProjectRequest as { delegated_runtime_tool_ids?: string[] })
       .delegated_runtime_tool_ids,
-    ["holaboss_update_workspace_instructions"],
+    ["update_workspace_instructions"],
   );
 });
 
@@ -1646,8 +1646,8 @@ test("runTsRunnerCli exposes workspace-instructions updates to subagent sessions
             stageRuntimeTools: () => ({
               changed: false,
               toolIds: [
-                "holaboss_update_workspace_instructions",
-                "holaboss_delegate_task",
+                "update_workspace_instructions",
+                "delegate_task",
               ],
             }),
           },
@@ -1693,11 +1693,11 @@ test("runTsRunnerCli exposes workspace-instructions updates to subagent sessions
   assert.ok(capturedProjectRequest);
   assert.deepEqual(
     (capturedProjectRequest as { runtime_tool_ids: string[] }).runtime_tool_ids,
-    ["holaboss_update_workspace_instructions"],
+    ["update_workspace_instructions"],
   );
   assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
-    ["web_search", "holaboss_update_workspace_instructions"],
+    ["web_search", "update_workspace_instructions"],
   );
 });
 
