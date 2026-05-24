@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -1530,19 +1531,21 @@ function AppRowWithMultiBinding({
             Reload
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuLabel className="text-[10.5px] uppercase tracking-wide text-foreground/45">
-            Integrations
-          </DropdownMenuLabel>
-          {integrations.map((integration) => (
-            <ProviderSubmenu
-              key={integration.provider}
-              appId={app.id}
-              providerSlug={integration.provider}
-              whoami={integration.whoami}
-              onStateChange={updateProviderState}
-              isPrimary={integration.provider === primaryProvider}
-            />
-          ))}
+          <DropdownMenuGroup>
+            <DropdownMenuLabel className="text-[10.5px] uppercase tracking-wide text-foreground/45">
+              Integrations
+            </DropdownMenuLabel>
+            {integrations.map((integration) => (
+              <ProviderSubmenu
+                key={integration.provider}
+                appId={app.id}
+                providerSlug={integration.provider}
+                whoami={integration.whoami}
+                onStateChange={updateProviderState}
+                isPrimary={integration.provider === primaryProvider}
+              />
+            ))}
+          </DropdownMenuGroup>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={onUninstall} variant="destructive">
             <Trash2 className="size-3.5" />
@@ -1641,7 +1644,7 @@ function ProviderSubmenuBody({
 }) {
   if (busy !== null) {
     return (
-      <>
+      <DropdownMenuGroup>
         <DropdownMenuLabel className="flex items-center gap-2 text-[11px] text-foreground/60">
           <Loader2 className="size-3 animate-spin" />
           {busy === "connecting"
@@ -1653,17 +1656,16 @@ function ProviderSubmenuBody({
           <X className="size-3.5" />
           Cancel
         </DropdownMenuItem>
-      </>
+      </DropdownMenuGroup>
     );
   }
 
   if (state.kind === "bound") {
     const handle = sidebarAccountLabelFor(state.activeConnection, providerName);
     return (
-      <>
+      <DropdownMenuGroup>
         <DropdownMenuLabel className="text-[11px] text-foreground/70">
-          Connected as{" "}
-          <span className="text-foreground">{handle}</span>
+          Connected as <span className="text-foreground">{handle}</span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         {state.otherActiveConnections.map((conn) => (
@@ -1683,13 +1685,13 @@ function ProviderSubmenuBody({
           <RotateCw className="size-3.5" />
           Reconnect {providerName}…
         </DropdownMenuItem>
-      </>
+      </DropdownMenuGroup>
     );
   }
 
   if (state.kind === "needs_binding") {
     return (
-      <>
+      <DropdownMenuGroup>
         <DropdownMenuLabel className="text-[11px] text-foreground/70">
           Pick an account to bind
         </DropdownMenuLabel>
@@ -1707,13 +1709,13 @@ function ProviderSubmenuBody({
           <Plus className="size-3.5" />
           Add another account
         </DropdownMenuItem>
-      </>
+      </DropdownMenuGroup>
     );
   }
 
   if (state.kind === "no_connection") {
     return (
-      <>
+      <DropdownMenuGroup>
         <DropdownMenuLabel className="text-[11px] text-foreground/70">
           Not connected
         </DropdownMenuLabel>
@@ -1722,15 +1724,17 @@ function ProviderSubmenuBody({
           <Link2 className="size-3.5" />
           Connect {providerName}…
         </DropdownMenuItem>
-      </>
+      </DropdownMenuGroup>
     );
   }
 
   // loading / no_workspace
   return (
-    <DropdownMenuLabel className="text-[11px] text-foreground/55">
-      Loading…
-    </DropdownMenuLabel>
+    <DropdownMenuGroup>
+      <DropdownMenuLabel className="text-[11px] text-foreground/55">
+        Loading…
+      </DropdownMenuLabel>
+    </DropdownMenuGroup>
   );
 }
 
