@@ -1,5 +1,6 @@
-import { AlertTriangle, Check, Plug } from "lucide-react";
+import { AlertTriangle, Check } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { IntegrationLogo } from "@/components/integration/IntegrationLogo";
 import { OAuthWaitIndicator } from "@/components/integration/OAuthWaitIndicator";
 import { Button } from "@/components/ui/button";
 import {
@@ -183,6 +184,7 @@ function IntegrationProposalCard({
         displayName={displayName}
         logo={logo}
         onCancel={cancel}
+        slug={slug}
       />
     );
   }
@@ -195,6 +197,7 @@ function IntegrationProposalCard({
         logo={logo}
         onAction={startConnect}
         rawError={rawError}
+        slug={slug}
       />
     );
   }
@@ -202,7 +205,7 @@ function IntegrationProposalCard({
   return (
     <div className="flex max-w-[420px] flex-col gap-2 rounded-xl border border-border bg-card px-3 py-2.5 text-sm">
       <div className="flex items-start gap-3">
-        <ProviderLogo displayName={displayName} logo={logo} />
+        <ProviderLogo displayName={displayName} logo={logo} slug={slug} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium text-foreground">
             Connect {displayName}
@@ -236,14 +239,16 @@ function ConnectingProposalCard({
   displayName,
   logo,
   onCancel,
+  slug,
 }: {
   displayName: string;
   logo: string | null;
   onCancel: () => void;
+  slug: string;
 }) {
   return (
     <div className="flex max-w-[420px] gap-3 rounded-xl border border-border bg-card px-3 py-2.5 text-sm">
-      <ProviderLogo displayName={displayName} logo={logo} />
+      <ProviderLogo displayName={displayName} logo={logo} slug={slug} />
       <OAuthWaitIndicator displayName={displayName} onCancel={onCancel} />
     </div>
   );
@@ -255,12 +260,14 @@ function ErrorProposalCard({
   logo,
   onAction,
   rawError,
+  slug,
 }: {
   copy: IntegrationErrorCopy;
   displayName: string;
   logo: string | null;
   onAction: () => void;
   rawError: string | null;
+  slug: string;
 }) {
   const actionLabel =
     copy.action === "reconnect"
@@ -304,7 +311,7 @@ function ErrorProposalCard({
           </div>
         </details>
       ) : null}
-      <ProviderLogoShadow displayName={displayName} logo={logo} />
+      <ProviderLogoShadow displayName={displayName} logo={logo} slug={slug} />
     </div>
   );
 }
@@ -312,26 +319,14 @@ function ErrorProposalCard({
 function ProviderLogo({
   displayName,
   logo,
+  slug,
 }: {
   displayName: string;
   logo: string | null;
+  slug: string;
 }) {
   return (
-    <div className="grid size-7 shrink-0 place-items-center overflow-hidden rounded-md border border-border bg-background">
-      {logo ? (
-        <img
-          alt={displayName}
-          className="size-full object-contain p-0.5"
-          onError={(e) => {
-            e.currentTarget.style.display = "none";
-          }}
-          referrerPolicy="no-referrer"
-          src={logo}
-        />
-      ) : (
-        <Plug className="size-3.5 text-muted-foreground" />
-      )}
-    </div>
+    <IntegrationLogo alt={displayName} overrideUrl={logo} slug={slug} />
   );
 }
 
@@ -340,21 +335,20 @@ function ProviderLogo({
 function ProviderLogoShadow({
   displayName,
   logo,
+  slug,
 }: {
   displayName: string;
   logo: string | null;
+  slug: string;
 }) {
-  if (!logo) return null;
   return (
     <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-      <img
-        alt=""
-        className="size-3 object-contain opacity-70"
-        onError={(e) => {
-          e.currentTarget.style.display = "none";
-        }}
-        referrerPolicy="no-referrer"
-        src={logo}
+      <IntegrationLogo
+        alt={displayName}
+        className="size-4 border-0 bg-transparent"
+        overrideUrl={logo}
+        size="sm"
+        slug={slug}
       />
       <span>{displayName}</span>
     </div>
