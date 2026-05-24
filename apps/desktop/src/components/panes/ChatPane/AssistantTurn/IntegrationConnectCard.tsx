@@ -1,4 +1,11 @@
-import { Check, ChevronDown, ExternalLink, LoaderCircle, Plug } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  CircleAlert,
+  ExternalLink,
+  LoaderCircle,
+  Plug,
+} from "lucide-react";
 import { OAuthWaitIndicator } from "@/components/integration/OAuthWaitIndicator";
 import { Button } from "@/components/ui/button";
 import {
@@ -203,7 +210,15 @@ function IntegrationConnectCard({
           </Button>
         </div>
         {errorMessage ? (
-          <p className="text-xs text-destructive">{errorMessage}</p>
+          <div className="flex items-start gap-2.5 rounded-md border border-destructive/30 bg-destructive/[0.04] px-2.5 py-2 text-xs">
+            <CircleAlert
+              className="mt-px size-3.5 shrink-0 text-destructive"
+              strokeWidth={2}
+            />
+            <span className="leading-relaxed text-muted-foreground">
+              {errorMessage}
+            </span>
+          </div>
         ) : null}
       </div>
     );
@@ -246,9 +261,19 @@ function IntegrationConnectCard({
         </div>
       )}
       {errorCopy && errorCopy.action !== "silent" ? (
-        <div className="rounded-md border border-destructive/20 bg-destructive/5 px-2 py-1.5 text-xs">
-          <div className="font-medium text-destructive">{errorCopy.headline}</div>
-          <div className="mt-0.5 text-muted-foreground">{errorCopy.detail}</div>
+        <div className="flex items-start gap-2.5 rounded-md border border-destructive/30 bg-destructive/[0.04] px-2.5 py-2 text-xs">
+          <CircleAlert
+            className="mt-px size-3.5 shrink-0 text-destructive"
+            strokeWidth={2}
+          />
+          <div className="min-w-0 flex-1 space-y-0.5">
+            <div className="font-medium leading-tight text-foreground">
+              {errorCopy.headline}
+            </div>
+            <div className="leading-relaxed text-muted-foreground">
+              {errorCopy.detail}
+            </div>
+          </div>
         </div>
       ) : null}
     </div>

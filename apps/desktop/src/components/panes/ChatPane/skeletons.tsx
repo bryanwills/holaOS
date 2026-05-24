@@ -1,7 +1,6 @@
-import { AlertTriangle, Cable, Check, RotateCw } from "lucide-react";
+import { Check, ChevronRight, CircleAlert, RotateCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { OAuthWaitIndicator } from "@/components/integration/OAuthWaitIndicator";
-import { Button } from "@/components/ui/button";
 import {
   type IntegrationErrorCopy,
   resolveIntegrationError,
@@ -105,24 +104,33 @@ function GenericToolFailureBanner({ details }: { details: string[] }) {
   const summary = (details[0] ?? "Tool failed").trim();
   const rawDetails = details.slice(1).join("\n").trim();
   return (
-    <div className="mt-1.5 rounded-lg border border-destructive/20 bg-destructive/5 px-2.5 py-1.5">
-      <div className="flex items-start gap-2 text-xs">
-        <AlertTriangle className="mt-0.5 size-3 shrink-0 text-destructive" />
-        <div className="min-w-0 flex-1">
-          <div className="font-medium text-foreground">Tool failed</div>
+    <div className="mt-2 rounded-lg border border-destructive/30 bg-destructive/[0.04] px-3 py-2.5">
+      <div className="flex items-start gap-2.5 text-xs">
+        <CircleAlert
+          className="mt-px size-3.5 shrink-0 text-destructive"
+          strokeWidth={2}
+        />
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <div className="font-medium leading-tight text-foreground">
+            Tool failed
+          </div>
           {summary ? (
-            <div className="mt-0.5 line-clamp-2 text-muted-foreground">
+            <div className="line-clamp-2 leading-relaxed text-muted-foreground">
               {summary}
             </div>
           ) : null}
         </div>
       </div>
       {rawDetails ? (
-        <details className="mt-1.5 ml-5 text-[11px] text-muted-foreground">
-          <summary className="cursor-pointer select-none opacity-70 hover:opacity-100">
-            Show technical details
+        <details className="group mt-2 ml-[26px]">
+          <summary className="flex w-fit cursor-pointer select-none items-center gap-1 text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground/70 transition-colors hover:text-muted-foreground">
+            <ChevronRight
+              className="size-2.5 transition-transform group-open:rotate-90"
+              strokeWidth={2.5}
+            />
+            Technical details
           </summary>
-          <div className="mt-1 max-h-40 overflow-auto rounded-md bg-muted px-2 py-1 font-mono text-[10px] leading-4 whitespace-pre-wrap break-words">
+          <div className="mt-1.5 max-h-40 overflow-auto rounded-md border border-border/60 bg-muted/40 px-2.5 py-1.5 font-mono text-[10.5px] leading-[1.5] whitespace-pre-wrap break-words text-muted-foreground">
             {rawDetails}
           </div>
         </details>
@@ -200,10 +208,13 @@ function IntegrationErrorBannerBody({
 
   if (phase === "done") {
     return (
-      <div className="mt-1.5 flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/8 px-2.5 py-1.5 text-xs text-emerald-600 dark:text-emerald-400">
-        <Check className="size-3 shrink-0" />
-        <span>
-          {displayName} reconnected — send your next message to retry.
+      <div className="mt-2 flex items-center gap-2.5 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs">
+        <span className="grid size-4 shrink-0 place-items-center rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+          <Check className="size-2.5" strokeWidth={3} />
+        </span>
+        <span className="text-foreground">
+          <span className="font-medium">{displayName}</span> reconnected — send
+          your next message to retry.
         </span>
       </div>
     );
@@ -211,64 +222,69 @@ function IntegrationErrorBannerBody({
 
   if (phase === "connecting") {
     return (
-      <div className="mt-1.5 flex items-start gap-2 rounded-lg border border-border bg-card px-2.5 py-2 text-xs">
-        <Cable className="mt-0.5 size-3 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <OAuthWaitIndicator
-            compact
-            displayName={displayName}
-            onCancel={cancelReconnect}
-          />
-        </div>
+      <div className="mt-2 rounded-lg border border-border bg-card/60 px-3 py-2.5">
+        <OAuthWaitIndicator
+          compact
+          displayName={displayName}
+          onCancel={cancelReconnect}
+        />
       </div>
     );
   }
 
   if (phase === "error" && reconnectError) {
     return (
-      <div className="mt-1.5 flex items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/8 px-2.5 py-1.5 text-xs">
-        <AlertTriangle className="size-3 shrink-0 text-destructive" />
-        <span className="flex-1 text-foreground">
-          <span className="font-medium">{reconnectError.headline}</span>
+      <div className="mt-2 flex items-start gap-2.5 rounded-lg border border-destructive/30 bg-destructive/[0.04] px-3 py-2.5 text-xs">
+        <CircleAlert
+          className="mt-px size-3.5 shrink-0 text-destructive"
+          strokeWidth={2}
+        />
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <div className="font-medium leading-tight text-foreground">
+            {reconnectError.headline}
+          </div>
           {reconnectError.detail ? (
-            <span className="ml-1 text-muted-foreground">
+            <div className="leading-relaxed text-muted-foreground">
               {reconnectError.detail}
-            </span>
+            </div>
           ) : null}
-        </span>
-        <Button
-          className="h-6 px-2 text-xs"
+        </div>
+        <button
+          className="shrink-0 self-center inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10"
           onClick={() => void startReconnect()}
-          size="sm"
           type="button"
-          variant="ghost"
         >
-          <RotateCw className="size-3" />
+          <RotateCw className="size-3" strokeWidth={2} />
           Try again
-        </Button>
+        </button>
       </div>
     );
   }
 
   return (
-    <div className="mt-1.5 flex items-start gap-2 rounded-lg border border-warning/20 bg-warning/8 px-2.5 py-1.5 text-xs text-warning">
-      <Cable className="mt-0.5 size-3 shrink-0" />
-      <div className="min-w-0 flex-1">
-        <div className="font-medium">{copy.headline}</div>
+    <div className="mt-2 flex items-start gap-2.5 rounded-lg border border-warning/30 bg-warning/[0.06] px-3 py-2.5 text-xs">
+      <CircleAlert
+        className="mt-px size-3.5 shrink-0 text-warning"
+        strokeWidth={2}
+      />
+      <div className="min-w-0 flex-1 space-y-0.5">
+        <div className="font-medium leading-tight text-foreground">
+          {copy.headline}
+        </div>
         {copy.detail ? (
-          <div className="mt-0.5 text-warning/80">{copy.detail}</div>
+          <div className="leading-relaxed text-muted-foreground">
+            {copy.detail}
+          </div>
         ) : null}
       </div>
       {canReconnect ? (
-        <Button
-          className="h-6 px-2 text-xs"
+        <button
+          className="shrink-0 self-center rounded-md px-2 py-0.5 text-xs font-medium text-warning transition-colors hover:bg-warning/10"
           onClick={() => void startReconnect()}
-          size="sm"
           type="button"
-          variant="ghost"
         >
           Reconnect
-        </Button>
+        </button>
       ) : null}
     </div>
   );
