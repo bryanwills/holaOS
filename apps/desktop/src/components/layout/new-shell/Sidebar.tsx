@@ -993,19 +993,22 @@ function AppsSection() {
   } = useWorkspaceDesktop();
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const [expanded, setExpanded] = useAtom(appsExpandedAtom);
+  const { openUrlInBrowserTab } = useOpenWorkspaceOutput();
 
-  const openApp = async (appId: string) => {
+  const openApp = async (
+    appId: string,
+    opts?: { forceNewTab?: boolean },
+  ) => {
     if (!selectedWorkspaceId) return;
     try {
       const url = await window.electronAPI.appSurface.resolveUrl(
         selectedWorkspaceId,
         appId,
       );
-      await window.electronAPI.browser.setActiveWorkspace(
-        selectedWorkspaceId,
-        "user",
-      );
-      await window.electronAPI.browser.newTab(url);
+      await openUrlInBrowserTab(url, {
+        forceNewTab: opts?.forceNewTab,
+        dedupBy: "origin",
+      });
     } catch {
       // status pip on the row already reflects non-ready apps
     }
@@ -1078,7 +1081,7 @@ function AppsSection() {
                   providerId={providerId}
                   iconUrl={display.logo}
                   expanded={expanded}
-                  onOpen={() => void openApp(app.id)}
+                  onOpen={(opts) => void openApp(app.id, opts)}
                   onReload={() => void reloadApp(app.id)}
                   onUninstall={() => void uninstallApp(app.id, label)}
                 />
@@ -1097,7 +1100,7 @@ interface AppRowProps {
   providerId: string | null;
   iconUrl: string | null;
   expanded: boolean;
-  onOpen: () => void;
+  onOpen: (opts?: { forceNewTab?: boolean }) => void;
   onReload: () => void;
   onUninstall: () => void;
 }
@@ -1199,7 +1202,10 @@ function AppRowPlain({
       }}
       menuItems={
         <>
-          <DropdownMenuItem onClick={onOpen} disabled={tone !== "ready"}>
+          <DropdownMenuItem
+            onClick={() => onOpen({ forceNewTab: true })}
+            disabled={tone !== "ready"}
+          >
             <Plus className="size-3.5" />
             Open in new tab
           </DropdownMenuItem>
@@ -1346,7 +1352,10 @@ function AppRowWithBinding({
               Connect {providerName}…
             </DropdownMenuItem>
           ) : null}
-          <DropdownMenuItem onClick={onOpen} disabled={tone !== "ready"}>
+          <DropdownMenuItem
+            onClick={() => onOpen({ forceNewTab: true })}
+            disabled={tone !== "ready"}
+          >
             <Plus className="size-3.5" />
             Open in new tab
           </DropdownMenuItem>
@@ -1535,7 +1544,10 @@ function AppRowWithMultiBinding({
         }}
         menuItems={
           <>
-            <DropdownMenuItem onClick={onOpen} disabled={tone !== "ready"}>
+            <DropdownMenuItem
+              onClick={() => onOpen({ forceNewTab: true })}
+              disabled={tone !== "ready"}
+            >
               <Plus className="size-3.5" />
               Open in new tab
             </DropdownMenuItem>
@@ -1689,20 +1701,13 @@ function AppRowShell({
 }
 
 function RecentRow({ entry }: { entry: BrowserHistoryEntryPayload }) {
-  const { selectedWorkspaceId } = useWorkspaceSelection();
   const title = entry.title || hostFromUrl(entry.url) || entry.url;
   const [faviconError, setFaviconError] = useState(false);
   const showFavicon = Boolean(entry.faviconUrl) && !faviconError;
+  const { openUrlInBrowserTab } = useOpenWorkspaceOutput();
 
-  const handleOpen = async () => {
-    if (selectedWorkspaceId) {
-      await window.electronAPI.browser.setActiveWorkspace(
-        selectedWorkspaceId,
-        "user",
-      );
-    }
-    await window.electronAPI.browser.newTab(entry.url);
-  };
+  const handleOpen = (opts?: { forceNewTab?: boolean }) =>
+    openUrlInBrowserTab(entry.url, opts);
 
   const handleCopy = async () => {
     try {
@@ -1766,7 +1771,9 @@ function RecentRow({ entry }: { entry: BrowserHistoryEntryPayload }) {
             }
           />
           <DropdownMenuContent align="end" side="bottom" sideOffset={4}>
-            <DropdownMenuItem onClick={() => void handleOpen()}>
+            <DropdownMenuItem
+              onClick={() => void handleOpen({ forceNewTab: true })}
+            >
               <Plus className="size-3.5" />
               Open in new tab
             </DropdownMenuItem>
