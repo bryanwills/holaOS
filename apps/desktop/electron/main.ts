@@ -11369,40 +11369,6 @@ async function composioMcpEnsureRunning(workspaceId: string): Promise<unknown> {
   });
 }
 
-async function composioDeleteUpstream(
-  connectedAccountId: string,
-): Promise<{ deleted: boolean; missing: boolean }> {
-  const trimmed = typeof connectedAccountId === "string" ? connectedAccountId.trim() : "";
-  if (!trimmed) {
-    return { deleted: false, missing: false };
-  }
-  try {
-    await composioFetch<{ deleted?: boolean }>(
-      `/api/composio/connections/${encodeURIComponent(trimmed)}`,
-      "DELETE",
-    );
-    return { deleted: true, missing: false };
-  } catch (err) {
-    if (isComposioAccountMissingError(err)) {
-      return { deleted: false, missing: true };
-    }
-    // Composio's DELETE returns the upstream's body on non-2xx — 404 there
-    // surfaces as "Composio API error (404)" via composioFetch.
-    if (err instanceof Error && /\(404\)/.test(err.message)) {
-      return { deleted: false, missing: true };
-    }
-    throw err;
-  }
-}
-
-async function composioMcpEnsureRunning(workspaceId: string): Promise<unknown> {
-  return requestRuntimeJson<unknown>({
-    method: "POST",
-    path: "/api/v1/composio-mcp/ensure-running",
-    payload: { workspace_id: workspaceId },
-  });
-}
-
 /**
  * Re-run identity enrichment for an existing connection. Reads the
  * connection's `account_external_id`, hits Composio whoami, runs the
@@ -15255,44 +15221,6 @@ async function createLocalWorkspace(
           })
           .catch(() => updated);
       }
-    }
-    const runtimeConfigForHeartbeat = await readRuntimeConfigFile();
-    const runtimeHeartbeatToken = runtimeModelProxyApiKeyFromConfig(
-      runtimeConfigForHeartbeat,
-    );
-    const runtimeHeartbeatUserId = (
-      runtimeConfigForHeartbeat.user_id || ""
-    ).trim();
-    const requestedHeartbeatUserId = (payload.holaboss_user_id || "").trim();
-    const shouldEmitWorkspaceReadyHeartbeat =
-      Boolean(runtimeHeartbeatToken) &&
-      Boolean(requestedHeartbeatUserId) &&
-      requestedHeartbeatUserId !== LOCAL_OSS_TEMPLATE_USER_ID &&
-      runtimeHeartbeatUserId === requestedHeartbeatUserId;
-
-    if (shouldEmitWorkspaceReadyHeartbeat) {
-      try {
-        await emitWorkspaceReadyHeartbeat({
-          workspaceId,
-          holabossUserId: requestedHeartbeatUserId,
-        });
-      } catch (error) {
-        throw new Error(
-          contextualWorkspaceCreateError(
-            "Workspace created locally, but the workspace-ready heartbeat was not confirmed",
-            error,
-          ),
-        );
-      }
-    } else {
-      appendRuntimeEventLog({
-        category: "workspace",
-        event: "workspace.heartbeat.emit",
-        outcome: "skipped",
-        detail:
-          `workspace_id=${workspaceId} skipped=no_active_runtime_binding ` +
-          `requested_user_id=${requestedHeartbeatUserId || "missing"} runtime_user_id=${runtimeHeartbeatUserId || "missing"}`,
-      });
     }
     return withWorkspaceResponseLocation(updated);
   } catch (error) {

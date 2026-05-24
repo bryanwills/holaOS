@@ -113,16 +113,16 @@ function AssistantTurnComponent({
   proposedIntegrations?: AssistantTurnProposedIntegration[];
   onAfterIntegrationBind?: () => void;
   onAfterIntegrationProposalConnected?: (toolkitSlug: string) => void;
-  memoryProposalAction: {
+  memoryProposalAction?: {
     proposalId: string;
     action: "accept" | "dismiss";
   } | null;
-  editingMemoryProposalId: string | null;
-  memoryProposalDrafts: Record<string, string>;
-  onEditMemoryProposal: (proposalId: string) => void;
-  onMemoryProposalDraftChange: (proposalId: string, value: string) => void;
-  onAcceptMemoryProposal: (proposal: MemoryUpdateProposalRecordPayload) => void;
-  onDismissMemoryProposal: (
+  editingMemoryProposalId?: string | null;
+  memoryProposalDrafts?: Record<string, string>;
+  onEditMemoryProposal?: (proposalId: string) => void;
+  onMemoryProposalDraftChange?: (proposalId: string, value: string) => void;
+  onAcceptMemoryProposal?: (proposal: MemoryUpdateProposalRecordPayload) => void;
+  onDismissMemoryProposal?: (
     proposal: MemoryUpdateProposalRecordPayload,
   ) => void;
   onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
