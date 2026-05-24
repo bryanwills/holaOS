@@ -65,11 +65,14 @@ export function TraceTimelineStepEntry({
       >
         <span className="mt-0.5 shrink-0">
           {step.status === "completed" ? (
-            <Check className="size-3 text-success" />
+            <Check
+              className="size-3 text-success motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-75 motion-safe:duration-200 motion-safe:ease-out"
+              key={`completed-${step.id}`}
+            />
           ) : step.status === "error" ? (
-            <AlertTriangle className="size-3 text-destructive" />
+            <AlertTriangle className="size-3 text-destructive motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-150" />
           ) : step.status === "running" ? (
-            <Loader2 className="size-3 animate-spin text-muted-foreground" />
+            <Loader2 className="size-3 animate-spin text-muted-foreground motion-reduce:animate-none" />
           ) : (
             <Clock3 className="size-3 text-muted-foreground" />
           )}
