@@ -1,4 +1,5 @@
-import { Check, ChevronDown, ExternalLink, LoaderCircle, Plug, X } from "lucide-react";
+import { Check, ChevronDown, ExternalLink, LoaderCircle, Plug } from "lucide-react";
+import { OAuthWaitIndicator } from "@/components/integration/OAuthWaitIndicator";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -7,6 +8,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { resolveIntegrationError } from "@/lib/integrationErrorMessages";
 import { useIntegrationBinding } from "@/lib/useIntegrationBinding";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 
@@ -208,6 +210,9 @@ function IntegrationConnectCard({
   }
 
   // no_connection: zero authorized accounts for this provider
+  const errorCopy = errorMessage
+    ? resolveIntegrationError({ provider: displayName, error: errorMessage })
+    : null;
   return (
     <div className="flex max-w-[380px] flex-col gap-2 rounded-xl border border-border bg-card px-3 py-3">
       <div className="flex items-center gap-3">
@@ -223,25 +228,13 @@ function IntegrationConnectCard({
           </div>
         </div>
       </div>
-      <div className="flex items-center justify-end gap-2">
-        {busy === "connecting" ? (
-          <>
-            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-              <LoaderCircle size={13} className="animate-spin" />
-              Waiting for authorization…
-            </span>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => handleCancelConnect()}
-              title="Cancel connection"
-              aria-label="Cancel connection"
-            >
-              <X size={13} />
-              Cancel
-            </Button>
-          </>
-        ) : (
+      {busy === "connecting" ? (
+        <OAuthWaitIndicator
+          displayName={displayName}
+          onCancel={() => handleCancelConnect()}
+        />
+      ) : (
+        <div className="flex items-center justify-end gap-2">
           <Button
             size="sm"
             disabled={busy !== null}
@@ -250,10 +243,13 @@ function IntegrationConnectCard({
             <ExternalLink size={13} />
             Connect {displayName}
           </Button>
-        )}
-      </div>
-      {errorMessage ? (
-        <p className="text-xs text-destructive">{errorMessage}</p>
+        </div>
+      )}
+      {errorCopy && errorCopy.action !== "silent" ? (
+        <div className="rounded-md border border-destructive/20 bg-destructive/5 px-2 py-1.5 text-xs">
+          <div className="font-medium text-destructive">{errorCopy.headline}</div>
+          <div className="mt-0.5 text-muted-foreground">{errorCopy.detail}</div>
+        </div>
       ) : null}
     </div>
   );
