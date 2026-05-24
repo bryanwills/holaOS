@@ -5,6 +5,11 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -1101,19 +1106,41 @@ interface AppRowProps {
 }
 
 function AppRow(props: AppRowProps) {
-  // Pick the row's "primary" integration: required wins, else first declared.
-  // Apps with no integrations (UI-only, data-only) skip the binding hook.
-  const declaredIntegration =
-    props.app.integrations?.find((entry) => entry.required) ??
-    props.app.integrations?.[0];
-  if (!declaredIntegration?.provider) {
+  // Bucket the app's declared integrations into "providers we care about".
+  // Apps with no integrations (UI-only, data-only) skip the binding hook
+  // entirely; apps with one keep the existing single-binding row; apps with
+  // two or more (e.g. X Engagement: twitter + gmail) need the multi-binding
+  // variant so each provider gets its own status / Reconnect path in the
+  // dropdown — the legacy single-provider row silently dropped everything
+  // beyond the first required entry.
+  const integrations: AppRowMultiIntegration[] = (props.app.integrations ?? [])
+    .filter((entry) => Boolean(entry.provider))
+    .map((entry) => ({
+      provider: entry.provider,
+      required: entry.required,
+      whoami: entry.whoami ?? null,
+    }));
+  if (integrations.length === 0) {
     return <AppRowPlain {...props} />;
   }
+  // Prefer required > first declared for the "primary" provider whose state
+  // drives the row's status dot when collapsed.
+  const primary =
+    integrations.find((entry) => entry.required) ?? integrations[0]!;
+  if (integrations.length === 1) {
+    return (
+      <AppRowWithBinding
+        {...props}
+        providerSlug={primary.provider}
+        whoami={primary.whoami}
+      />
+    );
+  }
   return (
-    <AppRowWithBinding
+    <AppRowWithMultiBinding
       {...props}
-      providerSlug={declaredIntegration.provider}
-      whoami={declaredIntegration.whoami ?? null}
+      integrations={integrations}
+      primaryProvider={primary.provider}
     />
   );
 }
@@ -1347,6 +1374,381 @@ function AppRowWithBinding({
       }
     />
   );
+}
+
+interface AppRowMultiIntegration {
+  provider: string;
+  required: boolean;
+  whoami: PendingIntegrationWhoami | null;
+}
+
+type ProviderRowStateSummary = {
+  kind: "loading" | "no_connection" | "needs_binding" | "bound" | "no_workspace";
+  busy: "connecting" | "binding" | null;
+  hasError: boolean;
+};
+
+function AppRowWithMultiBinding({
+  app,
+  label,
+  providerId,
+  iconUrl,
+  expanded,
+  onOpen,
+  onReload,
+  onUninstall,
+  integrations,
+  primaryProvider,
+}: AppRowProps & {
+  integrations: AppRowMultiIntegration[];
+  primaryProvider: string;
+}) {
+  // Each ProviderSubmenu calls useIntegrationBinding internally; lift their
+  // state up here so the row's status dot can summarise "anything needs
+  // attention" without forcing the user to open the dropdown first.
+  const [byProvider, setByProvider] = useState<
+    Record<string, ProviderRowStateSummary>
+  >({});
+  const updateProviderState = useCallback(
+    (slug: string, summary: ProviderRowStateSummary) => {
+      setByProvider((prev) => {
+        const existing = prev[slug];
+        if (
+          existing &&
+          existing.kind === summary.kind &&
+          existing.busy === summary.busy &&
+          existing.hasError === summary.hasError
+        ) {
+          return prev;
+        }
+        return { ...prev, [slug]: summary };
+      });
+    },
+    [],
+  );
+
+  const errorMessage = app.error?.trim() || null;
+  const summaries = Object.values(byProvider);
+  const anyConnecting = summaries.some((s) => s.busy !== null);
+  const anyNeedsConnect = summaries.some(
+    (s) => s.kind === "no_connection" || s.kind === "needs_binding",
+  );
+  const tone: RowTone = errorMessage
+    ? "error"
+    : anyConnecting
+      ? "connecting"
+      : anyNeedsConnect
+        ? "needs_connect"
+        : !app.ready
+          ? "loading"
+          : "ready";
+
+  const pendingProviderNames = useMemo(
+    () =>
+      integrations
+        .filter((entry) => {
+          const summary = byProvider[entry.provider];
+          if (!summary) return false;
+          return (
+            summary.kind === "no_connection" || summary.kind === "needs_binding"
+          );
+        })
+        .map((entry) => entry.provider),
+    [integrations, byProvider],
+  );
+
+  const tooltip =
+    tone === "error" && errorMessage
+      ? errorMessage
+      : tone === "connecting"
+        ? `Authorizing integrations…`
+        : tone === "needs_connect"
+          ? pendingProviderNames.length > 0
+            ? `${pendingProviderNames.join(", ")} not connected — open menu to authorize`
+            : `Integrations need attention`
+          : tone === "loading"
+            ? `${label} — starting…`
+            : label;
+
+  const handleRowClick = () => {
+    if (tone === "ready") onOpen();
+    // When integrations are pending the user must pick which provider to
+    // connect — the row's flat click can't disambiguate, so we no-op and
+    // rely on the dropdown.
+  };
+
+  return (
+    <AppRowShell
+      app={app}
+      label={label}
+      providerId={providerId}
+      iconUrl={iconUrl}
+      expanded={expanded}
+      tone={tone}
+      tooltip={tooltip}
+      onRowClick={handleRowClick}
+      renderTrailing={() => {
+        if (tone === "connecting") {
+          return (
+            <Loader2
+              className="size-3 animate-spin text-foreground/55"
+              aria-hidden
+            />
+          );
+        }
+        if (tone === "needs_connect") {
+          return (
+            <StatusDot
+              variant="warning"
+              title={`${pendingProviderNames.length} integration${
+                pendingProviderNames.length === 1 ? "" : "s"
+              } need attention`}
+            />
+          );
+        }
+        if (tone === "loading") {
+          return <StatusDot variant="info" pulse title="Starting" />;
+        }
+        if (tone === "error") {
+          return (
+            <StatusDot
+              variant="destructive"
+              title={errorMessage ?? "Error"}
+            />
+          );
+        }
+        return null;
+      }}
+      menuItems={
+        <>
+          <DropdownMenuItem onClick={onOpen} disabled={tone !== "ready"}>
+            <Plus className="size-3.5" />
+            Open in new tab
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onReload}>
+            <RotateCw className="size-3.5" />
+            Reload
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel className="text-[10.5px] uppercase tracking-wide text-foreground/45">
+            Integrations
+          </DropdownMenuLabel>
+          {integrations.map((integration) => (
+            <ProviderSubmenu
+              key={integration.provider}
+              appId={app.id}
+              providerSlug={integration.provider}
+              whoami={integration.whoami}
+              onStateChange={updateProviderState}
+              isPrimary={integration.provider === primaryProvider}
+            />
+          ))}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={onUninstall} variant="destructive">
+            <Trash2 className="size-3.5" />
+            Uninstall
+          </DropdownMenuItem>
+        </>
+      }
+    />
+  );
+}
+
+function ProviderSubmenu({
+  appId,
+  providerSlug,
+  whoami,
+  onStateChange,
+  isPrimary,
+}: {
+  appId: string;
+  providerSlug: string;
+  whoami: PendingIntegrationWhoami | null;
+  onStateChange: (slug: string, summary: ProviderRowStateSummary) => void;
+  isPrimary: boolean;
+}) {
+  const { composioToolkitsByProvider } = useWorkspaceDesktop();
+  const providerName =
+    composioToolkitsByProvider[providerSlug.toLowerCase()]?.name ?? providerSlug;
+  const {
+    state,
+    busy,
+    errorMessage,
+    connect,
+    bind,
+    cancel,
+  } = useIntegrationBinding({
+    appId,
+    provider: providerSlug,
+    whoami,
+    considerWorkspaceDefault: true,
+  });
+
+  useEffect(() => {
+    onStateChange(providerSlug, {
+      kind: state.kind,
+      busy,
+      hasError: Boolean(errorMessage),
+    });
+  }, [state.kind, busy, errorMessage, providerSlug, onStateChange]);
+
+  const statusVariant: "success" | "warning" | "destructive" | "info" =
+    busy !== null
+      ? "info"
+      : state.kind === "bound"
+        ? "success"
+        : state.kind === "no_connection" || state.kind === "needs_binding"
+          ? "warning"
+          : "info";
+
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>
+        <StatusDot variant={statusVariant} />
+        <span className="flex-1 truncate">{providerName}</span>
+        {isPrimary ? (
+          <span className="text-[10px] text-foreground/40">primary</span>
+        ) : null}
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className="min-w-[220px]">
+        <ProviderSubmenuBody
+          state={state}
+          busy={busy}
+          providerName={providerName}
+          onConnect={() => void connect()}
+          onBind={(connectionId) => void bind(connectionId)}
+          onCancel={cancel}
+        />
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  );
+}
+
+function ProviderSubmenuBody({
+  state,
+  busy,
+  providerName,
+  onConnect,
+  onBind,
+  onCancel,
+}: {
+  state: import("@/lib/useIntegrationBinding").IntegrationBindingState;
+  busy: import("@/lib/useIntegrationBinding").IntegrationBindingBusy;
+  providerName: string;
+  onConnect: () => void;
+  onBind: (connectionId: string) => void;
+  onCancel: () => void;
+}) {
+  if (busy !== null) {
+    return (
+      <>
+        <DropdownMenuLabel className="flex items-center gap-2 text-[11px] text-foreground/60">
+          <Loader2 className="size-3 animate-spin" />
+          {busy === "connecting"
+            ? `Authorizing ${providerName}…`
+            : `Binding ${providerName}…`}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={onCancel}>
+          <X className="size-3.5" />
+          Cancel
+        </DropdownMenuItem>
+      </>
+    );
+  }
+
+  if (state.kind === "bound") {
+    const handle = sidebarAccountLabelFor(state.activeConnection, providerName);
+    return (
+      <>
+        <DropdownMenuLabel className="text-[11px] text-foreground/70">
+          Connected as{" "}
+          <span className="text-foreground">{handle}</span>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {state.otherActiveConnections.map((conn) => (
+          <DropdownMenuItem
+            key={conn.connection_id}
+            onClick={() => onBind(conn.connection_id)}
+          >
+            <Check className="size-3.5 opacity-0" />
+            Switch to {sidebarAccountLabelFor(conn, providerName)}
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuItem onClick={onConnect}>
+          <Plus className="size-3.5" />
+          Add another account
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onConnect}>
+          <RotateCw className="size-3.5" />
+          Reconnect {providerName}…
+        </DropdownMenuItem>
+      </>
+    );
+  }
+
+  if (state.kind === "needs_binding") {
+    return (
+      <>
+        <DropdownMenuLabel className="text-[11px] text-foreground/70">
+          Pick an account to bind
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {state.candidates.map((conn) => (
+          <DropdownMenuItem
+            key={conn.connection_id}
+            onClick={() => onBind(conn.connection_id)}
+          >
+            <Link2 className="size-3.5" />
+            {sidebarAccountLabelFor(conn, providerName)}
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuItem onClick={onConnect}>
+          <Plus className="size-3.5" />
+          Add another account
+        </DropdownMenuItem>
+      </>
+    );
+  }
+
+  if (state.kind === "no_connection") {
+    return (
+      <>
+        <DropdownMenuLabel className="text-[11px] text-foreground/70">
+          Not connected
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={onConnect}>
+          <Link2 className="size-3.5" />
+          Connect {providerName}…
+        </DropdownMenuItem>
+      </>
+    );
+  }
+
+  // loading / no_workspace
+  return (
+    <DropdownMenuLabel className="text-[11px] text-foreground/55">
+      Loading…
+    </DropdownMenuLabel>
+  );
+}
+
+function sidebarAccountLabelFor(
+  connection: IntegrationConnectionPayload,
+  providerName: string,
+): string {
+  const candidates = [
+    connection.account_handle,
+    connection.account_email,
+    connection.account_label,
+  ];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  const id = connection.connection_id;
+  const suffix = id.length > 6 ? id.slice(-6) : id;
+  return providerName ? `${providerName} · ${suffix}` : suffix;
 }
 
 function AppRowShell({
