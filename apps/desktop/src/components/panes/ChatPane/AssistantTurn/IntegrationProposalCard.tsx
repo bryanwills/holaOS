@@ -1,16 +1,7 @@
-import { AlertTriangle, Check } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { IntegrationLogo } from "@/components/integration/IntegrationLogo";
-import { OAuthWaitIndicator } from "@/components/integration/OAuthWaitIndicator";
+import { Check, LoaderCircle, Plug } from "lucide-react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  IntegrationConnectCancelled,
-  useWorkspaceDesktop,
-} from "@/lib/workspaceDesktop";
-import {
-  type IntegrationErrorCopy,
-  resolveIntegrationError,
-} from "@/lib/integrationErrorMessages";
+import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 
 export interface AssistantTurnProposedIntegration {
   toolkit_slug: string;
@@ -50,8 +41,6 @@ export function AssistantTurnIntegrationProposals({
   );
 }
 
-type ProposalPhase = "idle" | "connecting" | "done" | "error";
-
 function IntegrationProposalCard({
   proposal,
   workspaceId,
@@ -68,97 +57,32 @@ function IntegrationProposalCard({
   const displayName = toolkit?.name ?? proposal.toolkit_slug;
   const logo = toolkit?.logo ?? `https://logos.composio.dev/api/${slug}`;
 
-  const [phase, setPhase] = useState<ProposalPhase>("idle");
-  const [errorCopy, setErrorCopy] = useState<IntegrationErrorCopy | null>(null);
-  const [rawError, setRawError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const [phase, setPhase] = useState<"idle" | "connecting" | "done" | "error">(
+    "idle",
+  );
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // The propose_connect card hangs around in chat history. If the user
-  // already authorized this toolkit (via the IntegrationConnectCard binding
-  // flow, the integrations pane, or any earlier propose_connect), the
-  // "Bound to {appId}" card above us is now the truthful indicator —
-  // surfacing a duplicate "Connect {provider}" here just confuses the user.
-  const [alreadyConnected, setAlreadyConnected] = useState<boolean | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const { connections } =
-          await window.electronAPI.workspace.listIntegrationConnections();
-        if (cancelled) return;
-        const active = connections.some(
-          (c) =>
-            c.provider_id.trim().toLowerCase() === slug &&
-            c.status === "active",
-        );
-        setAlreadyConnected(active);
-      } catch {
-        if (!cancelled) setAlreadyConnected(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [slug]);
-
-  useEffect(() => {
-    return () => {
-      abortRef.current?.abort();
-    };
-  }, []);
-
-  const startConnect = async () => {
+  const handleConnect = async () => {
     if (!workspaceId) {
-      setErrorCopy(
-        resolveIntegrationError({ provider: displayName, code: "no_workspace" }),
-      );
-      setRawError(null);
+      setErrorMessage("Open a workspace before connecting.");
       setPhase("error");
       return;
     }
-    const controller = new AbortController();
-    abortRef.current = controller;
     setPhase("connecting");
-    setErrorCopy(null);
-    setRawError(null);
+    setErrorMessage(null);
     try {
       await connectIntegrationProvider({
         provider: slug,
         accountLabel: `${displayName} (Managed)`,
-        signal: controller.signal,
       });
       setPhase("done");
       onAfterConnect?.(slug);
     } catch (err) {
-      if (err instanceof IntegrationConnectCancelled) {
-        // User-driven cancel — silent return to idle.
-        setPhase("idle");
-        setErrorCopy(null);
-        setRawError(null);
-        return;
-      }
-      const copy = resolveIntegrationError({ provider: displayName, error: err });
-      if (copy.action === "silent") {
-        setPhase("idle");
-        return;
-      }
-      setErrorCopy(copy);
-      setRawError(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : "Connection failed.";
+      setErrorMessage(msg);
       setPhase("error");
-    } finally {
-      abortRef.current = null;
     }
   };
-
-  const cancel = () => {
-    abortRef.current?.abort();
-  };
-
-  // Suppress entirely when the toolkit is already connected via another
-  // path. Wait for the readiness check before rendering anything, otherwise
-  // the Connect button flashes before disappearing.
-  if (alreadyConnected === null) return null;
-  if (alreadyConnected && phase !== "done") return null;
 
   if (phase === "done") {
     return (
@@ -178,34 +102,24 @@ function IntegrationProposalCard({
     );
   }
 
-  if (phase === "connecting") {
-    return (
-      <ConnectingProposalCard
-        displayName={displayName}
-        logo={logo}
-        onCancel={cancel}
-        slug={slug}
-      />
-    );
-  }
-
-  if (phase === "error" && errorCopy) {
-    return (
-      <ErrorProposalCard
-        copy={errorCopy}
-        displayName={displayName}
-        logo={logo}
-        onAction={startConnect}
-        rawError={rawError}
-        slug={slug}
-      />
-    );
-  }
-
   return (
     <div className="flex max-w-[420px] flex-col gap-2 rounded-xl border border-border bg-card px-3 py-2.5 text-sm">
       <div className="flex items-start gap-3">
-        <ProviderLogo displayName={displayName} logo={logo} slug={slug} />
+        <div className="grid size-7 shrink-0 place-items-center overflow-hidden rounded-md border border-border bg-background">
+          {logo ? (
+            <img
+              alt=""
+              className="size-full object-contain p-0.5"
+              onError={(e) => {
+                e.currentTarget.style.display = "none";
+              }}
+              referrerPolicy="no-referrer"
+              src={logo}
+            />
+          ) : (
+            <Plug className="size-3.5 text-muted-foreground" />
+          )}
+        </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium text-foreground">
             Connect {displayName}
@@ -222,136 +136,27 @@ function IntegrationProposalCard({
         </div>
         <Button
           className="h-7 px-3 text-xs"
-          disabled={!workspaceId}
-          onClick={() => void startConnect()}
+          disabled={phase === "connecting" || !workspaceId}
+          onClick={() => void handleConnect()}
           size="sm"
           type="button"
           variant="default"
         >
-          Connect
+          {phase === "connecting" ? (
+            <>
+              <LoaderCircle className="mr-1 size-3 animate-spin" />
+              Connecting…
+            </>
+          ) : (
+            "Connect"
+          )}
         </Button>
       </div>
-    </div>
-  );
-}
-
-function ConnectingProposalCard({
-  displayName,
-  logo,
-  onCancel,
-  slug,
-}: {
-  displayName: string;
-  logo: string | null;
-  onCancel: () => void;
-  slug: string;
-}) {
-  return (
-    <div className="flex max-w-[420px] gap-3 rounded-xl border border-border bg-card px-3 py-2.5 text-sm">
-      <ProviderLogo displayName={displayName} logo={logo} slug={slug} />
-      <OAuthWaitIndicator displayName={displayName} onCancel={onCancel} />
-    </div>
-  );
-}
-
-function ErrorProposalCard({
-  copy,
-  displayName,
-  logo,
-  onAction,
-  rawError,
-  slug,
-}: {
-  copy: IntegrationErrorCopy;
-  displayName: string;
-  logo: string | null;
-  onAction: () => void;
-  rawError: string | null;
-  slug: string;
-}) {
-  const actionLabel =
-    copy.action === "reconnect"
-      ? "Reconnect"
-      : copy.action === "reopen"
-        ? "Reopen"
-        : copy.action === "contact"
-          ? "Get help"
-          : "Try again";
-  return (
-    <div className="flex max-w-[420px] flex-col gap-2 rounded-xl border border-destructive/20 bg-card px-3 py-2.5 text-sm">
-      <div className="flex items-start gap-3">
-        <div className="grid size-7 shrink-0 place-items-center rounded-md bg-destructive/10 text-destructive">
-          <AlertTriangle className="size-3.5" />
+      {errorMessage ? (
+        <div className="rounded-md bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
+          {errorMessage}
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-foreground">
-            {copy.headline}
-          </div>
-          <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
-            {copy.detail}
-          </div>
-        </div>
-        <Button
-          className="h-7 px-3 text-xs"
-          onClick={onAction}
-          size="sm"
-          type="button"
-          variant="default"
-        >
-          {actionLabel}
-        </Button>
-      </div>
-      {rawError ? (
-        <details className="text-[11px] text-muted-foreground">
-          <summary className="cursor-pointer select-none opacity-70 hover:opacity-100">
-            Show technical details
-          </summary>
-          <div className="mt-1 max-h-32 overflow-auto rounded-md bg-muted px-2 py-1 font-mono text-[10px] leading-4 whitespace-pre-wrap break-words">
-            {rawError}
-          </div>
-        </details>
       ) : null}
-      <ProviderLogoShadow displayName={displayName} logo={logo} slug={slug} />
     </div>
   );
 }
-
-function ProviderLogo({
-  displayName,
-  logo,
-  slug,
-}: {
-  displayName: string;
-  logo: string | null;
-  slug: string;
-}) {
-  return (
-    <IntegrationLogo alt={displayName} overrideUrl={logo} slug={slug} />
-  );
-}
-
-// Renders the provider logo discreetly inside the error card footer so the
-// user keeps visual context about which provider failed.
-function ProviderLogoShadow({
-  displayName,
-  logo,
-  slug,
-}: {
-  displayName: string;
-  logo: string | null;
-  slug: string;
-}) {
-  return (
-    <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-      <IntegrationLogo
-        alt={displayName}
-        className="size-4 border-0 bg-transparent"
-        overrideUrl={logo}
-        size="sm"
-        slug={slug}
-      />
-      <span>{displayName}</span>
-    </div>
-  );
-}
-

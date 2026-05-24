@@ -18,6 +18,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -81,6 +82,66 @@ function uniqueStrings(values: string[]): string[] {
 
 function providerIdForToolkit(slug: string): string {
   return slug.trim().toLowerCase();
+}
+
+const CONTEXT_FETCH_SUPPORTED_PROVIDERS = new Set([
+  "gmail",
+  "github",
+  "notion",
+  "slack",
+]);
+const CONTEXT_FETCH_TERMINAL_STATUSES = new Set([
+  "completed",
+  "failed",
+  "unsupported",
+]);
+
+function supportsContextFetchProvider(providerId: string | null | undefined): boolean {
+  return CONTEXT_FETCH_SUPPORTED_PROVIDERS.has(normalizedText(providerId).toLowerCase());
+}
+
+function contextFetchChunkTotal(status: IntegrationContextFetchStatusPayload) {
+  if (status.chunks_total > 0) {
+    return status.chunks_total;
+  }
+  if (status.status === "completed") {
+    return Math.max(status.chunks_completed, 1);
+  }
+  return 0;
+}
+
+function contextFetchProgressPercent(
+  status: IntegrationContextFetchStatusPayload,
+) {
+  const total = contextFetchChunkTotal(status);
+  if (total <= 0) {
+    return status.status === "completed" ? 100 : 0;
+  }
+  return Math.max(
+    0,
+    Math.min(100, Math.round((status.chunks_completed / total) * 100)),
+  );
+}
+
+function contextFetchDisplayMessage(
+  status: IntegrationContextFetchStatusPayload,
+) {
+  if (!status.supported) {
+    return status.reason || `${status.provider_id} context fetch is not implemented yet.`;
+  }
+  if (status.status === "failed") {
+    return status.error_message || `${status.provider_id} context fetch failed.`;
+  }
+  const label = status.account_label || status.account_key || status.provider_id;
+  if (status.status === "completed") {
+    return `Fetched ${status.provider_id} context for ${label}: ${status.messages_seen} messages scanned, ${status.leaves_created} new leaves, ${status.leaves_superseding} updated, ${status.leaves_unchanged} unchanged.`;
+  }
+  const chunkTotal = contextFetchChunkTotal(status);
+  const chunkPrefix =
+    chunkTotal > 0
+      ? `${Math.min(status.chunks_completed, chunkTotal)}/${chunkTotal} chunks`
+      : "Starting import";
+  return `${label}: ${chunkPrefix}${status.current_chunk_label ? ` - ${status.current_chunk_label}` : ""}`;
 }
 
 // Composio publishes a stable logo CDN keyed by toolkit slug — usable as
@@ -199,6 +260,10 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
   const [refreshingConnectionId, setRefreshingConnectionId] = useState<
     string | null
   >(null);
+  const [togglingContextAutoFetchConnectionId, setTogglingContextAutoFetchConnectionId] =
+    useState<string | null>(null);
+  const [contextFetchStatusByConnectionId, setContextFetchStatusByConnectionId] =
+    useState<Record<string, IntegrationContextFetchStatusPayload>>({});
   const [statusMessage, setStatusMessage] = useState("");
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [workspaceUsageByConnection, setWorkspaceUsageByConnection] = useState<
@@ -292,6 +357,66 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
   useEffect(() => {
     void loadData();
   }, [isSignedIn, loadData]);
+
+  const runningContextFetchConnectionIds = useMemo(
+    () =>
+      Object.values(contextFetchStatusByConnectionId)
+        .filter((status) => status.status === "running")
+        .map((status) => status.connection_id)
+        .sort(),
+    [contextFetchStatusByConnectionId],
+  );
+  const runningContextFetchConnectionIdsKey =
+    runningContextFetchConnectionIds.join("|");
+
+  useEffect(() => {
+    if (runningContextFetchConnectionIds.length === 0) {
+      return;
+    }
+    let cancelled = false;
+    async function pollStatuses() {
+      try {
+        const response =
+          await window.electronAPI.workspace.listIntegrationContextFetchStatuses(
+            runningContextFetchConnectionIds,
+          );
+        if (cancelled) {
+          return;
+        }
+        let completionMessage = "";
+        setContextFetchStatusByConnectionId((prev) => {
+          const next = { ...prev };
+          for (const status of response.statuses) {
+            const previous = prev[status.connection_id];
+            next[status.connection_id] = status;
+            if (
+              previous?.status === "running" &&
+              CONTEXT_FETCH_TERMINAL_STATUSES.has(status.status)
+            ) {
+              completionMessage = contextFetchDisplayMessage(status);
+            }
+          }
+          return next;
+        });
+        if (completionMessage) {
+          void loadData();
+          setStatusMessage(completionMessage);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setStatusMessage(normalizeErrorMessage(error));
+        }
+      }
+    }
+    void pollStatuses();
+    const intervalId = window.setInterval(() => {
+      void pollStatuses();
+    }, 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [loadData, runningContextFetchConnectionIds, runningContextFetchConnectionIdsKey]);
 
   // Auto-reconcile duplicates that pre-date the dedupe-on-finalize fix.
   // When the same real account got connected twice (each Composio re-auth
@@ -803,6 +928,77 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     }
   }
 
+  async function handleFetchContext(connectionId: string) {
+    setStatusMessage("");
+    try {
+      const result = await window.electronAPI.workspace.fetchIntegrationContext(
+        connectionId,
+      );
+      setContextFetchStatusByConnectionId((prev) => ({
+        ...prev,
+        [connectionId]: result.status,
+      }));
+      if (result.status.status === "completed") {
+        await loadData();
+      }
+      setStatusMessage(contextFetchDisplayMessage(result.status));
+    } catch (error) {
+      setStatusMessage(normalizeErrorMessage(error));
+    }
+  }
+
+  async function performClearIntegrationMemory(connectionId: string) {
+    setClearingIntegrationMemoryConnectionId(connectionId);
+    setStatusMessage("");
+    try {
+      const result =
+        await window.electronAPI.workspace.clearIntegrationMemory(connectionId);
+      setContextFetchStatusByConnectionId((prev) => {
+        const next = { ...prev };
+        delete next[connectionId];
+        return next;
+      });
+      await loadData();
+      setStatusMessage(
+        result.cleared
+          ? `Cleared ${result.provider_id} memory: ${result.deleted_trees} tree${result.deleted_trees === 1 ? "" : "s"}, ${result.deleted_leaves} leaves, ${result.deleted_summary_nodes} summaries.`
+          : "No stored integration memory found for this account.",
+      );
+    } catch (error) {
+      setStatusMessage(normalizeErrorMessage(error));
+    } finally {
+      setClearingIntegrationMemoryConnectionId(null);
+    }
+  }
+
+  async function handleToggleContextAutoFetch(
+    connectionId: string,
+    enabled: boolean,
+  ) {
+    setTogglingContextAutoFetchConnectionId(connectionId);
+    setStatusMessage("");
+    try {
+      const updated = await window.electronAPI.workspace.updateIntegrationConnection(
+        connectionId,
+        { context_cron_auto_fetch_enabled: enabled },
+      );
+      setConnections((prev) =>
+        prev.map((connection) =>
+          connection.connection_id === connectionId ? updated : connection,
+        ),
+      );
+      setStatusMessage(
+        enabled
+          ? "Background context fetch scheduled every 30 minutes."
+          : "Background context fetch disabled for this account.",
+      );
+    } catch (error) {
+      setStatusMessage(normalizeErrorMessage(error));
+    } finally {
+      setTogglingContextAutoFetchConnectionId(null);
+    }
+  }
+
   if (isLoading) {
     const skeletonCards = ["w-24", "w-20", "w-28", "w-16", "w-24", "w-20"];
     const skeletonGrid = (
@@ -958,6 +1154,15 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
                 onRefresh={(connectionId) =>
                   void handleRefresh(connectionId)
                 }
+                onFetchContext={(connectionId) =>
+                  void handleFetchContext(connectionId)
+                }
+                onClearIntegrationMemory={(connectionId, label) =>
+                  setPendingMemoryClear({ connectionId, label })
+                }
+                onToggleContextAutoFetch={(connectionId, enabled) =>
+                  void handleToggleContextAutoFetch(connectionId, enabled)
+                }
                 expanded={expandedProviderId === integration.providerId}
                 mutatingOverrideKey={mutatingOverrideKey}
                 onSetWorkspaceEnabled={(workspaceId, enabled) =>
@@ -973,6 +1178,15 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
                   )
                 }
                 refreshingConnectionId={refreshingConnectionId}
+                togglingContextAutoFetchConnectionId={
+                  togglingContextAutoFetchConnectionId
+                }
+                clearingIntegrationMemoryConnectionId={
+                  clearingIntegrationMemoryConnectionId
+                }
+                contextFetchStatusByConnectionId={
+                  contextFetchStatusByConnectionId
+                }
                 toolkitCapabilities={capabilitiesByToolkit[integration.providerId] ?? []}
                 toolkitOverrides={
                   overridesByToolkit.get(integration.providerId) ?? new Map()
@@ -1065,10 +1279,8 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
         }
         destructive
         onConfirm={() => {
-          // Integration-memory clear is part of the upstream integration
-          // memory graph rollout (ee6ed956) that's not wired up on this
-          // branch yet. Confirming just closes the dialog for now.
           if (pendingMemoryClear) {
+            void performClearIntegrationMemory(pendingMemoryClear.connectionId);
             setPendingMemoryClear(null);
           }
         }}
@@ -1159,6 +1371,15 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
                   onRefresh={(connectionId) =>
                     void handleRefresh(connectionId)
                   }
+                  onFetchContext={(connectionId) =>
+                    void handleFetchContext(connectionId)
+                  }
+                  onClearIntegrationMemory={(connectionId, label) =>
+                    setPendingMemoryClear({ connectionId, label })
+                  }
+                  onToggleContextAutoFetch={(connectionId, enabled) =>
+                    void handleToggleContextAutoFetch(connectionId, enabled)
+                  }
                   expanded={expandedProviderId === integration.providerId}
                   mutatingOverrideKey={mutatingOverrideKey}
                   onSetWorkspaceEnabled={(workspaceId, enabled) =>
@@ -1174,6 +1395,15 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
                     )
                   }
                   refreshingConnectionId={refreshingConnectionId}
+                  togglingContextAutoFetchConnectionId={
+                    togglingContextAutoFetchConnectionId
+                  }
+                  clearingIntegrationMemoryConnectionId={
+                    clearingIntegrationMemoryConnectionId
+                  }
+                  contextFetchStatusByConnectionId={
+                    contextFetchStatusByConnectionId
+                  }
                   toolkitCapabilities={capabilitiesByToolkit[integration.providerId] ?? []}
                   toolkitOverrides={
                     overridesByToolkit.get(integration.providerId) ?? new Map()
@@ -1253,6 +1483,26 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
           open={Boolean(pendingDisconnect)}
           title="Disconnect this account?"
         />
+        <ConfirmDialog
+          confirmLabel="Clear memory"
+          description={
+            pendingMemoryClear
+              ? `${pendingMemoryClear.label} memory will be deleted from the integration tree. The account stays connected, and you can fetch again to rebuild it.`
+              : ""
+          }
+          destructive
+          onConfirm={() => {
+            if (pendingMemoryClear) {
+              void performClearIntegrationMemory(pendingMemoryClear.connectionId);
+              setPendingMemoryClear(null);
+            }
+          }}
+          onOpenChange={(open) => {
+            if (!open) setPendingMemoryClear(null);
+          }}
+          open={Boolean(pendingMemoryClear)}
+          title="Clear this account's memory?"
+        />
         <ComposioRuntimeDebugRow
           capabilitiesByToolkit={capabilitiesByToolkit}
           connections={connections}
@@ -1296,7 +1546,13 @@ function ConnectedProviderCard({
   onConnect,
   onDisconnect,
   onRefresh,
+  onFetchContext,
+  onClearIntegrationMemory,
+  onToggleContextAutoFetch,
   refreshingConnectionId,
+  togglingContextAutoFetchConnectionId,
+  clearingIntegrationMemoryConnectionId,
+  contextFetchStatusByConnectionId,
   connecting,
   disconnectingConnectionId,
   metadata,
@@ -1317,7 +1573,19 @@ function ConnectedProviderCard({
   onConnect: () => void;
   onDisconnect: (connectionId: string) => void;
   onRefresh: (connectionId: string) => void;
+  onFetchContext: (connectionId: string) => void;
+  onClearIntegrationMemory: (connectionId: string, label: string) => void;
+  onToggleContextAutoFetch: (
+    connectionId: string,
+    enabled: boolean,
+  ) => void;
   refreshingConnectionId: string | null;
+  togglingContextAutoFetchConnectionId: string | null;
+  clearingIntegrationMemoryConnectionId: string | null;
+  contextFetchStatusByConnectionId: Record<
+    string,
+    IntegrationContextFetchStatusPayload
+  >;
   connecting: boolean;
   disconnectingConnectionId: string | null;
   metadata: Map<string, ComposioAccountStatus>;
@@ -1396,82 +1664,203 @@ function ConnectedProviderCard({
           const showAvatar = Boolean(avatarUrl) && !failedAvatar;
           const disconnecting =
             disconnectingConnectionId === conn.connection_id;
+          const contextFetchStatus =
+            contextFetchStatusByConnectionId[conn.connection_id] ?? null;
+          const fetchingContext = contextFetchStatus?.status === "running";
+          const contextFetchSupported = supportsContextFetchProvider(conn.provider_id);
+          const togglingContextAutoFetch =
+            togglingContextAutoFetchConnectionId === conn.connection_id;
+          const clearingIntegrationMemory =
+            clearingIntegrationMemoryConnectionId === conn.connection_id;
+          const fetchProgressPercent = contextFetchStatus
+            ? contextFetchProgressPercent(contextFetchStatus)
+            : 0;
+          const fetchChunkTotal = contextFetchStatus
+            ? contextFetchChunkTotal(contextFetchStatus)
+            : 0;
           const usage = workspaceUsageByConnection.get(conn.connection_id) ?? [];
           const workspaceCount = new Set(usage.map((u) => u.workspace_id)).size;
           return (
             <div
-              className="flex items-center gap-2 py-1"
+              className="py-1"
               key={conn.connection_id}
             >
-              {showAvatar ? (
-                <img
-                  alt=""
-                  className="size-3.5 shrink-0 rounded-full bg-muted object-cover"
-                  onError={() =>
-                    setFailedAvatars((prev) => {
-                      if (prev.has(conn.connection_id)) {
-                        return prev;
-                      }
-                      const next = new Set(prev);
-                      next.add(conn.connection_id);
-                      return next;
-                    })
+              <div className="flex items-center gap-2">
+                {showAvatar ? (
+                  <img
+                    alt=""
+                    className="size-3.5 shrink-0 rounded-full bg-muted object-cover"
+                    onError={() =>
+                      setFailedAvatars((prev) => {
+                        if (prev.has(conn.connection_id)) {
+                          return prev;
+                        }
+                        const next = new Set(prev);
+                        next.add(conn.connection_id);
+                        return next;
+                      })
+                    }
+                    // Google's lh3.googleusercontent.com CDN rejects requests
+                    // with a localhost / app referrer; this header strips it.
+                    referrerPolicy="no-referrer"
+                    src={avatarUrl}
+                  />
+                ) : (
+                  <span className="flex size-3.5 shrink-0 items-center justify-center rounded-full bg-muted text-[8px] font-semibold text-muted-foreground">
+                    {fallbackChar}
+                  </span>
+                )}
+                <span className="min-w-0 flex-1 truncate text-xs text-foreground">
+                  {label}
+                </span>
+                {workspaceCount > 0 ? (
+                  <span
+                    className="shrink-0 text-[10px] text-muted-foreground"
+                    title={`Bound in ${workspaceCount} workspace${workspaceCount === 1 ? "" : "s"}`}
+                  >
+                    {workspaceCount}w
+                  </span>
+                ) : null}
+                <Button
+                  aria-label={`Fetch ${label} context`}
+                  className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-foreground"
+                  disabled={
+                    disconnecting ||
+                    clearingIntegrationMemory ||
+                    fetchingContext ||
+                    !contextFetchSupported
                   }
-                  // Google's lh3.googleusercontent.com CDN rejects requests
-                  // with a localhost / app referrer; this header strips it.
-                  referrerPolicy="no-referrer"
-                  src={avatarUrl}
-                />
-              ) : (
-                <span className="flex size-3.5 shrink-0 items-center justify-center rounded-full bg-muted text-[8px] font-semibold text-muted-foreground">
-                  {fallbackChar}
-                </span>
-              )}
-              <span className="min-w-0 flex-1 truncate text-xs text-foreground">
-                {label}
-              </span>
-              {workspaceCount > 0 ? (
-                <span
-                  className="shrink-0 text-[10px] text-muted-foreground"
-                  title={`Bound in ${workspaceCount} workspace${workspaceCount === 1 ? "" : "s"}`}
+                  onClick={() => onFetchContext(conn.connection_id)}
+                  title={
+                    contextFetchSupported
+                      ? "Fetch integration context into the memory tree"
+                      : "Context fetch is not implemented for this provider yet."
+                  }
+                  size="sm"
+                  type="button"
+                  variant="ghost"
                 >
-                  {workspaceCount}w
-                </span>
+                  {fetchingContext ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    "Fetch"
+                  )}
+                </Button>
+                <Button
+                  aria-label={`Clear ${label} memory`}
+                  className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-destructive"
+                  disabled={disconnecting || clearingIntegrationMemory || fetchingContext}
+                  onClick={() =>
+                    onClearIntegrationMemory(conn.connection_id, label)
+                  }
+                  title="Delete the stored memory tree for this account without disconnecting it"
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  {clearingIntegrationMemory ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <Trash2 className="size-3" />
+                  )}
+                </Button>
+                <Button
+                  aria-label={`Refresh ${label} identity`}
+                  title="Refetch handle, email, and avatar from the provider"
+                  className="text-muted-foreground hover:text-foreground"
+                  disabled={
+                    disconnecting ||
+                    clearingIntegrationMemory ||
+                    refreshingConnectionId === conn.connection_id
+                  }
+                  onClick={() => onRefresh(conn.connection_id)}
+                  size="icon-xs"
+                  type="button"
+                  variant="ghost"
+                >
+                  {refreshingConnectionId === conn.connection_id ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="size-3" />
+                  )}
+                </Button>
+                <Button
+                  aria-label={`Disconnect ${label}`}
+                  className="text-muted-foreground hover:text-destructive"
+                  disabled={disconnecting || clearingIntegrationMemory}
+                  onClick={() => onDisconnect(conn.connection_id)}
+                  size="icon-xs"
+                  type="button"
+                  variant="ghost"
+                >
+                  {disconnecting ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <Unplug className="size-3" />
+                  )}
+                </Button>
+              </div>
+              {contextFetchSupported ? (
+                <div className="ml-[22px] mt-1.5 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                      Auto-fetch every 30 min
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      Runs in the background for this account.
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {togglingContextAutoFetch ? (
+                      <Loader2 className="size-3 animate-spin text-muted-foreground" />
+                    ) : null}
+                    <Switch
+                      aria-label={`Auto-fetch ${label} context every 30 minutes`}
+                      checked={conn.context_cron_auto_fetch_enabled !== false}
+                      disabled={disconnecting || clearingIntegrationMemory || togglingContextAutoFetch}
+                      onCheckedChange={(checked) =>
+                        onToggleContextAutoFetch(conn.connection_id, checked)
+                      }
+                    />
+                  </div>
+                </div>
               ) : null}
-              <Button
-                aria-label={`Refresh ${label} identity`}
-                title="Refetch handle, email, and avatar from the provider"
-                className="text-muted-foreground hover:text-foreground"
-                disabled={
-                  disconnecting ||
-                  refreshingConnectionId === conn.connection_id
-                }
-                onClick={() => onRefresh(conn.connection_id)}
-                size="icon-xs"
-                type="button"
-                variant="ghost"
-              >
-                {refreshingConnectionId === conn.connection_id ? (
-                  <Loader2 className="size-3 animate-spin" />
-                ) : (
-                  <RefreshCw className="size-3" />
-                )}
-              </Button>
-              <Button
-                aria-label={`Disconnect ${label}`}
-                className="text-muted-foreground hover:text-destructive"
-                disabled={disconnecting}
-                onClick={() => onDisconnect(conn.connection_id)}
-                size="icon-xs"
-                type="button"
-                variant="ghost"
-              >
-                {disconnecting ? (
-                  <Loader2 className="size-3 animate-spin" />
-                ) : (
-                  <Unplug className="size-3" />
-                )}
-              </Button>
+              {contextFetchStatus ? (
+                <div className="ml-[22px] mt-2 rounded-lg border border-border/60 bg-background/70 px-2.5 py-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+                      {contextFetchStatus.current_chunk_label ||
+                        contextFetchDisplayMessage(contextFetchStatus)}
+                    </p>
+                    <span className="shrink-0 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                      {contextFetchStatus.status}
+                    </span>
+                  </div>
+                  {contextFetchStatus.supported ? (
+                    <>
+                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full rounded-full bg-foreground transition-[width] duration-300"
+                          style={{ width: `${fetchProgressPercent}%` }}
+                        />
+                      </div>
+                      <p className="mt-2 text-[10px] leading-4 text-muted-foreground">
+                        {fetchChunkTotal > 0
+                          ? `${Math.min(contextFetchStatus.chunks_completed, fetchChunkTotal)}/${fetchChunkTotal} chunks`
+                          : "Waiting for chunk progress"}
+                        {contextFetchStatus.error_message
+                          ? ` - ${contextFetchStatus.error_message}`
+                          : ""}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="mt-2 text-[10px] leading-4 text-muted-foreground">
+                      {contextFetchStatus.reason ||
+                        "Context fetch is not available yet for this provider."}
+                    </p>
+                  )}
+                </div>
+              ) : null}
             </div>
           );
         })}
@@ -1796,4 +2185,3 @@ function ComposioRuntimeDebugRow({
     </div>
   );
 }
-
