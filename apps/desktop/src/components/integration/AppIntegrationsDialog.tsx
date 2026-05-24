@@ -1,6 +1,9 @@
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
+import { useSetAtom } from "jotai";
 import { Check, Link2, Loader2, Plus, RotateCw, X } from "lucide-react";
+import { useEffect } from "react";
 import { IntegrationLogo } from "@/components/integration/IntegrationLogo";
+import { overlayOpenCountAtom } from "@/components/layout/new-shell/overlay-presence";
 import { Button } from "@/components/ui/button";
 import { useIntegrationBinding } from "@/lib/useIntegrationBinding";
 import { cn } from "@/lib/utils";
@@ -37,6 +40,20 @@ export function AppIntegrationsDialog({
   appName: string;
   integrations: AppIntegrationsDialogIntegration[];
 }) {
+  // Bump the new-shell overlay counter while the dialog is open so
+  // BrowserPane detaches its native BrowserView (collapses to 0x0). The
+  // OS-level webview composites above the renderer and would otherwise
+  // paint over the dialog, swallowing clicks — same pattern as
+  // SuspendingPopover / SuspendingDropdownMenu wrappers.
+  const setOverlayCount = useSetAtom(overlayOpenCountAtom);
+  useEffect(() => {
+    if (!open) return;
+    setOverlayCount((c) => c + 1);
+    return () => {
+      setOverlayCount((c) => Math.max(0, c - 1));
+    };
+  }, [open, setOverlayCount]);
+
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
