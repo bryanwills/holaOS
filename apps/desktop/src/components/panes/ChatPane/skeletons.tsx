@@ -61,6 +61,20 @@ export function IntegrationErrorBanner({ details }: { details: string[] }) {
 function isIntegrationError(
   text: string,
 ): { provider: string; action: string } | null {
+  // Structured marker emitted by the Composio MCP host runtime
+  // (composio-mcp-host.ts). Format: [composio_error:CODE:TOOLKIT_SLUG]
+  // Recognized first because it carries code + toolkit explicitly.
+  const structured = /\[composio_error:([a-z_]+)(?::([a-z0-9_-]+))?\]/i.exec(text);
+  if (structured) {
+    const code = (structured[1] ?? "").toLowerCase();
+    const slug = (structured[2] ?? "").toLowerCase();
+    const provider = providerDisplayNameFromSlug(slug);
+    return {
+      provider,
+      action: composioErrorAction(code, provider),
+    };
+  }
+
   const patterns: Array<{ pattern: RegExp; provider: string }> = [
     { pattern: /no\s+google\s+token/i, provider: "Google" },
     { pattern: /no\s+github\s+token/i, provider: "GitHub" },
@@ -82,4 +96,53 @@ function isIntegrationError(
     }
   }
   return null;
+}
+
+const TOOLKIT_DISPLAY_NAMES: Record<string, string> = {
+  gmail: "Gmail",
+  google: "Google",
+  googlecalendar: "Google Calendar",
+  googledrive: "Google Drive",
+  github: "GitHub",
+  reddit: "Reddit",
+  twitter: "Twitter",
+  linkedin: "LinkedIn",
+  slack: "Slack",
+  notion: "Notion",
+  hubspot: "HubSpot",
+  salesforce: "Salesforce",
+  dropbox: "Dropbox",
+  figma: "Figma",
+  asana: "Asana",
+  jira: "Jira",
+  intercom: "Intercom",
+  zendesk: "Zendesk",
+  stripe: "Stripe",
+  airtable: "Airtable",
+  calendly: "Calendly",
+};
+
+function providerDisplayNameFromSlug(slug: string): string {
+  if (!slug) return "this provider";
+  const known = TOOLKIT_DISPLAY_NAMES[slug];
+  if (known) return known;
+  return slug.charAt(0).toUpperCase() + slug.slice(1);
+}
+
+function composioErrorAction(code: string, provider: string): string {
+  switch (code) {
+    case "connection_expired":
+    case "connection_not_authorized":
+      return `Reconnect ${provider} in the Integrations tab`;
+    case "rate_limited":
+      return `${provider} is busy — try again in a minute`;
+    case "not_configured":
+      return `${provider} isn't set up yet — open the Integrations tab to connect`;
+    case "not_found":
+      return `${provider} couldn't find the requested item`;
+    case "tool_failed":
+      return `${provider} returned an error — see details below`;
+    default:
+      return `Connect ${provider} in the Integrations tab`;
+  }
 }
