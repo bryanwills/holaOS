@@ -1859,6 +1859,7 @@ interface RuntimeNotificationListOptionsPayload {
     };
     app: {
       relaunch: () => Promise<void>;
+      onCloseActiveTab: (listener: () => void) => () => void;
     };
     runtime: {
       getStatus: () => Promise<RuntimeStatusPayload>;
@@ -2211,6 +2212,21 @@ interface RuntimeNotificationListOptionsPayload {
       onAuthenticated: (callback: (user: AuthUserPayload) => unknown) => () => void;
       onUserUpdated: (callback: (user: AuthUserPayload | null) => unknown) => () => void;
       onError: (callback: (context: AuthErrorPayload) => unknown) => () => void;
+    };
+    tabs: {
+      showContextMenu: (opts: {
+        canCloseLeft: boolean;
+        canCloseRight: boolean;
+        canCloseOthers: boolean;
+        hasDeleteFile: boolean;
+      }) => Promise<
+        | "close"
+        | "closeOthers"
+        | "closeToLeft"
+        | "closeToRight"
+        | "deleteFile"
+        | null
+      >;
     };
     browser: {
       setActiveWorkspace: (

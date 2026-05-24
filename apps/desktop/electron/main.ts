@@ -22549,6 +22549,23 @@ function installMacApplicationMenu() {
       ],
     },
     {
+      label: "File",
+      submenu: [
+        {
+          label: "Close Tab",
+          accelerator: "CmdOrCtrl+W",
+          click: () => {
+            mainWindow?.webContents.send("app:closeActiveTab");
+          },
+        },
+        {
+          label: "Close Window",
+          accelerator: "CmdOrCtrl+Shift+W",
+          role: "close",
+        },
+      ],
+    },
+    {
       label: "Edit",
       submenu: [
         { label: "Undo", role: "undo" },
@@ -24371,6 +24388,73 @@ app.whenReady().then(async () => {
     "diagnostics:revealBundle",
     ["main"],
     async (_event, targetPath: string) => revealDiagnosticsBundle(targetPath),
+  );
+  handleTrustedIpc(
+    "tabs:showContextMenu",
+    ["main"],
+    async (
+      event,
+      opts: {
+        canCloseLeft: boolean;
+        canCloseRight: boolean;
+        canCloseOthers: boolean;
+        hasDeleteFile: boolean;
+      },
+    ): Promise<
+      | "close"
+      | "closeOthers"
+      | "closeToLeft"
+      | "closeToRight"
+      | "deleteFile"
+      | null
+    > => {
+      type Action =
+        | "close"
+        | "closeOthers"
+        | "closeToLeft"
+        | "closeToRight"
+        | "deleteFile";
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (!win) return null;
+      return new Promise<Action | null>((resolve) => {
+        let settled = false;
+        const finish = (action: Action | null) => {
+          if (settled) return;
+          settled = true;
+          resolve(action);
+        };
+        const template: MenuItemConstructorOptions[] = [
+          {
+            label: "Close tab",
+            accelerator: "CmdOrCtrl+W",
+            click: () => finish("close"),
+          },
+          {
+            label: "Close others",
+            enabled: opts.canCloseOthers,
+            click: () => finish("closeOthers"),
+          },
+          {
+            label: "Close tabs to the left",
+            enabled: opts.canCloseLeft,
+            click: () => finish("closeToLeft"),
+          },
+          {
+            label: "Close tabs to the right",
+            enabled: opts.canCloseRight,
+            click: () => finish("closeToRight"),
+          },
+        ];
+        if (opts.hasDeleteFile) {
+          template.push(
+            { type: "separator" },
+            { label: "Delete file…", click: () => finish("deleteFile") },
+          );
+        }
+        const menu = Menu.buildFromTemplate(template);
+        menu.popup({ window: win, callback: () => finish(null) });
+      });
+    },
   );
   installBrowserPaneIpcHandlers({
     ipcMain,
