@@ -22364,6 +22364,14 @@ function showNativeDesktopNotification(
       silent: false,
     });
     let settled = false;
+    let usedFallback = false;
+    const closeNativeNotification = () => {
+      try {
+        notification.close();
+      } catch {
+        // Notification may already be closed; ignore.
+      }
+    };
     const settle = (value: boolean) => {
       if (settled) {
         return;
@@ -22379,6 +22387,9 @@ function showNativeDesktopNotification(
         settle(false);
         return;
       }
+      // Suppress the native notification so it can't appear alongside the AppleScript one.
+      usedFallback = true;
+      closeNativeNotification();
       logNativeDesktopNotificationEvent("dev_fallback_attempt", {
         title,
         body,
@@ -22404,6 +22415,17 @@ function showNativeDesktopNotification(
     }, 1500);
     notification.on("show", () => {
       clearTimeout(showTimeout);
+      if (usedFallback) {
+        // Native notification arrived after we already triggered the dev fallback —
+        // dismiss it so the user doesn't see two notifications for the same event.
+        logNativeDesktopNotificationEvent("late_show_suppressed", {
+          title,
+          body,
+          force: payload.force,
+        });
+        closeNativeNotification();
+        return;
+      }
       logNativeDesktopNotificationEvent("shown", {
         title,
         body,
