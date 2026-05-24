@@ -8475,6 +8475,16 @@ export function ChatPane({
   ]);
 
   useEffect(() => {
+    // Don't auto-rewrite the saved preference while runtimeConfig hasn't
+    // finished loading. During the brief window between mount and the
+    // runtime/getConfig() resolution, effectiveChatModelPreference falls
+    // back to runtime default (e.g. GPT-5.5) because the provider catalog
+    // hasn't arrived yet — without this guard we overwrite the user's
+    // actual choice in localStorage with __runtime_default__ on every
+    // launch, which is exactly the "always reverts to GPT-5.5 after a
+    // restart" bug. Once runtimeConfig is non-null the auto-sync resumes
+    // its original role of fixing genuinely-stale preferences.
+    if (!runtimeConfig) return;
     if (!effectiveChatModelPreference) {
       return;
     }
@@ -8482,7 +8492,7 @@ export function ChatPane({
       return;
     }
     setChatModelPreference(effectiveChatModelPreference);
-  }, [chatModelPreference, effectiveChatModelPreference]);
+  }, [chatModelPreference, effectiveChatModelPreference, runtimeConfig]);
 
   useEffect(() => {
     if (!resolvedChatModel || !effectiveThinkingValue) {
