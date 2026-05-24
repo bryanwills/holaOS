@@ -6,7 +6,9 @@ import {
   resolveIntegrationError,
 } from "@/lib/integrationErrorMessages";
 import { toolkitDisplayName } from "@/lib/toolkitDisplay";
+import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import {
+  composioToolkitMatchesProvider,
   IntegrationConnectCancelled,
   useWorkspaceDesktop,
 } from "@/lib/workspaceDesktop";
@@ -154,6 +156,7 @@ function IntegrationErrorBannerBody({
   });
 
   const { connectIntegrationProvider } = useWorkspaceDesktop();
+  const { selectedWorkspaceId } = useWorkspaceSelection();
   const [phase, setPhase] = useState<"idle" | "connecting" | "done" | "error">(
     "idle",
   );
@@ -179,11 +182,25 @@ function IntegrationErrorBannerBody({
     setReconnectError(null);
     setPhase("connecting");
     try {
-      await connectIntegrationProvider({
+      const { connectionId } = await connectIntegrationProvider({
         provider: parsed.slug,
         accountLabel: `${displayName} (Managed)`,
         signal: controller.signal,
       });
+      // OAuth alone isn't enough: workspace apps capture HOLABOSS_APP_GRANT
+      // at boot pointing at the OLD (now-expired) connection. The agent's
+      // direct Composio path is restarted automatically via
+      // onConnectionActive, but per-app bindings are NOT — apps that were
+      // bound to the previous connection keep using a dead grant until
+      // someone rebinds them. Mirror what useIntegrationBinding does for
+      // every app binding in this workspace that matches the failing slug.
+      if (selectedWorkspaceId && !controller.signal.aborted) {
+        await rebindWorkspaceAppsForProvider({
+          workspaceId: selectedWorkspaceId,
+          provider: parsed.slug,
+          connectionId,
+        });
+      }
       setPhase("done");
     } catch (err) {
       if (err instanceof IntegrationConnectCancelled) {
@@ -288,6 +305,62 @@ function IntegrationErrorBannerBody({
       ) : null}
     </div>
   );
+}
+
+/**
+ * After a successful inline reconnect, migrate every app-scoped binding in
+ * this workspace that points at the failing provider to the freshly-issued
+ * connection, then restart each affected app so it re-captures the new
+ * HOLABOSS_APP_GRANT at boot. Mirrors the post-bind cascade that
+ * useIntegrationBinding does for the IntegrationConnectCard flow.
+ *
+ * Failures are best-effort — partial success is better than nothing, since
+ * the user already sees a "reconnected" confirmation and would otherwise
+ * have to manually rebind each app via the integration picker.
+ */
+async function rebindWorkspaceAppsForProvider(params: {
+  workspaceId: string;
+  provider: string;
+  connectionId: string;
+}): Promise<void> {
+  const { workspaceId, provider, connectionId } = params;
+  let bindings: IntegrationBindingPayload[];
+  try {
+    const result = await window.electronAPI.workspace.listIntegrationBindings(
+      workspaceId,
+    );
+    bindings = result.bindings ?? [];
+  } catch {
+    return;
+  }
+  const matches = bindings.filter(
+    (b) =>
+      b.target_type === "app" &&
+      composioToolkitMatchesProvider(b.integration_key, provider),
+  );
+  for (const binding of matches) {
+    if (binding.connection_id === connectionId) continue;
+    try {
+      await window.electronAPI.workspace.upsertIntegrationBinding(
+        workspaceId,
+        "app",
+        binding.target_id,
+        binding.integration_key,
+        { connection_id: connectionId },
+      );
+    } catch {
+      continue;
+    }
+    try {
+      await window.electronAPI.workspace.restartApp(
+        workspaceId,
+        binding.target_id,
+      );
+    } catch {
+      // The app may not be running yet — next agent invocation will pick
+      // up the fresh grant on boot.
+    }
+  }
 }
 
 // Format emitted by composio-mcp-host.ts: [composio_error:CODE:SLUG]
