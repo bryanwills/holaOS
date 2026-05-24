@@ -37,6 +37,7 @@ import {
   FileType,
   Folder,
   Globe,
+  CircleAlert,
   Image as ImageIcon,
   Inbox,
   Bot,
@@ -691,6 +692,18 @@ function parseOnboardingAlignmentQuestion(
 
 function optionalHistoryLoadErrorMessage(label: string, error: unknown) {
   return `${label} unavailable: ${normalizeErrorMessage(error)}`;
+}
+
+function OnboardingInlineError({ message }: { message: string }) {
+  return (
+    <div className="flex items-start gap-2.5 rounded-lg border border-destructive/30 bg-destructive/[0.04] px-3 py-2 text-xs">
+      <CircleAlert
+        className="mt-px size-3.5 shrink-0 text-destructive"
+        strokeWidth={2}
+      />
+      <span className="leading-relaxed text-muted-foreground">{message}</span>
+    </div>
+  );
 }
 
 function serializedOnboardingQuestionKey(value: unknown) {
@@ -7974,9 +7987,7 @@ export function ChatPane({
             </div>
           ) : null}
           {onboardingQuestionError ? (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-              {onboardingQuestionError}
-            </div>
+            <OnboardingInlineError message={onboardingQuestionError} />
           ) : null}
           {isReadOnlyInspectionSession ? (
             <div className="text-xs text-muted-foreground">
@@ -8077,9 +8088,7 @@ export function ChatPane({
             </>
           )}
           {onboardingReviewActionError ? (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-              {onboardingReviewActionError}
-            </div>
+            <OnboardingInlineError message={onboardingReviewActionError} />
           ) : null}
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -8175,9 +8184,7 @@ export function ChatPane({
             </>
           )}
           {onboardingReviewActionError ? (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-              {onboardingReviewActionError}
-            </div>
+            <OnboardingInlineError message={onboardingReviewActionError} />
           ) : null}
           <div className="flex flex-wrap items-center gap-2">
             <Button
