@@ -109,7 +109,10 @@ import {
   pushRendererSentryActivity,
   useRendererSentrySection,
 } from "@/lib/rendererSentry";
-import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
+import {
+  composioToolkitMatchesProvider,
+  useWorkspaceDesktop,
+} from "@/lib/workspaceDesktop";
 import {
   listWorkspaceFiles,
   type WorkspaceFileEntry,
@@ -692,6 +695,25 @@ function parseOnboardingAlignmentQuestion(
 
 function optionalHistoryLoadErrorMessage(label: string, error: unknown) {
   return `${label} unavailable: ${normalizeErrorMessage(error)}`;
+}
+
+/**
+ * Walks the assistant turn history newest-to-oldest and returns the first
+ * non-empty `pendingIntegrations` array. That's the set we treat as the
+ * "frontier" — older turns either resolved their pending set or were
+ * superseded by a fresher emit. Returns [] when no turn has surfaced any.
+ */
+function findFrontierPendingIntegrations(
+  messages: ChatMessage[],
+): ChatPendingIntegration[] {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    const pending = message?.pendingIntegrations;
+    if (pending && pending.length > 0) {
+      return pending;
+    }
+  }
+  return [];
 }
 
 function OnboardingInlineError({ message }: { message: string }) {
@@ -6469,6 +6491,43 @@ export function ChatPane({
   async function handleAfterIntegrationBind() {
     const sessionId = activeSessionIdRef.current || activeSessionId;
     if (!selectedWorkspaceId || !sessionId) return;
+
+    // Don't dispatch "continue" until EVERY (app, provider) the agent
+    // surfaced this turn has a matching app binding. Otherwise binding the
+    // first card immediately resumes the agent, which then hits a missing-
+    // grant error on the still-unbound providers (e.g. user clicks Twitter
+    // → continue → agent tries Gmail → "no Gmail token"). The frontier set
+    // is the most recent assistant message that emitted pending entries —
+    // older messages were already resolved or superseded.
+    const frontier = findFrontierPendingIntegrations(messages);
+    if (frontier.length > 0) {
+      try {
+        const { bindings } =
+          await window.electronAPI.workspace.listIntegrationBindings(
+            selectedWorkspaceId,
+          );
+        const stillUnbound = frontier.filter((entry) => {
+          const entryApp = entry.app_id.trim().toLowerCase();
+          const entryProvider = entry.provider_id.trim().toLowerCase();
+          return !bindings.some(
+            (b) =>
+              b.target_type === "app" &&
+              b.target_id.trim().toLowerCase() === entryApp &&
+              composioToolkitMatchesProvider(b.integration_key, entryProvider),
+          );
+        });
+        if (stillUnbound.length > 0) {
+          // More cards to go — leave the assistant turn paused so the user
+          // can complete the remaining ones. The next onAfterBind will
+          // re-evaluate.
+          return;
+        }
+      } catch {
+        // Treat the listing failure as "best-effort continue" — better to
+        // run the agent and surface a real error than to wedge here.
+      }
+    }
+
     try {
       await window.electronAPI.workspace.queueSessionInput({
         workspace_id: selectedWorkspaceId,
