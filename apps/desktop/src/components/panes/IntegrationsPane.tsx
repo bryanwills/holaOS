@@ -3,12 +3,19 @@ import {
   Check,
   Loader2,
   LogIn,
+  MoreHorizontal,
   Plus,
   RefreshCw,
   ShieldAlert,
   Trash2,
   Unplug,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { AddIntegrationDialog } from "@/components/panes/AddIntegrationDialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
@@ -18,7 +25,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -1714,11 +1720,10 @@ function ConnectedProviderCard({
                   {label}
                 </span>
                 {workspaceCount > 0 ? (
-                  <span
-                    className="shrink-0 text-[10px] text-muted-foreground"
-                    title={`Bound in ${workspaceCount} workspace${workspaceCount === 1 ? "" : "s"}`}
-                  >
-                    {workspaceCount}w
+                  <span className="shrink-0 text-[10px] text-muted-foreground">
+                    {workspaceCount === 1
+                      ? "1 workspace"
+                      : `${workspaceCount} workspaces`}
                   </span>
                 ) : null}
                 <Button
@@ -1799,32 +1804,36 @@ function ConnectedProviderCard({
                     <Unplug className="size-3" />
                   )}
                 </Button>
-              </div>
-              {contextFetchSupported ? (
-                <div className="ml-[22px] mt-1.5 flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-                      Auto-fetch every 30 min
-                    </p>
-                    <p className="text-[10px] text-muted-foreground">
-                      Runs in the background for this account.
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    {togglingContextAutoFetch ? (
-                      <Loader2 className="size-3 animate-spin text-muted-foreground" />
-                    ) : null}
-                    <Switch
-                      aria-label={`Auto-fetch ${label} context every 30 minutes`}
-                      checked={conn.context_cron_auto_fetch_enabled !== false}
-                      disabled={disconnecting || clearingIntegrationMemory || togglingContextAutoFetch}
-                      onCheckedChange={(checked) =>
-                        onToggleContextAutoFetch(conn.connection_id, checked)
+                {contextFetchSupported ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <Button
+                          aria-label={`More options for ${label}`}
+                          className="text-muted-foreground hover:text-foreground"
+                          disabled={disconnecting || clearingIntegrationMemory}
+                          size="icon-xs"
+                          type="button"
+                          variant="ghost"
+                        >
+                          <MoreHorizontal className="size-3" />
+                        </Button>
                       }
                     />
-                  </div>
-                </div>
-              ) : null}
+                    <DropdownMenuContent align="end" className="min-w-[220px]">
+                      <DropdownMenuCheckboxItem
+                        checked={conn.context_cron_auto_fetch_enabled !== false}
+                        disabled={togglingContextAutoFetch}
+                        onCheckedChange={(checked) =>
+                          onToggleContextAutoFetch(conn.connection_id, checked)
+                        }
+                      >
+                        Auto-fetch every 30 min
+                      </DropdownMenuCheckboxItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : null}
+              </div>
               {contextFetchStatus ? (
                 <div className="ml-[22px] mt-2 rounded-lg border border-border/60 bg-background/70 px-2.5 py-2">
                   <div className="flex items-center justify-between gap-3">
