@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { DotmSquare3 } from "@/components/ui/dotm-square-3";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
-import { IntegrationErrorBanner } from "../skeletons";
+import { TraceStepErrorPresentation } from "../skeletons";
 import type { ChatTraceStep } from "../types";
 
 export function LiveStatusEllipsis() {
@@ -88,16 +88,25 @@ export function TraceTimelineStepEntry({
           />
         ) : null}
       </button>
-      {expanded && step.details.length > 1 ? (
+      {expanded && step.details.length > 1 && !suppressLegacyDetails(step) ? (
         <div className="ml-6 mt-0.5 mb-1 rounded-md border border-border bg-muted px-3 py-2 text-xs leading-5 text-muted-foreground whitespace-pre-wrap">
           {step.details.slice(1).join("\n")}
         </div>
       ) : null}
       {step.status === "error" ? (
-        <IntegrationErrorBanner details={step.details} />
+        <TraceStepErrorPresentation details={step.details} />
       ) : null}
     </div>
   );
+}
+
+// For error steps, TraceStepErrorPresentation surfaces the raw text under
+// its own "Show technical details" disclosure (GenericToolFailureBanner) or
+// hides it entirely when the integration banner takes over — skip the
+// legacy collapsed box either way so users don't see two copies of the
+// same dump.
+function suppressLegacyDetails(step: ChatTraceStep): boolean {
+  return step.status === "error";
 }
 
 export function ExecutionTimelineThinkingEntry({
