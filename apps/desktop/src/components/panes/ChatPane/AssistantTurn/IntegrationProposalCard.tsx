@@ -1,5 +1,5 @@
 import { Check, LoaderCircle, Plug } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 
@@ -62,6 +62,36 @@ function IntegrationProposalCard({
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // The propose_connect card hangs around in chat history. If the user
+  // already authorized this toolkit (via the IntegrationConnectCard binding
+  // flow, the integrations pane, or any earlier propose_connect), the
+  // "Bound to {appId}" card above us is now the truthful indicator —
+  // surfacing a duplicate "Connect {provider}" here just confuses the user.
+  // Check live connections on mount; suppress this card entirely when
+  // already-connected.
+  const [alreadyConnected, setAlreadyConnected] = useState<boolean | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { connections } =
+          await window.electronAPI.workspace.listIntegrationConnections();
+        if (cancelled) return;
+        const active = connections.some(
+          (c) =>
+            c.provider_id.trim().toLowerCase() === slug &&
+            c.status === "active",
+        );
+        setAlreadyConnected(active);
+      } catch {
+        if (!cancelled) setAlreadyConnected(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [slug]);
+
   const handleConnect = async () => {
     if (!workspaceId) {
       setErrorMessage("Open a workspace before connecting.");
@@ -83,6 +113,12 @@ function IntegrationProposalCard({
       setPhase("error");
     }
   };
+
+  // Suppress entirely when the toolkit is already connected via another
+  // path. Wait for the readiness check before rendering anything, otherwise
+  // the Connect button flashes before disappearing.
+  if (alreadyConnected === null) return null;
+  if (alreadyConnected && phase !== "done") return null;
 
   if (phase === "done") {
     return (
