@@ -62,13 +62,11 @@ function IntegrationProposalCard({
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // The propose_connect card hangs around in chat history. If the user
-  // already authorized this toolkit (via the IntegrationConnectCard binding
-  // flow, the integrations pane, or any earlier propose_connect), the
-  // "Bound to {appId}" card above us is now the truthful indicator —
-  // surfacing a duplicate "Connect {provider}" here just confuses the user.
-  // Check live connections on mount; suppress this card entirely when
-  // already-connected.
+  // Local `phase` resets to "idle" on every mount, so the post-connect "done"
+  // confirmation would vanish on app restart. Source the connected-state from
+  // the live integration_connections store instead — the table is the single
+  // truth, and the card stays consistent across restarts, sessions, and
+  // out-of-band disconnects.
   const [alreadyConnected, setAlreadyConnected] = useState<boolean | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -114,13 +112,11 @@ function IntegrationProposalCard({
     }
   };
 
-  // Suppress entirely when the toolkit is already connected via another
-  // path. Wait for the readiness check before rendering anything, otherwise
-  // the Connect button flashes before disappearing.
+  // Wait for the readiness check before rendering, otherwise the Connect
+  // button flashes before flipping to the connected state.
   if (alreadyConnected === null) return null;
-  if (alreadyConnected && phase !== "done") return null;
 
-  if (phase === "done") {
+  if (phase === "done" || alreadyConnected) {
     return (
       <div className="flex max-w-[420px] items-center gap-3 rounded-xl border border-border bg-card px-3 py-2.5 text-sm">
         <div className="grid size-7 shrink-0 place-items-center rounded-md bg-emerald-500/15 text-emerald-600">
