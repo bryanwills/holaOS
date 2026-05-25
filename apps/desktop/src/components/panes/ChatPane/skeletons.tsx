@@ -8,10 +8,10 @@ import {
 import { toolkitDisplayName } from "@/lib/toolkitDisplay";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import {
-  composioToolkitMatchesProvider,
   IntegrationConnectCancelled,
   useWorkspaceDesktop,
 } from "@/lib/workspaceDesktop";
+import { rebindWorkspaceAppsForProvider } from "@/lib/rebindWorkspaceAppsForProvider";
 
 export function HistoryRestoreSkeleton() {
   return (
@@ -305,62 +305,6 @@ function IntegrationErrorBannerBody({
       ) : null}
     </div>
   );
-}
-
-/**
- * After a successful inline reconnect, migrate every app-scoped binding in
- * this workspace that points at the failing provider to the freshly-issued
- * connection, then restart each affected app so it re-captures the new
- * HOLABOSS_APP_GRANT at boot. Mirrors the post-bind cascade that
- * useIntegrationBinding does for the IntegrationConnectCard flow.
- *
- * Failures are best-effort — partial success is better than nothing, since
- * the user already sees a "reconnected" confirmation and would otherwise
- * have to manually rebind each app via the integration picker.
- */
-async function rebindWorkspaceAppsForProvider(params: {
-  workspaceId: string;
-  provider: string;
-  connectionId: string;
-}): Promise<void> {
-  const { workspaceId, provider, connectionId } = params;
-  let bindings: IntegrationBindingPayload[];
-  try {
-    const result = await window.electronAPI.workspace.listIntegrationBindings(
-      workspaceId,
-    );
-    bindings = result.bindings ?? [];
-  } catch {
-    return;
-  }
-  const matches = bindings.filter(
-    (b) =>
-      b.target_type === "app" &&
-      composioToolkitMatchesProvider(b.integration_key, provider),
-  );
-  for (const binding of matches) {
-    if (binding.connection_id === connectionId) continue;
-    try {
-      await window.electronAPI.workspace.upsertIntegrationBinding(
-        workspaceId,
-        "app",
-        binding.target_id,
-        binding.integration_key,
-        { connection_id: connectionId },
-      );
-    } catch {
-      continue;
-    }
-    try {
-      await window.electronAPI.workspace.restartApp(
-        workspaceId,
-        binding.target_id,
-      );
-    } catch {
-      // The app may not be running yet — next agent invocation will pick
-      // up the fresh grant on boot.
-    }
-  }
 }
 
 // Format emitted by composio-mcp-host.ts: [composio_error:CODE:SLUG]
