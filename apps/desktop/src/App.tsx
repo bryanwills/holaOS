@@ -87,11 +87,15 @@ function App() {
           </RequireAuth>
         </TooltipProvider>
         <Toaster
-          position="bottom-right"
+          // top-center on purpose: the right and right-bottom areas often
+          // sit underneath a BrowserView (workspace browser pane) which
+          // is an OS-level overlay above the HTML renderer — anything
+          // sonner portals there gets visually clipped or hidden behind
+          // it, and z-index can't beat a BrowserView. Top-center is
+          // always pure HTML, can't be covered.
+          position="top-center"
           richColors
           closeButton
-          // Match the desktop's dark-mode default; sonner picks system if
-          // we leave it unset, but the rest of the app forces dark.
           theme="dark"
         />
       </QueryClientProvider>
