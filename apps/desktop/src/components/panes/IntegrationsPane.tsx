@@ -1005,10 +1005,22 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
         });
         return;
       }
-      // `no_new_identity` / `no_external_id` / any future quiet outcome
-      // are deliberately silent — the Refresh button stopped spinning, the
-      // user has their feedback. Toasting "nothing changed" trains people
-      // to ignore the toast channel, so we save it for real signals.
+      if (result.reason === "no_external_id") {
+        toast.message(`${providerLabel} has no identity to probe`, {
+          description:
+            "This connection wasn't authorized with a per-user account.",
+          duration: 4000,
+        });
+        return;
+      }
+      // `no_new_identity` (or no reason at all) — the probe ran, the stored
+      // handle/email already match what the provider returned. Same green
+      // ✓ as the "changed" path so the user sees a clean positive signal,
+      // but copy makes it clear no rewrite happened. Shorter duration since
+      // there's nothing to act on.
+      toast.success(`${providerLabel} is already up to date`, {
+        duration: 2500,
+      });
     } catch (error) {
       toast.error(`${providerLabel} refresh failed`, {
         description: normalizeErrorMessage(error),
