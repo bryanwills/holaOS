@@ -510,14 +510,13 @@ export type InteractionEntityType =
   | "misc";
 export type InteractionEntityStatus = "active" | "archived";
 export type InteractionLeafStatus = "active" | "superseded" | "archived";
-export type InteractionSummaryStatus = "active" | "retired";
 export type InteractionTreeChildKind = "leaf" | "summary";
 export type IntegrationTreeStatus = "active" | "archived";
 export type IntegrationLeafStatus = "active" | "superseded" | "archived";
-export type IntegrationSummaryStatus = "active" | "retired";
 export type MemoryNodeKind = "tree" | "entity" | "branch" | "summary" | "leaf";
 export type MemoryNodeStatus = "active" | "superseded" | "retired" | "archived";
-export type IntegrationNodeKind = MemoryNodeKind;
+export type SemanticMemoryCategory = "interaction" | "integration";
+export type SemanticMemoryNodeClass = "semantic" | "leaf";
 
 export interface InteractionEntityRecord {
   workspaceId: string;
@@ -557,61 +556,6 @@ export interface InteractionLeafRecord {
   status: InteractionLeafStatus;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface InteractionSummaryNodeRecord {
-  workspaceId: string;
-  nodeId: string;
-  entityId: string;
-  level: number;
-  ordinal: number;
-  path: string;
-  title: string;
-  summary: string;
-  bodySha256: string;
-  childCount: number;
-  status: InteractionSummaryStatus;
-  sealedAt: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface InteractionTreeEdgeRecord {
-  workspaceId: string;
-  entityId: string;
-  parentNodeId: string;
-  childKind: InteractionTreeChildKind;
-  childId: string;
-  position: number;
-  createdAt: string;
-}
-
-export interface InteractionMemoryNodeRecord {
-  workspaceId: string;
-  treeId: string;
-  nodeId: string;
-  nodeKind: MemoryNodeKind;
-  path: string;
-  title: string;
-  summary: string;
-  bodySha256: string;
-  level: number | null;
-  ordinal: number | null;
-  childCount: number;
-  observedAt: string | null;
-  status: MemoryNodeStatus;
-  metadata: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface InteractionMemoryContainmentEdgeRecord {
-  workspaceId: string;
-  treeId: string;
-  parentNodeId: string;
-  childNodeId: string;
-  position: number;
-  createdAt: string;
 }
 
 export interface InteractionNodeEmbeddingRecord {
@@ -668,57 +612,6 @@ export interface IntegrationLeafRecord {
   updatedAt: string;
 }
 
-export interface IntegrationSummaryNodeRecord {
-  nodeId: string;
-  treeId: string;
-  level: number;
-  ordinal: number;
-  path: string;
-  title: string;
-  summary: string;
-  bodySha256: string;
-  childCount: number;
-  status: IntegrationSummaryStatus;
-  sealedAt: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface IntegrationTreeEdgeRecord {
-  treeId: string;
-  parentNodeId: string;
-  childKind: InteractionTreeChildKind;
-  childId: string;
-  position: number;
-  createdAt: string;
-}
-
-export interface IntegrationMemoryNodeRecord {
-  treeId: string;
-  nodeId: string;
-  nodeKind: MemoryNodeKind;
-  path: string;
-  title: string;
-  summary: string;
-  bodySha256: string;
-  level: number | null;
-  ordinal: number | null;
-  childCount: number;
-  observedAt: string | null;
-  status: MemoryNodeStatus;
-  metadata: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface IntegrationMemoryContainmentEdgeRecord {
-  treeId: string;
-  parentNodeId: string;
-  childNodeId: string;
-  position: number;
-  createdAt: string;
-}
-
 export interface IntegrationNodeEmbeddingRecord {
   nodeKind: InteractionTreeChildKind;
   nodeId: string;
@@ -731,11 +624,42 @@ export interface IntegrationNodeEmbeddingRecord {
   updatedAt: string;
 }
 
-export interface IntegrationNodeRelationRecord {
+export interface SemanticMemoryNodeRecord {
+  workspaceId: string | null;
+  category: SemanticMemoryCategory;
   treeId: string;
-  fromNodeKind: IntegrationNodeKind;
+  nodeId: string;
+  nodeClass: SemanticMemoryNodeClass;
+  nodeKind: string;
+  sourceLeafId: string | null;
+  path: string;
+  title: string;
+  summary: string;
+  bodySha256: string;
+  childCount: number;
+  observedAt: string | null;
+  status: MemoryNodeStatus;
+  isMaterialized: boolean;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SemanticMemoryContainmentEdgeRecord {
+  workspaceId: string | null;
+  category: SemanticMemoryCategory;
+  treeId: string;
+  parentNodeId: string;
+  childNodeId: string;
+  position: number;
+  createdAt: string;
+}
+
+export interface SemanticMemoryRelationRecord {
+  workspaceId: string | null;
+  category: SemanticMemoryCategory;
+  treeId: string;
   fromNodeId: string;
-  toNodeKind: IntegrationNodeKind;
   toNodeId: string;
   relationType: string;
   metadata: Record<string, unknown>;
@@ -6210,395 +6134,6 @@ export class RuntimeStateStore {
     });
   }
 
-  replaceInteractionSummaryTree(params: {
-    workspaceId: string;
-    entityId: string;
-    nodes: Array<{
-      nodeId: string;
-      level: number;
-      ordinal: number;
-      path: string;
-      title: string;
-      summary: string;
-      bodySha256: string;
-      childCount: number;
-      sealedAt: string;
-      createdAt?: string;
-      updatedAt?: string;
-    }>;
-    edges: Array<{
-      parentNodeId: string;
-      childKind: InteractionTreeChildKind;
-      childId: string;
-      position: number;
-      createdAt?: string;
-    }>;
-  }): InteractionSummaryNodeRecord[] {
-    const db = this.workspaceRuntimeDb(params.workspaceId);
-    const replace = db.transaction(() => {
-      const now = utcNowIso();
-      db.prepare(`
-        DELETE FROM interaction_tree_edges
-        WHERE workspace_id = ? AND entity_id = ?
-      `).run(params.workspaceId, params.entityId);
-      db.prepare(`
-        DELETE FROM interaction_summary_nodes
-        WHERE workspace_id = ? AND entity_id = ?
-      `).run(params.workspaceId, params.entityId);
-
-      const insertNode = db.prepare(`
-        INSERT INTO interaction_summary_nodes (
-          workspace_id,
-          node_id,
-          entity_id,
-          level,
-          ordinal,
-          path,
-          title,
-          summary,
-          body_sha256,
-          child_count,
-          status,
-          sealed_at,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
-      `);
-      for (const node of params.nodes) {
-        insertNode.run(
-          params.workspaceId,
-          node.nodeId,
-          params.entityId,
-          node.level,
-          node.ordinal,
-          node.path,
-          node.title,
-          node.summary,
-          node.bodySha256,
-          node.childCount,
-          node.sealedAt,
-          node.createdAt ?? now,
-          node.updatedAt ?? now,
-        );
-      }
-
-      const insertEdge = db.prepare(`
-        INSERT INTO interaction_tree_edges (
-          workspace_id,
-          entity_id,
-          parent_node_id,
-          child_kind,
-          child_id,
-          position,
-          created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      `);
-      for (const edge of params.edges) {
-        insertEdge.run(
-          params.workspaceId,
-          params.entityId,
-          edge.parentNodeId,
-          edge.childKind,
-          edge.childId,
-          edge.position,
-          edge.createdAt ?? now,
-        );
-      }
-    });
-    replace();
-    return this.listInteractionSummaryNodes({
-      workspaceId: params.workspaceId,
-      entityId: params.entityId,
-      status: "active",
-      limit: Math.max(200, params.nodes.length + 10),
-    });
-  }
-
-  getInteractionSummaryNode(params: {
-    workspaceId: string;
-    nodeId: string;
-  }): InteractionSummaryNodeRecord | null {
-    const row = this.workspaceRuntimeDb(params.workspaceId)
-      .prepare<[string, string], Record<string, unknown>>(
-        "SELECT * FROM interaction_summary_nodes WHERE workspace_id = ? AND node_id = ? LIMIT 1",
-      )
-      .get(params.workspaceId, params.nodeId);
-    return row ? this.rowToInteractionSummaryNode(row) : null;
-  }
-
-  getInteractionSummaryNodeByPath(params: {
-    workspaceId: string;
-    path: string;
-  }): InteractionSummaryNodeRecord | null {
-    const row = this.workspaceRuntimeDb(params.workspaceId)
-      .prepare<[string, string], Record<string, unknown>>(
-        "SELECT * FROM interaction_summary_nodes WHERE workspace_id = ? AND path = ? LIMIT 1",
-      )
-      .get(params.workspaceId, params.path);
-    return row ? this.rowToInteractionSummaryNode(row) : null;
-  }
-
-  listInteractionSummaryNodes(params: {
-    workspaceId: string;
-    entityId?: string | null;
-    status?: InteractionSummaryStatus | null;
-    level?: number | null;
-    limit?: number;
-    offset?: number;
-  }): InteractionSummaryNodeRecord[] {
-    let query = `
-      SELECT *
-      FROM interaction_summary_nodes
-      WHERE workspace_id = ?
-    `;
-    const values: Array<string | number> = [params.workspaceId];
-    if (params.entityId !== undefined) {
-      if (params.entityId === null) {
-        query += " AND entity_id IS NULL";
-      } else {
-        query += " AND entity_id = ?";
-        values.push(params.entityId);
-      }
-    }
-    if (params.status !== undefined) {
-      if (params.status === null) {
-        query += " AND status IS NULL";
-      } else {
-        query += " AND status = ?";
-        values.push(params.status);
-      }
-    }
-    if (params.level !== undefined) {
-      if (params.level === null) {
-        query += " AND level IS NULL";
-      } else {
-        query += " AND level = ?";
-        values.push(params.level);
-      }
-    }
-    query += `
-      ORDER BY level ASC, ordinal ASC, updated_at DESC
-      LIMIT ? OFFSET ?
-    `;
-    values.push(params.limit ?? 200, params.offset ?? 0);
-    const rows = this.workspaceRuntimeDb(params.workspaceId).prepare(query).all(...values) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToInteractionSummaryNode(row));
-  }
-
-  listInteractionTreeChildren(params: {
-    workspaceId: string;
-    parentNodeId: string;
-  }): InteractionTreeEdgeRecord[] {
-    const rows = this.workspaceRuntimeDb(params.workspaceId)
-      .prepare<[string, string], Record<string, unknown>>(
-        `
-          SELECT *
-          FROM interaction_tree_edges
-          WHERE workspace_id = ? AND parent_node_id = ?
-          ORDER BY position ASC, child_id ASC
-        `,
-      )
-      .all(params.workspaceId, params.parentNodeId) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToInteractionTreeEdge(row));
-  }
-
-  replaceInteractionMemoryTree(params: {
-    workspaceId: string;
-    treeId: string;
-    nodes: Array<{
-      nodeId: string;
-      nodeKind: MemoryNodeKind;
-      path: string;
-      title: string;
-      summary: string;
-      bodySha256: string;
-      level?: number | null;
-      ordinal?: number | null;
-      childCount?: number;
-      observedAt?: string | null;
-      status?: MemoryNodeStatus;
-      metadata?: Record<string, unknown> | null;
-      createdAt?: string;
-      updatedAt?: string;
-    }>;
-    edges: Array<{
-      parentNodeId: string;
-      childNodeId: string;
-      position: number;
-      createdAt?: string;
-    }>;
-  }): InteractionMemoryNodeRecord[] {
-    const db = this.workspaceRuntimeDb(params.workspaceId);
-    const replace = db.transaction(() => {
-      const now = utcNowIso();
-      db.prepare(`
-        DELETE FROM interaction_memory_edges
-        WHERE workspace_id = ? AND tree_id = ?
-      `).run(params.workspaceId, params.treeId);
-      db.prepare(`
-        DELETE FROM interaction_memory_nodes
-        WHERE workspace_id = ? AND tree_id = ?
-      `).run(params.workspaceId, params.treeId);
-
-      const insertNode = db.prepare(`
-        INSERT INTO interaction_memory_nodes (
-          workspace_id,
-          tree_id,
-          node_id,
-          node_kind,
-          path,
-          title,
-          summary,
-          body_sha256,
-          level,
-          ordinal,
-          child_count,
-          observed_at,
-          status,
-          metadata,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      for (const node of params.nodes) {
-        insertNode.run(
-          params.workspaceId,
-          params.treeId,
-          node.nodeId,
-          node.nodeKind,
-          node.path,
-          node.title,
-          node.summary,
-          node.bodySha256,
-          node.level ?? null,
-          node.ordinal ?? null,
-          node.childCount ?? 0,
-          node.observedAt ?? null,
-          node.status ?? "active",
-          JSON.stringify(node.metadata ?? {}),
-          node.createdAt ?? now,
-          node.updatedAt ?? now,
-        );
-      }
-
-      const insertEdge = db.prepare(`
-        INSERT INTO interaction_memory_edges (
-          workspace_id,
-          tree_id,
-          parent_node_id,
-          child_node_id,
-          position,
-          created_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
-      `);
-      for (const edge of params.edges) {
-        insertEdge.run(
-          params.workspaceId,
-          params.treeId,
-          edge.parentNodeId,
-          edge.childNodeId,
-          edge.position,
-          edge.createdAt ?? now,
-        );
-      }
-    });
-    replace();
-    return this.listInteractionMemoryNodes({
-      workspaceId: params.workspaceId,
-      treeId: params.treeId,
-      status: "active",
-      limit: Math.max(200, params.nodes.length + 10),
-    });
-  }
-
-  getInteractionMemoryNode(params: {
-    workspaceId: string;
-    nodeId: string;
-  }): InteractionMemoryNodeRecord | null {
-    const row = this.workspaceRuntimeDb(params.workspaceId)
-      .prepare<[string, string], Record<string, unknown>>(
-        "SELECT * FROM interaction_memory_nodes WHERE workspace_id = ? AND node_id = ? LIMIT 1",
-      )
-      .get(params.workspaceId, params.nodeId);
-    return row ? this.rowToInteractionMemoryNode(row) : null;
-  }
-
-  getInteractionMemoryNodeByPath(params: {
-    workspaceId: string;
-    path: string;
-  }): InteractionMemoryNodeRecord | null {
-    const row = this.workspaceRuntimeDb(params.workspaceId)
-      .prepare<[string, string], Record<string, unknown>>(
-        "SELECT * FROM interaction_memory_nodes WHERE workspace_id = ? AND path = ? LIMIT 1",
-      )
-      .get(params.workspaceId, params.path);
-    return row ? this.rowToInteractionMemoryNode(row) : null;
-  }
-
-  listInteractionMemoryNodes(params: {
-    workspaceId: string;
-    treeId?: string | null;
-    nodeKind?: MemoryNodeKind | null;
-    status?: MemoryNodeStatus | null;
-    limit?: number;
-    offset?: number;
-  }): InteractionMemoryNodeRecord[] {
-    let query = `
-      SELECT *
-      FROM interaction_memory_nodes
-      WHERE workspace_id = ?
-    `;
-    const values: Array<string | number> = [params.workspaceId];
-    if (params.treeId !== undefined) {
-      if (params.treeId === null) {
-        query += " AND tree_id IS NULL";
-      } else {
-        query += " AND tree_id = ?";
-        values.push(params.treeId);
-      }
-    }
-    if (params.nodeKind !== undefined) {
-      if (params.nodeKind === null) {
-        query += " AND node_kind IS NULL";
-      } else {
-        query += " AND node_kind = ?";
-        values.push(params.nodeKind);
-      }
-    }
-    if (params.status !== undefined) {
-      if (params.status === null) {
-        query += " AND status IS NULL";
-      } else {
-        query += " AND status = ?";
-        values.push(params.status);
-      }
-    }
-    query += `
-      ORDER BY COALESCE(level, 10_000) ASC, COALESCE(ordinal, 10_000) ASC, updated_at DESC, node_id ASC
-      LIMIT ? OFFSET ?
-    `;
-    values.push(params.limit ?? 500, params.offset ?? 0);
-    const rows = this.workspaceRuntimeDb(params.workspaceId).prepare(query).all(...values) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToInteractionMemoryNode(row));
-  }
-
-  listInteractionMemoryChildren(params: {
-    workspaceId: string;
-    parentNodeId: string;
-  }): InteractionMemoryContainmentEdgeRecord[] {
-    const rows = this.workspaceRuntimeDb(params.workspaceId)
-      .prepare<[string, string], Record<string, unknown>>(
-        `
-          SELECT *
-          FROM interaction_memory_edges
-          WHERE workspace_id = ? AND parent_node_id = ?
-          ORDER BY position ASC, child_node_id ASC
-        `,
-      )
-      .all(params.workspaceId, params.parentNodeId) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToInteractionMemoryContainmentEdge(row));
-  }
-
   upsertInteractionNodeEmbedding(params: {
     workspaceId: string;
     nodeKind: InteractionTreeChildKind;
@@ -7104,202 +6639,23 @@ export class RuntimeStateStore {
     return this.getIntegrationLeaf({ leafId: params.leafId });
   }
 
-  replaceIntegrationSummaryTree(params: {
+  replaceSemanticMemoryTree(params: {
+    category: SemanticMemoryCategory;
+    workspaceId?: string | null;
     treeId: string;
     nodes: Array<{
       nodeId: string;
-      level: number;
-      ordinal: number;
+      nodeClass: SemanticMemoryNodeClass;
+      nodeKind: string;
+      sourceLeafId?: string | null;
       path: string;
       title: string;
       summary: string;
       bodySha256: string;
-      childCount: number;
-      sealedAt: string;
-      createdAt?: string;
-      updatedAt?: string;
-    }>;
-    edges: Array<{
-      parentNodeId: string;
-      childKind: InteractionTreeChildKind;
-      childId: string;
-      position: number;
-      createdAt?: string;
-    }>;
-  }): IntegrationSummaryNodeRecord[] {
-    const db = this.controlPlaneDb();
-    const replace = db.transaction(() => {
-      const now = utcNowIso();
-      db.prepare(`
-        DELETE FROM integration_tree_edges
-        WHERE tree_id = ?
-      `).run(params.treeId);
-      db.prepare(`
-        DELETE FROM integration_summary_nodes
-        WHERE tree_id = ?
-      `).run(params.treeId);
-
-      const insertNode = db.prepare(`
-        INSERT INTO integration_summary_nodes (
-          node_id,
-          tree_id,
-          level,
-          ordinal,
-          path,
-          title,
-          summary,
-          body_sha256,
-          child_count,
-          status,
-          sealed_at,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
-      `);
-      for (const node of params.nodes) {
-        insertNode.run(
-          node.nodeId,
-          params.treeId,
-          node.level,
-          node.ordinal,
-          node.path,
-          node.title,
-          node.summary,
-          node.bodySha256,
-          node.childCount,
-          node.sealedAt,
-          node.createdAt ?? now,
-          node.updatedAt ?? now,
-        );
-      }
-
-      const insertEdge = db.prepare(`
-        INSERT INTO integration_tree_edges (
-          tree_id,
-          parent_node_id,
-          child_kind,
-          child_id,
-          position,
-          created_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
-      `);
-      for (const edge of params.edges) {
-        insertEdge.run(
-          params.treeId,
-          edge.parentNodeId,
-          edge.childKind,
-          edge.childId,
-          edge.position,
-          edge.createdAt ?? now,
-        );
-      }
-    });
-    replace();
-    return this.listIntegrationSummaryNodes({
-      treeId: params.treeId,
-      status: "active",
-      limit: Math.max(200, params.nodes.length + 10),
-    });
-  }
-
-  getIntegrationSummaryNode(params: {
-    nodeId: string;
-  }): IntegrationSummaryNodeRecord | null {
-    const row = this.controlPlaneDb()
-      .prepare<[string], Record<string, unknown>>(
-        "SELECT * FROM integration_summary_nodes WHERE node_id = ? LIMIT 1",
-      )
-      .get(params.nodeId);
-    return row ? this.rowToIntegrationSummaryNode(row) : null;
-  }
-
-  getIntegrationSummaryNodeByPath(params: {
-    path: string;
-  }): IntegrationSummaryNodeRecord | null {
-    const row = this.controlPlaneDb()
-      .prepare<[string], Record<string, unknown>>(
-        "SELECT * FROM integration_summary_nodes WHERE path = ? LIMIT 1",
-      )
-      .get(params.path);
-    return row ? this.rowToIntegrationSummaryNode(row) : null;
-  }
-
-  listIntegrationSummaryNodes(params: {
-    treeId?: string | null;
-    status?: IntegrationSummaryStatus | null;
-    level?: number | null;
-    limit?: number;
-    offset?: number;
-  } = {}): IntegrationSummaryNodeRecord[] {
-    let query = `
-      SELECT *
-      FROM integration_summary_nodes
-      WHERE 1 = 1
-    `;
-    const values: Array<string | number> = [];
-    if (params.treeId !== undefined) {
-      if (params.treeId === null) {
-        query += " AND tree_id IS NULL";
-      } else {
-        query += " AND tree_id = ?";
-        values.push(params.treeId);
-      }
-    }
-    if (params.status !== undefined) {
-      if (params.status === null) {
-        query += " AND status IS NULL";
-      } else {
-        query += " AND status = ?";
-        values.push(params.status);
-      }
-    }
-    if (params.level !== undefined) {
-      if (params.level === null) {
-        query += " AND level IS NULL";
-      } else {
-        query += " AND level = ?";
-        values.push(params.level);
-      }
-    }
-    query += `
-      ORDER BY level ASC, ordinal ASC, updated_at DESC
-      LIMIT ? OFFSET ?
-    `;
-    values.push(params.limit ?? 200, params.offset ?? 0);
-    const rows = this.controlPlaneDb().prepare(query).all(...values) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToIntegrationSummaryNode(row));
-  }
-
-  listIntegrationTreeChildren(params: {
-    parentNodeId: string;
-  }): IntegrationTreeEdgeRecord[] {
-    const rows = this.controlPlaneDb()
-      .prepare<[string], Record<string, unknown>>(
-        `
-          SELECT *
-          FROM integration_tree_edges
-          WHERE parent_node_id = ?
-          ORDER BY position ASC, child_id ASC
-        `,
-      )
-      .all(params.parentNodeId) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToIntegrationTreeEdge(row));
-  }
-
-  replaceIntegrationMemoryTree(params: {
-    treeId: string;
-    nodes: Array<{
-      nodeId: string;
-      nodeKind: MemoryNodeKind;
-      path: string;
-      title: string;
-      summary: string;
-      bodySha256: string;
-      level?: number | null;
-      ordinal?: number | null;
       childCount?: number;
       observedAt?: string | null;
       status?: MemoryNodeStatus;
+      isMaterialized?: boolean;
       metadata?: Record<string, unknown> | null;
       createdAt?: string;
       updatedAt?: string;
@@ -7310,69 +6666,155 @@ export class RuntimeStateStore {
       position: number;
       createdAt?: string;
     }>;
-  }): IntegrationMemoryNodeRecord[] {
-    const db = this.controlPlaneDb();
-    const replace = db.transaction(() => {
+  }): SemanticMemoryNodeRecord[] {
+    const scope = this.resolveSemanticMemoryScope(params.category, params.workspaceId ?? null);
+    const replace = scope.db.transaction(() => {
       const now = utcNowIso();
-      db.prepare(`
-        DELETE FROM integration_memory_edges
-        WHERE tree_id = ?
-      `).run(params.treeId);
-      db.prepare(`
-        DELETE FROM integration_memory_nodes
-        WHERE tree_id = ?
-      `).run(params.treeId);
+      if (scope.workspaceId !== null) {
+        scope.db.prepare(`
+          DELETE FROM semantic_memory_edges
+          WHERE workspace_id = ? AND category = ? AND tree_id = ?
+        `).run(scope.workspaceId, params.category, params.treeId);
+        scope.db.prepare(`
+          DELETE FROM semantic_memory_nodes
+          WHERE workspace_id = ? AND category = ? AND tree_id = ?
+        `).run(scope.workspaceId, params.category, params.treeId);
 
-      const insertNode = db.prepare(`
-        INSERT INTO integration_memory_nodes (
+        const insertNode = scope.db.prepare(`
+          INSERT INTO semantic_memory_nodes (
+            workspace_id,
+            category,
+            tree_id,
+            node_id,
+            node_class,
+            node_kind,
+            source_leaf_id,
+            path,
+            title,
+            summary,
+            body_sha256,
+            child_count,
+            observed_at,
+            status,
+            is_materialized,
+            metadata,
+            created_at,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const node of params.nodes) {
+          insertNode.run(
+            scope.workspaceId,
+            params.category,
+            params.treeId,
+            node.nodeId,
+            node.nodeClass,
+            node.nodeKind,
+            node.sourceLeafId ?? null,
+            node.path,
+            node.title,
+            node.summary,
+            node.bodySha256,
+            node.childCount ?? 0,
+            node.observedAt ?? null,
+            node.status ?? "active",
+            node.isMaterialized ? 1 : 0,
+            JSON.stringify(node.metadata ?? {}),
+            node.createdAt ?? now,
+            node.updatedAt ?? now,
+          );
+        }
+
+        const insertEdge = scope.db.prepare(`
+          INSERT INTO semantic_memory_edges (
+            workspace_id,
+            category,
+            tree_id,
+            parent_node_id,
+            child_node_id,
+            position,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const edge of params.edges) {
+          insertEdge.run(
+            scope.workspaceId,
+            params.category,
+            params.treeId,
+            edge.parentNodeId,
+            edge.childNodeId,
+            edge.position,
+            edge.createdAt ?? now,
+          );
+        }
+        return;
+      }
+
+      scope.db.prepare(`
+        DELETE FROM semantic_memory_edges
+        WHERE category = ? AND tree_id = ?
+      `).run(params.category, params.treeId);
+      scope.db.prepare(`
+        DELETE FROM semantic_memory_nodes
+        WHERE category = ? AND tree_id = ?
+      `).run(params.category, params.treeId);
+
+      const insertNode = scope.db.prepare(`
+        INSERT INTO semantic_memory_nodes (
+          category,
           tree_id,
           node_id,
+          node_class,
           node_kind,
+          source_leaf_id,
           path,
           title,
           summary,
           body_sha256,
-          level,
-          ordinal,
           child_count,
           observed_at,
           status,
+          is_materialized,
           metadata,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       for (const node of params.nodes) {
         insertNode.run(
+          params.category,
           params.treeId,
           node.nodeId,
+          node.nodeClass,
           node.nodeKind,
+          node.sourceLeafId ?? null,
           node.path,
           node.title,
           node.summary,
           node.bodySha256,
-          node.level ?? null,
-          node.ordinal ?? null,
           node.childCount ?? 0,
           node.observedAt ?? null,
           node.status ?? "active",
+          node.isMaterialized ? 1 : 0,
           JSON.stringify(node.metadata ?? {}),
           node.createdAt ?? now,
           node.updatedAt ?? now,
         );
       }
 
-      const insertEdge = db.prepare(`
-        INSERT INTO integration_memory_edges (
+      const insertEdge = scope.db.prepare(`
+        INSERT INTO semantic_memory_edges (
+          category,
           tree_id,
           parent_node_id,
           child_node_id,
           position,
           created_at
-        ) VALUES (?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?)
       `);
       for (const edge of params.edges) {
         insertEdge.run(
+          params.category,
           params.treeId,
           edge.parentNodeId,
           edge.childNodeId,
@@ -7382,55 +6824,115 @@ export class RuntimeStateStore {
       }
     });
     replace();
-    return this.listIntegrationMemoryNodes({
+    return this.listSemanticMemoryNodes({
+      category: params.category,
+      workspaceId: scope.workspaceId,
       treeId: params.treeId,
       status: "active",
       limit: Math.max(200, params.nodes.length + 10),
     });
   }
 
-  getIntegrationMemoryNode(params: {
+  getSemanticMemoryNode(params: {
+    category: SemanticMemoryCategory;
+    workspaceId?: string | null;
     treeId: string;
     nodeId: string;
-  }): IntegrationMemoryNodeRecord | null {
-    const row = this.controlPlaneDb()
-      .prepare<[string, string], Record<string, unknown>>(
-        "SELECT * FROM integration_memory_nodes WHERE tree_id = ? AND node_id = ? LIMIT 1",
+  }): SemanticMemoryNodeRecord | null {
+    const scope = this.resolveSemanticMemoryScope(params.category, params.workspaceId ?? null);
+    if (scope.workspaceId !== null) {
+      const row = scope.db
+        .prepare<[string, string, string, string], Record<string, unknown>>(
+          `
+            SELECT *
+            FROM semantic_memory_nodes
+            WHERE workspace_id = ? AND category = ? AND tree_id = ? AND node_id = ?
+            LIMIT 1
+          `,
+        )
+        .get(scope.workspaceId, params.category, params.treeId, params.nodeId);
+      return row ? this.rowToSemanticMemoryNode(row) : null;
+    }
+    const row = scope.db
+      .prepare<[string, string, string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM semantic_memory_nodes
+          WHERE category = ? AND tree_id = ? AND node_id = ?
+          LIMIT 1
+        `,
       )
-      .get(params.treeId, params.nodeId);
-    return row ? this.rowToIntegrationMemoryNode(row) : null;
+      .get(params.category, params.treeId, params.nodeId);
+    return row ? this.rowToSemanticMemoryNode(row) : null;
   }
 
-  getIntegrationMemoryNodeByPath(params: {
+  getSemanticMemoryNodeByPath(params: {
+    category: SemanticMemoryCategory;
+    workspaceId?: string | null;
     path: string;
-  }): IntegrationMemoryNodeRecord | null {
-    const row = this.controlPlaneDb()
-      .prepare<[string], Record<string, unknown>>(
-        "SELECT * FROM integration_memory_nodes WHERE path = ? LIMIT 1",
+  }): SemanticMemoryNodeRecord | null {
+    const scope = this.resolveSemanticMemoryScope(params.category, params.workspaceId ?? null);
+    if (scope.workspaceId !== null) {
+      const row = scope.db
+        .prepare<[string, string, string], Record<string, unknown>>(
+          `
+            SELECT *
+            FROM semantic_memory_nodes
+            WHERE workspace_id = ? AND category = ? AND path = ?
+            LIMIT 1
+          `,
+        )
+        .get(scope.workspaceId, params.category, params.path);
+      return row ? this.rowToSemanticMemoryNode(row) : null;
+    }
+    const row = scope.db
+      .prepare<[string, string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM semantic_memory_nodes
+          WHERE category = ? AND path = ?
+          LIMIT 1
+        `,
       )
-      .get(params.path);
-    return row ? this.rowToIntegrationMemoryNode(row) : null;
+      .get(params.category, params.path);
+    return row ? this.rowToSemanticMemoryNode(row) : null;
   }
 
-  listIntegrationMemoryNodes(params: {
+  listSemanticMemoryNodes(params: {
+    category: SemanticMemoryCategory;
+    workspaceId?: string | null;
     treeId?: string | null;
-    nodeKind?: MemoryNodeKind | null;
+    nodeClass?: SemanticMemoryNodeClass | null;
+    nodeKind?: string | null;
     status?: MemoryNodeStatus | null;
     limit?: number;
     offset?: number;
-  } = {}): IntegrationMemoryNodeRecord[] {
+  }): SemanticMemoryNodeRecord[] {
+    const scope = this.resolveSemanticMemoryScope(params.category, params.workspaceId ?? null);
     let query = `
       SELECT *
-      FROM integration_memory_nodes
-      WHERE 1 = 1
+      FROM semantic_memory_nodes
+      WHERE category = ?
     `;
-    const values: Array<string | number> = [];
+    const values: Array<string | number> = [params.category];
+    if (scope.workspaceId !== null) {
+      query += " AND workspace_id = ?";
+      values.push(scope.workspaceId);
+    }
     if (params.treeId !== undefined) {
       if (params.treeId === null) {
         query += " AND tree_id IS NULL";
       } else {
         query += " AND tree_id = ?";
         values.push(params.treeId);
+      }
+    }
+    if (params.nodeClass !== undefined) {
+      if (params.nodeClass === null) {
+        query += " AND node_class IS NULL";
+      } else {
+        query += " AND node_class = ?";
+        values.push(params.nodeClass);
       }
     }
     if (params.nodeKind !== undefined) {
@@ -7450,71 +6952,120 @@ export class RuntimeStateStore {
       }
     }
     query += `
-      ORDER BY COALESCE(level, 10_000) ASC, COALESCE(ordinal, 10_000) ASC, updated_at DESC, node_id ASC
+      ORDER BY path ASC, updated_at DESC, node_id ASC
       LIMIT ? OFFSET ?
     `;
     values.push(params.limit ?? 500, params.offset ?? 0);
-    const rows = this.controlPlaneDb().prepare(query).all(...values) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToIntegrationMemoryNode(row));
+    const rows = scope.db.prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToSemanticMemoryNode(row));
   }
 
-  listIntegrationMemoryChildren(params: {
+  listSemanticMemoryChildren(params: {
+    category: SemanticMemoryCategory;
+    workspaceId?: string | null;
     treeId: string;
     parentNodeId: string;
-  }): IntegrationMemoryContainmentEdgeRecord[] {
-    const rows = this.controlPlaneDb()
-      .prepare<[string, string], Record<string, unknown>>(
+  }): SemanticMemoryContainmentEdgeRecord[] {
+    const scope = this.resolveSemanticMemoryScope(params.category, params.workspaceId ?? null);
+    if (scope.workspaceId !== null) {
+      const rows = scope.db
+        .prepare<[string, string, string, string], Record<string, unknown>>(
+          `
+            SELECT *
+            FROM semantic_memory_edges
+            WHERE workspace_id = ? AND category = ? AND tree_id = ? AND parent_node_id = ?
+            ORDER BY position ASC, child_node_id ASC
+          `,
+        )
+        .all(scope.workspaceId, params.category, params.treeId, params.parentNodeId) as Array<Record<string, unknown>>;
+      return rows.map((row) => this.rowToSemanticMemoryContainmentEdge(row));
+    }
+    const rows = scope.db
+      .prepare<[string, string, string], Record<string, unknown>>(
         `
           SELECT *
-          FROM integration_memory_edges
-          WHERE tree_id = ? AND parent_node_id = ?
+          FROM semantic_memory_edges
+          WHERE category = ? AND tree_id = ? AND parent_node_id = ?
           ORDER BY position ASC, child_node_id ASC
         `,
       )
-      .all(params.treeId, params.parentNodeId) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToIntegrationMemoryContainmentEdge(row));
+      .all(params.category, params.treeId, params.parentNodeId) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToSemanticMemoryContainmentEdge(row));
   }
 
-  replaceIntegrationNodeRelations(params: {
+  replaceSemanticMemoryRelations(params: {
+    category: SemanticMemoryCategory;
+    workspaceId?: string | null;
     treeId: string;
     relations: Array<{
-      fromNodeKind: IntegrationNodeKind;
       fromNodeId: string;
-      toNodeKind: IntegrationNodeKind;
       toNodeId: string;
       relationType: string;
       metadata?: Record<string, unknown> | null;
       createdAt?: string;
       updatedAt?: string;
     }>;
-  }): IntegrationNodeRelationRecord[] {
-    const db = this.controlPlaneDb();
-    const replace = db.transaction(() => {
-      db.prepare(`
-        DELETE FROM integration_node_relations
-        WHERE tree_id = ?
-      `).run(params.treeId);
+  }): SemanticMemoryRelationRecord[] {
+    const scope = this.resolveSemanticMemoryScope(params.category, params.workspaceId ?? null);
+    const replace = scope.db.transaction(() => {
+      const now = utcNowIso();
+      if (scope.workspaceId !== null) {
+        scope.db.prepare(`
+          DELETE FROM semantic_memory_relations
+          WHERE workspace_id = ? AND category = ? AND tree_id = ?
+        `).run(scope.workspaceId, params.category, params.treeId);
 
-      const insertRelation = db.prepare(`
-        INSERT INTO integration_node_relations (
+        const insertRelation = scope.db.prepare(`
+          INSERT INTO semantic_memory_relations (
+            workspace_id,
+            category,
+            tree_id,
+            from_node_id,
+            to_node_id,
+            relation_type,
+            metadata,
+            created_at,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const relation of params.relations) {
+          insertRelation.run(
+            scope.workspaceId,
+            params.category,
+            params.treeId,
+            relation.fromNodeId,
+            relation.toNodeId,
+            relation.relationType,
+            JSON.stringify(relation.metadata ?? {}),
+            relation.createdAt ?? now,
+            relation.updatedAt ?? now,
+          );
+        }
+        return;
+      }
+
+      scope.db.prepare(`
+        DELETE FROM semantic_memory_relations
+        WHERE category = ? AND tree_id = ?
+      `).run(params.category, params.treeId);
+
+      const insertRelation = scope.db.prepare(`
+        INSERT INTO semantic_memory_relations (
+          category,
           tree_id,
-          from_node_kind,
           from_node_id,
-          to_node_kind,
           to_node_id,
           relation_type,
           metadata,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
-      const now = utcNowIso();
       for (const relation of params.relations) {
         insertRelation.run(
+          params.category,
           params.treeId,
-          relation.fromNodeKind,
           relation.fromNodeId,
-          relation.toNodeKind,
           relation.toNodeId,
           relation.relationType,
           JSON.stringify(relation.metadata ?? {}),
@@ -7524,25 +7075,34 @@ export class RuntimeStateStore {
       }
     });
     replace();
-    return this.listIntegrationNodeRelations({
+    return this.listSemanticMemoryRelations({
+      category: params.category,
+      workspaceId: scope.workspaceId,
       treeId: params.treeId,
       limit: Math.max(200, params.relations.length + 10),
     });
   }
 
-  listIntegrationNodeRelations(params: {
+  listSemanticMemoryRelations(params: {
+    category: SemanticMemoryCategory;
+    workspaceId?: string | null;
     treeId?: string | null;
     fromNodeId?: string | null;
     relationType?: string | null;
     limit?: number;
     offset?: number;
-  } = {}): IntegrationNodeRelationRecord[] {
+  }): SemanticMemoryRelationRecord[] {
+    const scope = this.resolveSemanticMemoryScope(params.category, params.workspaceId ?? null);
     let query = `
       SELECT *
-      FROM integration_node_relations
-      WHERE 1 = 1
+      FROM semantic_memory_relations
+      WHERE category = ?
     `;
-    const values: Array<string | number> = [];
+    const values: Array<string | number> = [params.category];
+    if (scope.workspaceId !== null) {
+      query += " AND workspace_id = ?";
+      values.push(scope.workspaceId);
+    }
     if (params.treeId !== undefined) {
       if (params.treeId === null) {
         query += " AND tree_id IS NULL";
@@ -7571,9 +7131,9 @@ export class RuntimeStateStore {
       ORDER BY relation_type ASC, from_node_id ASC, to_node_id ASC, updated_at DESC
       LIMIT ? OFFSET ?
     `;
-    values.push(params.limit ?? 200, params.offset ?? 0);
-    const rows = this.controlPlaneDb().prepare(query).all(...values) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToIntegrationNodeRelation(row));
+    values.push(params.limit ?? 500, params.offset ?? 0);
+    const rows = scope.db.prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToSemanticMemoryRelation(row));
   }
 
   deleteIntegrationTreeMemory(params: {
@@ -7582,11 +7142,9 @@ export class RuntimeStateStore {
     deleted: boolean;
     deletedTree: boolean;
     deletedLeaves: number;
-    deletedSummaryNodes: number;
-    deletedTreeEdges: number;
-    deletedCanonicalNodes: number;
-    deletedCanonicalEdges: number;
-    deletedRelations: number;
+    deletedSemanticNodes: number;
+    deletedSemanticEdges: number;
+    deletedSemanticRelations: number;
     deletedEmbeddings: number;
   } {
     const db = this.controlPlaneDb();
@@ -7598,36 +7156,56 @@ export class RuntimeStateStore {
             .get(params.treeId) as { count?: number } | undefined)?.count ?? 0,
         );
       const deletedLeaves = count("integration_leaves");
-      const deletedSummaryNodes = count("integration_summary_nodes");
-      const deletedTreeEdges = count("integration_tree_edges");
-      const deletedCanonicalNodes = count("integration_memory_nodes");
-      const deletedCanonicalEdges = count("integration_memory_edges");
-      const deletedRelations = count("integration_node_relations");
       const deletedEmbeddings = count("integration_node_embeddings");
+      const deletedSemanticNodes = Number(
+        (db
+          .prepare(
+            `
+              SELECT COUNT(*) AS count
+              FROM semantic_memory_nodes
+              WHERE category = 'integration' AND tree_id = ?
+            `,
+          )
+          .get(params.treeId) as { count?: number } | undefined)?.count ?? 0,
+      );
+      const deletedSemanticRelations = Number(
+        (db
+          .prepare(
+            `
+              SELECT COUNT(*) AS count
+              FROM semantic_memory_relations
+              WHERE category = 'integration' AND tree_id = ?
+            `,
+          )
+          .get(params.treeId) as { count?: number } | undefined)?.count ?? 0,
+      );
+      const deletedSemanticEdges = Number(
+        (db
+          .prepare(
+            `
+              SELECT COUNT(*) AS count
+              FROM semantic_memory_edges
+              WHERE category = 'integration' AND tree_id = ?
+            `,
+          )
+          .get(params.treeId) as { count?: number } | undefined)?.count ?? 0,
+      );
 
       db.prepare(`
         DELETE FROM integration_node_embeddings
         WHERE tree_id = ?
       `).run(params.treeId);
       db.prepare(`
-        DELETE FROM integration_node_relations
-        WHERE tree_id = ?
+        DELETE FROM semantic_memory_edges
+        WHERE category = 'integration' AND tree_id = ?
       `).run(params.treeId);
       db.prepare(`
-        DELETE FROM integration_memory_edges
-        WHERE tree_id = ?
+        DELETE FROM semantic_memory_relations
+        WHERE category = 'integration' AND tree_id = ?
       `).run(params.treeId);
       db.prepare(`
-        DELETE FROM integration_memory_nodes
-        WHERE tree_id = ?
-      `).run(params.treeId);
-      db.prepare(`
-        DELETE FROM integration_tree_edges
-        WHERE tree_id = ?
-      `).run(params.treeId);
-      db.prepare(`
-        DELETE FROM integration_summary_nodes
-        WHERE tree_id = ?
+        DELETE FROM semantic_memory_nodes
+        WHERE category = 'integration' AND tree_id = ?
       `).run(params.treeId);
       db.prepare(`
         DELETE FROM integration_leaves
@@ -7640,19 +7218,15 @@ export class RuntimeStateStore {
       return {
         deleted: deletedTree
           || deletedLeaves > 0
-          || deletedSummaryNodes > 0
-          || deletedTreeEdges > 0
-          || deletedCanonicalNodes > 0
-          || deletedCanonicalEdges > 0
-          || deletedRelations > 0
+          || deletedSemanticNodes > 0
+          || deletedSemanticRelations > 0
+          || deletedSemanticEdges > 0
           || deletedEmbeddings > 0,
         deletedTree,
         deletedLeaves,
-        deletedSummaryNodes,
-        deletedTreeEdges,
-        deletedCanonicalNodes,
-        deletedCanonicalEdges,
-        deletedRelations,
+        deletedSemanticNodes,
+        deletedSemanticEdges,
+        deletedSemanticRelations,
         deletedEmbeddings,
       };
     });
@@ -9668,6 +9242,25 @@ export class RuntimeStateStore {
     return databases;
   }
 
+  private resolveSemanticMemoryScope(
+    category: SemanticMemoryCategory,
+    workspaceId: string | null,
+  ): { workspaceId: string | null; db: Database.Database } {
+    if (category === "interaction") {
+      if (!workspaceId) {
+        throw new Error("semantic interaction memory requires workspaceId");
+      }
+      return {
+        workspaceId,
+        db: this.workspaceRuntimeDb(workspaceId),
+      };
+    }
+    return {
+      workspaceId: null,
+      db: this.controlPlaneDb(),
+    };
+  }
+
   private backfillControlPlaneDbFromLegacyRuntimeDb(
     db: Database.Database,
     legacy: Database.Database,
@@ -10363,93 +9956,6 @@ export class RuntimeStateStore {
       CREATE INDEX IF NOT EXISTS idx_integration_leaves_tree_fingerprint
           ON integration_leaves (tree_id, fingerprint);
 
-      CREATE TABLE IF NOT EXISTS integration_summary_nodes (
-          node_id TEXT PRIMARY KEY,
-          tree_id TEXT NOT NULL,
-          level INTEGER NOT NULL,
-          ordinal INTEGER NOT NULL,
-          path TEXT NOT NULL UNIQUE,
-          title TEXT NOT NULL,
-          summary TEXT NOT NULL,
-          body_sha256 TEXT NOT NULL,
-          child_count INTEGER NOT NULL DEFAULT 0,
-          status TEXT NOT NULL DEFAULT 'active',
-          sealed_at TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_integration_summary_nodes_tree_status_level
-          ON integration_summary_nodes (tree_id, status, level ASC, ordinal ASC, updated_at DESC);
-
-      CREATE TABLE IF NOT EXISTS integration_tree_edges (
-          tree_id TEXT NOT NULL,
-          parent_node_id TEXT NOT NULL,
-          child_kind TEXT NOT NULL,
-          child_id TEXT NOT NULL,
-          position INTEGER NOT NULL,
-          created_at TEXT NOT NULL,
-          PRIMARY KEY (parent_node_id, child_kind, child_id),
-          UNIQUE (parent_node_id, position)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_integration_tree_edges_parent_position
-          ON integration_tree_edges (parent_node_id, position ASC);
-
-      CREATE TABLE IF NOT EXISTS integration_memory_nodes (
-          tree_id TEXT NOT NULL,
-          node_id TEXT NOT NULL,
-          node_kind TEXT NOT NULL,
-          path TEXT NOT NULL UNIQUE,
-          title TEXT NOT NULL,
-          summary TEXT NOT NULL,
-          body_sha256 TEXT NOT NULL,
-          level INTEGER,
-          ordinal INTEGER,
-          child_count INTEGER NOT NULL DEFAULT 0,
-          observed_at TEXT,
-          status TEXT NOT NULL DEFAULT 'active',
-          metadata TEXT NOT NULL DEFAULT '{}',
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          PRIMARY KEY (tree_id, node_id)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_integration_memory_nodes_tree_status_kind
-          ON integration_memory_nodes (tree_id, status, node_kind, updated_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_integration_memory_nodes_tree_path
-          ON integration_memory_nodes (tree_id, path);
-
-      CREATE TABLE IF NOT EXISTS integration_memory_edges (
-          tree_id TEXT NOT NULL,
-          parent_node_id TEXT NOT NULL,
-          child_node_id TEXT NOT NULL,
-          position INTEGER NOT NULL,
-          created_at TEXT NOT NULL,
-          PRIMARY KEY (tree_id, parent_node_id, child_node_id),
-          UNIQUE (tree_id, parent_node_id, position)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_integration_memory_edges_tree_parent_position
-          ON integration_memory_edges (tree_id, parent_node_id, position ASC);
-
-      CREATE TABLE IF NOT EXISTS integration_node_relations (
-          tree_id TEXT NOT NULL,
-          from_node_kind TEXT NOT NULL,
-          from_node_id TEXT NOT NULL,
-          to_node_kind TEXT NOT NULL,
-          to_node_id TEXT NOT NULL,
-          relation_type TEXT NOT NULL,
-          metadata TEXT NOT NULL DEFAULT '{}',
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          PRIMARY KEY (tree_id, from_node_kind, from_node_id, to_node_kind, to_node_id, relation_type)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_integration_node_relations_tree_type
-          ON integration_node_relations (tree_id, relation_type, updated_at DESC);
-
       CREATE TABLE IF NOT EXISTS integration_node_embeddings (
           node_kind TEXT NOT NULL,
           node_id TEXT NOT NULL,
@@ -10519,6 +10025,7 @@ export class RuntimeStateStore {
     this.ensureMemoryEntriesTableSchema(db);
     this.ensureMemoryEmbeddingIndexSchema(db);
     this.ensureIntegrationLeavesTableSchema(db);
+    this.ensureSemanticMemoryTableSchema({ db, workspaceScoped: false });
     this.migrateIntegrationConnectionIdentityColumns(db);
     this.migrateAppCatalogProviderColumns(db);
   }
@@ -11000,84 +10507,6 @@ export class RuntimeStateStore {
       CREATE INDEX IF NOT EXISTS idx_interaction_leaves_workspace_entity_fingerprint
           ON interaction_leaves (workspace_id, entity_id, fingerprint);
 
-      CREATE TABLE IF NOT EXISTS interaction_summary_nodes (
-          workspace_id TEXT NOT NULL,
-          node_id TEXT NOT NULL,
-          entity_id TEXT NOT NULL,
-          level INTEGER NOT NULL,
-          ordinal INTEGER NOT NULL,
-          path TEXT NOT NULL,
-          title TEXT NOT NULL,
-          summary TEXT NOT NULL,
-          body_sha256 TEXT NOT NULL,
-          child_count INTEGER NOT NULL DEFAULT 0,
-          status TEXT NOT NULL DEFAULT 'active',
-          sealed_at TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          PRIMARY KEY (workspace_id, node_id),
-          UNIQUE (workspace_id, path)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_interaction_summary_nodes_workspace_entity_status_level
-          ON interaction_summary_nodes (workspace_id, entity_id, status, level ASC, ordinal ASC, updated_at DESC);
-
-      CREATE TABLE IF NOT EXISTS interaction_tree_edges (
-          workspace_id TEXT NOT NULL,
-          entity_id TEXT NOT NULL,
-          parent_node_id TEXT NOT NULL,
-          child_kind TEXT NOT NULL,
-          child_id TEXT NOT NULL,
-          position INTEGER NOT NULL,
-          created_at TEXT NOT NULL,
-          PRIMARY KEY (workspace_id, parent_node_id, child_kind, child_id),
-          UNIQUE (workspace_id, parent_node_id, position)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_interaction_tree_edges_workspace_parent_position
-          ON interaction_tree_edges (workspace_id, parent_node_id, position ASC);
-
-      CREATE TABLE IF NOT EXISTS interaction_memory_nodes (
-          workspace_id TEXT NOT NULL,
-          tree_id TEXT NOT NULL,
-          node_id TEXT NOT NULL,
-          node_kind TEXT NOT NULL,
-          path TEXT NOT NULL,
-          title TEXT NOT NULL,
-          summary TEXT NOT NULL,
-          body_sha256 TEXT NOT NULL,
-          level INTEGER,
-          ordinal INTEGER,
-          child_count INTEGER NOT NULL DEFAULT 0,
-          observed_at TEXT,
-          status TEXT NOT NULL DEFAULT 'active',
-          metadata TEXT NOT NULL DEFAULT '{}',
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          PRIMARY KEY (workspace_id, node_id),
-          UNIQUE (workspace_id, path)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_interaction_memory_nodes_workspace_tree_status_kind
-          ON interaction_memory_nodes (workspace_id, tree_id, status, node_kind, updated_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_interaction_memory_nodes_workspace_tree_path
-          ON interaction_memory_nodes (workspace_id, tree_id, path);
-
-      CREATE TABLE IF NOT EXISTS interaction_memory_edges (
-          workspace_id TEXT NOT NULL,
-          tree_id TEXT NOT NULL,
-          parent_node_id TEXT NOT NULL,
-          child_node_id TEXT NOT NULL,
-          position INTEGER NOT NULL,
-          created_at TEXT NOT NULL,
-          PRIMARY KEY (workspace_id, parent_node_id, child_node_id),
-          UNIQUE (workspace_id, parent_node_id, position)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_interaction_memory_edges_workspace_tree_parent_position
-          ON interaction_memory_edges (workspace_id, tree_id, parent_node_id, position ASC);
-
       CREATE TABLE IF NOT EXISTS interaction_node_embeddings (
           workspace_id TEXT NOT NULL,
           node_kind TEXT NOT NULL,
@@ -11151,43 +10580,6 @@ export class RuntimeStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_integration_leaves_workspace_tree_fingerprint
           ON integration_leaves (workspace_id, tree_id, fingerprint);
-
-      CREATE TABLE IF NOT EXISTS integration_summary_nodes (
-          workspace_id TEXT NOT NULL,
-          node_id TEXT NOT NULL,
-          tree_id TEXT NOT NULL,
-          level INTEGER NOT NULL,
-          ordinal INTEGER NOT NULL,
-          path TEXT NOT NULL,
-          title TEXT NOT NULL,
-          summary TEXT NOT NULL,
-          body_sha256 TEXT NOT NULL,
-          child_count INTEGER NOT NULL DEFAULT 0,
-          status TEXT NOT NULL DEFAULT 'active',
-          sealed_at TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          PRIMARY KEY (workspace_id, node_id),
-          UNIQUE (workspace_id, path)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_integration_summary_nodes_workspace_tree_status_level
-          ON integration_summary_nodes (workspace_id, tree_id, status, level ASC, ordinal ASC, updated_at DESC);
-
-      CREATE TABLE IF NOT EXISTS integration_tree_edges (
-          workspace_id TEXT NOT NULL,
-          tree_id TEXT NOT NULL,
-          parent_node_id TEXT NOT NULL,
-          child_kind TEXT NOT NULL,
-          child_id TEXT NOT NULL,
-          position INTEGER NOT NULL,
-          created_at TEXT NOT NULL,
-          PRIMARY KEY (workspace_id, parent_node_id, child_kind, child_id),
-          UNIQUE (workspace_id, parent_node_id, position)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_integration_tree_edges_workspace_parent_position
-          ON integration_tree_edges (workspace_id, parent_node_id, position ASC);
 
       CREATE TABLE IF NOT EXISTS integration_node_embeddings (
           workspace_id TEXT NOT NULL,
@@ -11329,6 +10721,7 @@ export class RuntimeStateStore {
     this.ensureMemoryEmbeddingIndexSchema(db);
     this.ensureSessionMessagesTableSchema(db);
     this.ensureConversationBindingsTableSchema(db);
+    this.ensureSemanticMemoryTableSchema({ db, workspaceScoped: true });
     this.migrateLegacyMainSessionLabels(db);
     this.ensureSubagentRunsTableSchema(db);
     this.ensureSessionRuntimeStateTableSchema(db);
@@ -11422,6 +10815,77 @@ export class RuntimeStateStore {
     if (!columns.has("branch_label")) {
       db.exec("ALTER TABLE integration_leaves ADD COLUMN branch_label TEXT;");
     }
+  }
+
+  private ensureSemanticMemoryTableSchema(params: {
+    db: Database.Database;
+    workspaceScoped: boolean;
+  }): void {
+    const prefix = params.workspaceScoped
+      ? `
+          workspace_id TEXT NOT NULL,
+      `
+      : "";
+    const workspaceIdPrefix = params.workspaceScoped ? "workspace_id, " : "";
+    const workspaceUniquePrefix = params.workspaceScoped ? "workspace_id, " : "";
+    params.db.exec(`
+      CREATE TABLE IF NOT EXISTS semantic_memory_nodes (
+          ${prefix}category TEXT NOT NULL,
+          tree_id TEXT NOT NULL,
+          node_id TEXT NOT NULL,
+          node_class TEXT NOT NULL,
+          node_kind TEXT NOT NULL,
+          source_leaf_id TEXT,
+          path TEXT NOT NULL,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          body_sha256 TEXT NOT NULL,
+          child_count INTEGER NOT NULL DEFAULT 0,
+          observed_at TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          is_materialized INTEGER NOT NULL DEFAULT 0,
+          metadata TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (${workspaceIdPrefix}category, tree_id, node_id),
+          UNIQUE (${workspaceUniquePrefix}category, path)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_semantic_memory_nodes_tree_status_kind
+          ON semantic_memory_nodes (${workspaceIdPrefix}category, tree_id, status, node_class, node_kind, updated_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_semantic_memory_nodes_tree_path
+          ON semantic_memory_nodes (${workspaceIdPrefix}category, tree_id, path);
+
+      CREATE TABLE IF NOT EXISTS semantic_memory_edges (
+          ${prefix}category TEXT NOT NULL,
+          tree_id TEXT NOT NULL,
+          parent_node_id TEXT NOT NULL,
+          child_node_id TEXT NOT NULL,
+          position INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (${workspaceIdPrefix}category, tree_id, parent_node_id, child_node_id),
+          UNIQUE (${workspaceUniquePrefix}category, tree_id, parent_node_id, position)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_semantic_memory_edges_parent_position
+          ON semantic_memory_edges (${workspaceIdPrefix}category, tree_id, parent_node_id, position ASC);
+
+      CREATE TABLE IF NOT EXISTS semantic_memory_relations (
+          ${prefix}category TEXT NOT NULL,
+          tree_id TEXT NOT NULL,
+          from_node_id TEXT NOT NULL,
+          to_node_id TEXT NOT NULL,
+          relation_type TEXT NOT NULL,
+          metadata TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (${workspaceIdPrefix}category, tree_id, from_node_id, to_node_id, relation_type)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_semantic_memory_relations_tree_from_type
+          ON semantic_memory_relations (${workspaceIdPrefix}category, tree_id, from_node_id, relation_type, updated_at DESC);
+    `);
   }
 
   private ensureConversationBindingsTableSchema(db: Database.Database): void {
@@ -13169,71 +12633,6 @@ export class RuntimeStateStore {
     };
   }
 
-  private rowToInteractionSummaryNode(row: Record<string, unknown>): InteractionSummaryNodeRecord {
-    return {
-      workspaceId: String(row.workspace_id),
-      nodeId: String(row.node_id),
-      entityId: String(row.entity_id),
-      level: Number(row.level),
-      ordinal: Number(row.ordinal),
-      path: String(row.path),
-      title: String(row.title),
-      summary: String(row.summary),
-      bodySha256: String(row.body_sha256),
-      childCount: Number(row.child_count ?? 0),
-      status: String(row.status) as InteractionSummaryStatus,
-      sealedAt: String(row.sealed_at),
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at),
-    };
-  }
-
-  private rowToInteractionTreeEdge(row: Record<string, unknown>): InteractionTreeEdgeRecord {
-    return {
-      workspaceId: String(row.workspace_id),
-      entityId: String(row.entity_id),
-      parentNodeId: String(row.parent_node_id),
-      childKind: String(row.child_kind) as InteractionTreeChildKind,
-      childId: String(row.child_id),
-      position: Number(row.position),
-      createdAt: String(row.created_at),
-    };
-  }
-
-  private rowToInteractionMemoryNode(row: Record<string, unknown>): InteractionMemoryNodeRecord {
-    return {
-      workspaceId: String(row.workspace_id),
-      treeId: String(row.tree_id),
-      nodeId: String(row.node_id),
-      nodeKind: String(row.node_kind) as MemoryNodeKind,
-      path: String(row.path),
-      title: String(row.title),
-      summary: String(row.summary),
-      bodySha256: String(row.body_sha256),
-      level: row.level == null ? null : Number(row.level),
-      ordinal: row.ordinal == null ? null : Number(row.ordinal),
-      childCount: Number(row.child_count ?? 0),
-      observedAt: row.observed_at == null ? null : String(row.observed_at),
-      status: String(row.status) as MemoryNodeStatus,
-      metadata: this.parseJsonDict(row.metadata),
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at),
-    };
-  }
-
-  private rowToInteractionMemoryContainmentEdge(
-    row: Record<string, unknown>,
-  ): InteractionMemoryContainmentEdgeRecord {
-    return {
-      workspaceId: String(row.workspace_id),
-      treeId: String(row.tree_id),
-      parentNodeId: String(row.parent_node_id),
-      childNodeId: String(row.child_node_id),
-      position: Number(row.position),
-      createdAt: String(row.created_at),
-    };
-  }
-
   private rowToInteractionNodeEmbedding(row: Record<string, unknown>): InteractionNodeEmbeddingRecord {
     return {
       workspaceId: String(row.workspace_id),
@@ -13296,59 +12695,35 @@ export class RuntimeStateStore {
     };
   }
 
-  private rowToIntegrationSummaryNode(row: Record<string, unknown>): IntegrationSummaryNodeRecord {
+  private rowToSemanticMemoryNode(row: Record<string, unknown>): SemanticMemoryNodeRecord {
     return {
-      nodeId: String(row.node_id),
+      workspaceId: row.workspace_id == null ? null : String(row.workspace_id),
+      category: String(row.category) as SemanticMemoryCategory,
       treeId: String(row.tree_id),
-      level: Number(row.level),
-      ordinal: Number(row.ordinal),
+      nodeId: String(row.node_id),
+      nodeClass: String(row.node_class) as SemanticMemoryNodeClass,
+      nodeKind: String(row.node_kind),
+      sourceLeafId: row.source_leaf_id == null ? null : String(row.source_leaf_id),
       path: String(row.path),
       title: String(row.title),
       summary: String(row.summary),
       bodySha256: String(row.body_sha256),
-      childCount: Number(row.child_count ?? 0),
-      status: String(row.status) as IntegrationSummaryStatus,
-      sealedAt: String(row.sealed_at),
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at),
-    };
-  }
-
-  private rowToIntegrationTreeEdge(row: Record<string, unknown>): IntegrationTreeEdgeRecord {
-    return {
-      treeId: String(row.tree_id),
-      parentNodeId: String(row.parent_node_id),
-      childKind: String(row.child_kind) as InteractionTreeChildKind,
-      childId: String(row.child_id),
-      position: Number(row.position),
-      createdAt: String(row.created_at),
-    };
-  }
-
-  private rowToIntegrationMemoryNode(row: Record<string, unknown>): IntegrationMemoryNodeRecord {
-    return {
-      treeId: String(row.tree_id),
-      nodeId: String(row.node_id),
-      nodeKind: String(row.node_kind) as MemoryNodeKind,
-      path: String(row.path),
-      title: String(row.title),
-      summary: String(row.summary),
-      bodySha256: String(row.body_sha256),
-      level: row.level == null ? null : Number(row.level),
-      ordinal: row.ordinal == null ? null : Number(row.ordinal),
       childCount: Number(row.child_count ?? 0),
       observedAt: row.observed_at == null ? null : String(row.observed_at),
       status: String(row.status) as MemoryNodeStatus,
+      isMaterialized: Number(row.is_materialized ?? 0) !== 0,
       metadata: this.parseJsonDict(row.metadata),
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     };
   }
 
-  private rowToIntegrationMemoryContainmentEdge(
+  private rowToSemanticMemoryContainmentEdge(
     row: Record<string, unknown>,
-  ): IntegrationMemoryContainmentEdgeRecord {
+  ): SemanticMemoryContainmentEdgeRecord {
     return {
+      workspaceId: row.workspace_id == null ? null : String(row.workspace_id),
+      category: String(row.category) as SemanticMemoryCategory,
       treeId: String(row.tree_id),
       parentNodeId: String(row.parent_node_id),
       childNodeId: String(row.child_node_id),
@@ -13357,12 +12732,14 @@ export class RuntimeStateStore {
     };
   }
 
-  private rowToIntegrationNodeRelation(row: Record<string, unknown>): IntegrationNodeRelationRecord {
+  private rowToSemanticMemoryRelation(
+    row: Record<string, unknown>,
+  ): SemanticMemoryRelationRecord {
     return {
+      workspaceId: row.workspace_id == null ? null : String(row.workspace_id),
+      category: String(row.category) as SemanticMemoryCategory,
       treeId: String(row.tree_id),
-      fromNodeKind: String(row.from_node_kind) as IntegrationNodeKind,
       fromNodeId: String(row.from_node_id),
-      toNodeKind: String(row.to_node_kind) as IntegrationNodeKind,
       toNodeId: String(row.to_node_id),
       relationType: String(row.relation_type),
       metadata: this.parseJsonDict(row.metadata),

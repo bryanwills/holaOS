@@ -197,17 +197,15 @@ export interface IntegrationServiceHooks {
     connectionId: string;
     ownerUserId: string;
   }) => void;
-  /** Called after a binding row is created or updated via `upsertBinding`.
-   *  Distinct from `onConnectionActive` — fires when an *already-active*
-   *  connection is attached to an app (the dominant path when a previously-
-   *  authorized provider gets bound to a new dashboard app). The post-build
-   *  polish gate uses this to re-queue polish for apps whose pending
-   *  integrations were just resolved. */
+  /** Called when a new binding is created for a workspace target. */
   onBindingCreated?: (params: {
+    bindingId: string;
     workspaceId: string;
     targetType: string;
     targetId: string;
     integrationKey: string;
+    connectionId: string;
+    isDefault: boolean;
   }) => void;
 }
 
@@ -288,12 +286,21 @@ export class RuntimeIntegrationService {
       isDefault
     });
 
-    this.hooks.onBindingCreated?.({
-      workspaceId: binding.workspaceId,
-      targetType: binding.targetType,
-      targetId: binding.targetId,
-      integrationKey: binding.integrationKey
-    });
+    if (!existing) {
+      try {
+        this.hooks.onBindingCreated?.({
+          bindingId: binding.bindingId,
+          workspaceId: binding.workspaceId,
+          targetType: binding.targetType,
+          targetId: binding.targetId,
+          integrationKey: binding.integrationKey,
+          connectionId: binding.connectionId,
+          isDefault: binding.isDefault,
+        });
+      } catch {
+        // Hook is best-effort — never block the binding write.
+      }
+    }
 
     return toIntegrationBindingPayload(binding);
   }

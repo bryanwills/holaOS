@@ -6,6 +6,7 @@ import {
   createComposioApiClientFromEnv,
 } from "./composio-api-client.js";
 import {
+  countSummaryLikeSemanticIntegrationNodes,
   persistIntegrationCandidate,
   rebuildIntegrationTree,
   type IntegrationLeafCandidate,
@@ -22,6 +23,8 @@ const NOTION_DATABASE_ROW_LIMIT = 15;
 const SLACK_CHANNEL_LIMIT = 8;
 const SLACK_CHANNEL_HISTORY_LIMIT = 12;
 const SLACK_CHANNEL_HISTORY_TARGETS = 4;
+const GOOGLE_CALENDAR_LIMIT = 6;
+const GOOGLE_CALENDAR_EVENT_LIMIT = 8;
 
 type ComposioExecuteClient = Pick<ComposioApiClient, "executeAction"> & {
   proxyRequest?: ComposioApiClient["proxyRequest"];
@@ -172,6 +175,91 @@ interface GitHubReadmePayload {
   download_url?: unknown;
   content?: unknown;
   encoding?: unknown;
+}
+
+interface GoogleDriveAboutPayload {
+  user?: unknown;
+  storageQuota?: unknown;
+}
+
+interface GoogleDriveFilePayload {
+  id?: unknown;
+  name?: unknown;
+  mimeType?: unknown;
+  modifiedTime?: unknown;
+  createdTime?: unknown;
+  webViewLink?: unknown;
+  iconLink?: unknown;
+  owners?: unknown;
+  parents?: unknown;
+  shared?: unknown;
+  starred?: unknown;
+  trashed?: unknown;
+  size?: unknown;
+  description?: unknown;
+}
+
+interface TwitterUserPayload {
+  id?: unknown;
+  name?: unknown;
+  username?: unknown;
+  description?: unknown;
+  created_at?: unknown;
+  verified?: unknown;
+  profile_image_url?: unknown;
+  url?: unknown;
+  location?: unknown;
+  public_metrics?: unknown;
+}
+
+interface TwitterPostPayload {
+  id?: unknown;
+  text?: unknown;
+  created_at?: unknown;
+  author_id?: unknown;
+  conversation_id?: unknown;
+  lang?: unknown;
+  public_metrics?: unknown;
+  referenced_tweets?: unknown;
+  entities?: unknown;
+}
+
+interface GoogleCalendarListEntryPayload {
+  id?: unknown;
+  summary?: unknown;
+  description?: unknown;
+  primary?: unknown;
+  accessRole?: unknown;
+  timeZone?: unknown;
+}
+
+interface GoogleCalendarEventPayload {
+  id?: unknown;
+  summary?: unknown;
+  description?: unknown;
+  status?: unknown;
+  htmlLink?: unknown;
+  start?: unknown;
+  end?: unknown;
+  organizer?: unknown;
+  location?: unknown;
+}
+
+interface LinkedInUserInfoPayload {
+  id?: unknown;
+  author?: unknown;
+  sub?: unknown;
+  name?: unknown;
+  given_name?: unknown;
+  family_name?: unknown;
+  firstName?: unknown;
+  lastName?: unknown;
+  localizedFirstName?: unknown;
+  localizedLastName?: unknown;
+  picture?: unknown;
+  email?: unknown;
+  email_verified?: unknown;
+  locale?: unknown;
 }
 
 interface SlackAuthPayload {
@@ -622,6 +710,37 @@ async function fetchGitHubRepositoriesForAccount(params: {
 function gitHubReadmeFromData(value: unknown): GitHubReadmePayload | null {
   const unwrapped = unwrapActionData(value);
   return isRecord(unwrapped) ? (unwrapped as GitHubReadmePayload) : null;
+}
+
+function googleDriveAboutFromData(value: unknown): GoogleDriveAboutPayload | null {
+  const unwrapped = unwrapActionData(value);
+  return isRecord(unwrapped) ? (unwrapped as GoogleDriveAboutPayload) : null;
+}
+
+function googleDriveFilesFromData(value: unknown): GoogleDriveFilePayload[] {
+  return recordsFromData(value, ["files", "items"]) as GoogleDriveFilePayload[];
+}
+
+function twitterUserFromData(value: unknown): TwitterUserPayload | null {
+  const unwrapped = unwrapActionData(value);
+  return isRecord(unwrapped) ? (unwrapped as TwitterUserPayload) : null;
+}
+
+function twitterPostsFromData(value: unknown): TwitterPostPayload[] {
+  return recordsFromData(value, ["data", "tweets", "posts"]) as TwitterPostPayload[];
+}
+
+function googleCalendarListEntriesFromData(value: unknown): GoogleCalendarListEntryPayload[] {
+  return recordsFromData(value, ["items", "calendars"]) as GoogleCalendarListEntryPayload[];
+}
+
+function googleCalendarEventsFromData(value: unknown): GoogleCalendarEventPayload[] {
+  return recordsFromData(value, ["items", "events"]) as GoogleCalendarEventPayload[];
+}
+
+function linkedInUserInfoFromData(value: unknown): LinkedInUserInfoPayload | null {
+  const unwrapped = unwrapActionData(value);
+  return isRecord(unwrapped) ? (unwrapped as LinkedInUserInfoPayload) : null;
 }
 
 function slackAuthFromData(value: unknown): SlackAuthPayload | null {
@@ -1313,6 +1432,596 @@ function buildGitHubIssueCandidate(params: {
   };
 }
 
+function isGoogleDriveFolderMimeType(mimeType: string | null): boolean {
+  return mimeType === "application/vnd.google-apps.folder";
+}
+
+function buildGoogleDriveProfileCandidate(params: {
+  ownerUserId: string;
+  accountKey: string;
+  accountLabel: string;
+  connectionId: string;
+  about: GoogleDriveAboutPayload;
+  fetchedAt: string;
+}): IntegrationLeafCandidate {
+  const user = isRecord(params.about.user) ? params.about.user : null;
+  const storageQuota = isRecord(params.about.storageQuota) ? params.about.storageQuota : null;
+  const displayName = normalizeString(user?.displayName) ?? normalizeString(user?.name);
+  const email = normalizeString(user?.emailAddress) ?? normalizeString(user?.email);
+  const permissionId = normalizeString(user?.permissionId);
+  const usage = normalizeString(storageQuota?.usage);
+  const usageInDrive = normalizeString(storageQuota?.usageInDrive);
+  const usageInDriveTrash = normalizeString(storageQuota?.usageInDriveTrash);
+  const limit = normalizeString(storageQuota?.limit);
+  const lines = [
+    "# Google Drive profile",
+    "",
+    `- Account: ${params.accountLabel}`,
+    "- Provider: Google Drive",
+    `- Connection ID: ${params.connectionId}`,
+    displayName ? `- User: ${displayName}` : null,
+    email ? `- Email: ${email}` : null,
+    permissionId ? `- Permission ID: ${permissionId}` : null,
+    limit ? `- Storage limit: ${limit}` : null,
+    usage ? `- Storage used: ${usage}` : null,
+    usageInDrive ? `- Storage used in Drive: ${usageInDrive}` : null,
+    usageInDriveTrash ? `- Storage used in trash: ${usageInDriveTrash}` : null,
+    "",
+    "## Summary",
+    "",
+    `${params.accountLabel} Google Drive profile snapshot.`,
+    "",
+  ].filter((line): line is string => typeof line === "string");
+  return {
+    provider: "googledrive",
+    ownerUserId: params.ownerUserId,
+    accountKey: params.accountKey,
+    accountLabel: params.accountLabel,
+    subjectKey: "profile",
+    branchKey: "profile",
+    branchLabel: "Profile",
+    title: `Google Drive profile for ${params.accountLabel}`,
+    summary: clipText(
+      `${params.accountLabel} Google Drive profile snapshot${displayName ? ` for ${displayName}` : ""}.`,
+      220,
+    ),
+    content: `${lines.join("\n").trim()}\n`,
+    tags: ["googledrive", "profile"],
+    sourceType: "googledrive.profile",
+    sourceEventId: `googledrive-profile:${params.accountKey}`,
+    externalObjectId: params.accountKey,
+    externalObjectType: "google_drive_profile",
+    observedAt: params.fetchedAt,
+    confidence: 0.95,
+  };
+}
+
+function buildGoogleDriveFileCandidate(params: {
+  ownerUserId: string;
+  accountKey: string;
+  accountLabel: string;
+  file: GoogleDriveFilePayload;
+  fetchedAt: string;
+}): IntegrationLeafCandidate | null {
+  const fileId = normalizeString(params.file.id);
+  const name = normalizeString(params.file.name);
+  if (!fileId || !name) {
+    return null;
+  }
+  const mimeType = normalizeString(params.file.mimeType);
+  const modifiedAt = timestampToIso(params.file.modifiedTime)
+    ?? timestampToIso(params.file.createdTime)
+    ?? params.fetchedAt;
+  const webViewLink = normalizeString(params.file.webViewLink);
+  const size = normalizeString(params.file.size);
+  const description = normalizeString(params.file.description);
+  const ownerLabels = Array.isArray(params.file.owners)
+    ? params.file.owners
+      .filter(isRecord)
+      .map((owner) => normalizeString(owner.displayName) ?? normalizeString(owner.emailAddress))
+      .filter((owner): owner is string => Boolean(owner))
+    : [];
+  const isFolder = isGoogleDriveFolderMimeType(mimeType);
+  const kindLabel = isFolder ? "Folder" : "File";
+  const lines = [
+    `# ${name}`,
+    "",
+    `- Account: ${params.accountLabel}`,
+    "- Provider: Google Drive",
+    `- Type: ${kindLabel}`,
+    `- File ID: ${fileId}`,
+    mimeType ? `- MIME type: ${mimeType}` : null,
+    size ? `- Size: ${size}` : null,
+    ownerLabels.length > 0 ? `- Owners: ${ownerLabels.join(", ")}` : null,
+    modifiedAt ? `- Modified at: ${modifiedAt}` : null,
+    webViewLink ? `- URL: ${webViewLink}` : null,
+    "",
+    "## Summary",
+    "",
+    description ?? `${kindLabel} in Google Drive.`,
+    "",
+  ].filter((line): line is string => typeof line === "string");
+  return {
+    provider: "googledrive",
+    ownerUserId: params.ownerUserId,
+    accountKey: params.accountKey,
+    accountLabel: params.accountLabel,
+    subjectKey: `file:${fileId}`,
+    entityKey: `file:${fileId}`,
+    entityLabel: name,
+    branchKey: "overview",
+    branchLabel: "Overview",
+    title: name,
+    summary: clipText(
+      `${kindLabel} in Google Drive: ${name}${mimeType ? ` (${mimeType})` : ""}.`,
+      220,
+    ),
+    content: `${lines.join("\n").trim()}\n`,
+    tags: [
+      "googledrive",
+      isFolder ? "folder" : "file",
+      ...(mimeType ? [safeTag(`mime:${mimeType}`)] : []),
+    ].filter((item): item is string => Boolean(item)),
+    sourceType: isFolder ? "googledrive.folder" : "googledrive.file",
+    sourceEventId: `googledrive-file:${fileId}`,
+    externalObjectId: fileId,
+    externalObjectType: isFolder ? "google_drive_folder" : "google_drive_file",
+    observedAt: modifiedAt,
+    confidence: 0.84,
+  };
+}
+
+function buildTwitterProfileCandidate(params: {
+  ownerUserId: string;
+  accountKey: string;
+  accountLabel: string;
+  connectionId: string;
+  user: TwitterUserPayload;
+  fetchedAt: string;
+}): IntegrationLeafCandidate {
+  const userId = normalizeString(params.user.id);
+  const name = normalizeString(params.user.name);
+  const username = normalizeString(params.user.username);
+  const description = normalizeString(params.user.description);
+  const createdAt = timestampToIso(params.user.created_at);
+  const verified = normalizeBoolean(params.user.verified);
+  const profileImageUrl = normalizeString(params.user.profile_image_url);
+  const url = normalizeString(params.user.url);
+  const location = normalizeString(params.user.location);
+  const publicMetrics = isRecord(params.user.public_metrics) ? params.user.public_metrics : null;
+  const followersCount = parseInteger(publicMetrics?.followers_count);
+  const followingCount = parseInteger(publicMetrics?.following_count);
+  const tweetCount = parseInteger(publicMetrics?.tweet_count);
+  const lines = [
+    "# Twitter profile",
+    "",
+    `- Account: ${params.accountLabel}`,
+    "- Provider: Twitter / X",
+    `- Connection ID: ${params.connectionId}`,
+    name ? `- Name: ${name}` : null,
+    username ? `- Username: @${username}` : null,
+    userId ? `- User ID: ${userId}` : null,
+    verified !== null ? `- Verified: ${verified ? "yes" : "no"}` : null,
+    location ? `- Location: ${location}` : null,
+    url ? `- URL: ${url}` : null,
+    profileImageUrl ? `- Profile image: ${profileImageUrl}` : null,
+    followersCount !== null ? `- Followers: ${followersCount}` : null,
+    followingCount !== null ? `- Following: ${followingCount}` : null,
+    tweetCount !== null ? `- Posts: ${tweetCount}` : null,
+    createdAt ? `- Created at: ${createdAt}` : null,
+    "",
+    "## Summary",
+    "",
+    description ?? `${params.accountLabel} Twitter profile snapshot.`,
+    "",
+  ].filter((line): line is string => typeof line === "string");
+  return {
+    provider: "twitter",
+    ownerUserId: params.ownerUserId,
+    accountKey: params.accountKey,
+    accountLabel: params.accountLabel,
+    subjectKey: "profile",
+    branchKey: "profile",
+    branchLabel: "Profile",
+    title: `Twitter profile for ${params.accountLabel}`,
+    summary: clipText(
+      `${params.accountLabel} Twitter profile snapshot${description ? `: ${description}` : ""}`,
+      220,
+    ),
+    content: `${lines.join("\n").trim()}\n`,
+    tags: ["twitter", "profile"],
+    sourceType: "twitter.profile",
+    sourceEventId: `twitter-profile:${params.accountKey}`,
+    externalObjectId: userId ?? params.accountKey,
+    externalObjectType: "twitter_profile",
+    observedAt: params.fetchedAt,
+    confidence: 0.95,
+  };
+}
+
+function buildTwitterPostCandidate(params: {
+  ownerUserId: string;
+  accountKey: string;
+  accountLabel: string;
+  authorUsername: string | null;
+  post: TwitterPostPayload;
+  fetchedAt: string;
+}): IntegrationLeafCandidate | null {
+  const postId = normalizeString(params.post.id);
+  const text = normalizeString(params.post.text);
+  if (!postId || !text) {
+    return null;
+  }
+  const createdAt = timestampToIso(params.post.created_at) ?? params.fetchedAt;
+  const authorId = normalizeString(params.post.author_id);
+  const conversationId = normalizeString(params.post.conversation_id);
+  const lang = normalizeString(params.post.lang);
+  const publicMetrics = isRecord(params.post.public_metrics) ? params.post.public_metrics : null;
+  const likeCount = parseInteger(publicMetrics?.like_count);
+  const replyCount = parseInteger(publicMetrics?.reply_count);
+  const repostCount = parseInteger(publicMetrics?.retweet_count);
+  const quoteCount = parseInteger(publicMetrics?.quote_count);
+  const bookmarkCount = parseInteger(publicMetrics?.bookmark_count);
+  const impressionCount = parseInteger(publicMetrics?.impression_count);
+  const referencedTypes = Array.isArray(params.post.referenced_tweets)
+    ? params.post.referenced_tweets
+      .filter(isRecord)
+      .map((item) => normalizeString(item.type))
+      .filter((item): item is string => Boolean(item))
+    : [];
+  const lines = [
+    `# ${clipText(text, 120)}`,
+    "",
+    `- Account: ${params.accountLabel}`,
+    "- Provider: Twitter / X",
+    `- Post ID: ${postId}`,
+    params.authorUsername ? `- Author: @${params.authorUsername}` : null,
+    authorId ? `- Author ID: ${authorId}` : null,
+    conversationId ? `- Conversation ID: ${conversationId}` : null,
+    lang ? `- Language: ${lang}` : null,
+    referencedTypes.length > 0 ? `- References: ${referencedTypes.join(", ")}` : null,
+    likeCount !== null ? `- Likes: ${likeCount}` : null,
+    replyCount !== null ? `- Replies: ${replyCount}` : null,
+    repostCount !== null ? `- Reposts: ${repostCount}` : null,
+    quoteCount !== null ? `- Quotes: ${quoteCount}` : null,
+    bookmarkCount !== null ? `- Bookmarks: ${bookmarkCount}` : null,
+    impressionCount !== null ? `- Impressions: ${impressionCount}` : null,
+    createdAt ? `- Created at: ${createdAt}` : null,
+    "",
+    "## Summary",
+    "",
+    text,
+    "",
+  ].filter((line): line is string => typeof line === "string");
+  return {
+    provider: "twitter",
+    ownerUserId: params.ownerUserId,
+    accountKey: params.accountKey,
+    accountLabel: params.accountLabel,
+    subjectKey: `post:${postId}`,
+    entityKey: `post:${postId}`,
+    entityLabel: clipText(text, 72),
+    branchKey: "overview",
+    branchLabel: "Overview",
+    title: clipText(text, 72),
+    summary: clipText(
+      `${params.authorUsername ? `@${params.authorUsername}: ` : ""}${text}`,
+      220,
+    ),
+    content: `${lines.join("\n").trim()}\n`,
+    tags: [
+      "twitter",
+      "post",
+      ...(params.authorUsername ? [safeTag(`author:${params.authorUsername}`)] : []),
+      ...referencedTypes.map((value) => safeTag(`reference:${value}`)),
+    ].filter((item): item is string => Boolean(item)),
+    sourceType: "twitter.post",
+    sourceEventId: `twitter-post:${postId}`,
+    externalObjectId: postId,
+    externalObjectType: "twitter_post",
+    observedAt: createdAt,
+    confidence: 0.82,
+  };
+}
+
+function googleCalendarEventDateValue(value: unknown): string | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  return timestampToIso(value.dateTime) ?? normalizeString(value.date);
+}
+
+function googleCalendarEventWindowText(
+  start: unknown,
+  end: unknown,
+): string | null {
+  const startValue = googleCalendarEventDateValue(start);
+  const endValue = googleCalendarEventDateValue(end);
+  if (startValue && endValue) {
+    return `${startValue} -> ${endValue}`;
+  }
+  return startValue ?? endValue;
+}
+
+function buildGoogleCalendarProfileCandidate(params: {
+  ownerUserId: string;
+  accountKey: string;
+  accountLabel: string;
+  connectionId: string;
+  primaryCalendar: GoogleCalendarListEntryPayload | null;
+  calendarCount: number;
+  fetchedAt: string;
+}): IntegrationLeafCandidate {
+  const primaryId = normalizeString(params.primaryCalendar?.id);
+  const primarySummary = normalizeString(params.primaryCalendar?.summary);
+  const primaryTimezone = normalizeString(params.primaryCalendar?.timeZone);
+  const lines = [
+    "# Google Calendar profile",
+    "",
+    `- Account: ${params.accountLabel}`,
+    "- Provider: Google Calendar",
+    `- Connection ID: ${params.connectionId}`,
+    primaryId ? `- Primary calendar ID: ${primaryId}` : null,
+    primarySummary ? `- Primary calendar: ${primarySummary}` : null,
+    primaryTimezone ? `- Primary timezone: ${primaryTimezone}` : null,
+    `- Calendars fetched: ${params.calendarCount}`,
+    "",
+    "## Summary",
+    "",
+    `${params.accountLabel} Google Calendar snapshot across ${params.calendarCount} calendar${params.calendarCount === 1 ? "" : "s"}.`,
+    "",
+  ].filter((line): line is string => typeof line === "string");
+  return {
+    provider: "googlecalendar",
+    ownerUserId: params.ownerUserId,
+    accountKey: params.accountKey,
+    accountLabel: params.accountLabel,
+    subjectKey: "profile",
+    branchKey: "profile",
+    branchLabel: "Profile",
+    title: `Google Calendar profile for ${params.accountLabel}`,
+    summary: clipText(
+      `${params.accountLabel} Google Calendar snapshot across ${params.calendarCount} calendar${params.calendarCount === 1 ? "" : "s"}.`,
+      220,
+    ),
+    content: `${lines.join("\n").trim()}\n`,
+    tags: ["googlecalendar", "profile"],
+    sourceType: "googlecalendar.profile",
+    sourceEventId: `googlecalendar-profile:${params.accountKey}`,
+    externalObjectId: primaryId ?? params.accountKey,
+    externalObjectType: "google_calendar_profile",
+    observedAt: params.fetchedAt,
+    confidence: 0.95,
+  };
+}
+
+function buildGoogleCalendarCalendarCandidate(params: {
+  ownerUserId: string;
+  accountKey: string;
+  accountLabel: string;
+  calendar: GoogleCalendarListEntryPayload;
+  fetchedAt: string;
+}): IntegrationLeafCandidate | null {
+  const calendarId = normalizeString(params.calendar.id);
+  const summary = normalizeString(params.calendar.summary);
+  if (!calendarId) {
+    return null;
+  }
+  const title = summary ?? calendarId;
+  const description = normalizeString(params.calendar.description);
+  const accessRole = normalizeString(params.calendar.accessRole);
+  const primary = normalizeBoolean(params.calendar.primary);
+  const timeZone = normalizeString(params.calendar.timeZone);
+  const lines = [
+    `# ${title}`,
+    "",
+    `- Account: ${params.accountLabel}`,
+    "- Provider: Google Calendar",
+    `- Calendar ID: ${calendarId}`,
+    primary !== null ? `- Primary: ${primary ? "yes" : "no"}` : null,
+    accessRole ? `- Access role: ${accessRole}` : null,
+    timeZone ? `- Time zone: ${timeZone}` : null,
+    "",
+    "## Summary",
+    "",
+    description ?? `${title} calendar available through Google Calendar.`,
+    "",
+  ].filter((line): line is string => typeof line === "string");
+  return {
+    provider: "googlecalendar",
+    ownerUserId: params.ownerUserId,
+    accountKey: params.accountKey,
+    accountLabel: params.accountLabel,
+    subjectKey: `calendar:${calendarId}`,
+    entityKey: `calendar:${calendarId}`,
+    entityLabel: title,
+    branchKey: "overview",
+    branchLabel: "Overview",
+    title,
+    summary: clipText(
+      `${title} calendar${accessRole ? ` (${accessRole})` : ""}.`,
+      220,
+    ),
+    content: `${lines.join("\n").trim()}\n`,
+    tags: [
+      "googlecalendar",
+      "calendar",
+      ...(primary ? ["primary"] : []),
+      ...(accessRole ? [safeTag(`access:${accessRole}`)] : []),
+    ].filter((item): item is string => Boolean(item)),
+    sourceType: "googlecalendar.calendar",
+    sourceEventId: `googlecalendar-calendar:${calendarId}`,
+    externalObjectId: calendarId,
+    externalObjectType: "google_calendar",
+    observedAt: params.fetchedAt,
+    confidence: 0.88,
+  };
+}
+
+function buildGoogleCalendarEventCandidate(params: {
+  ownerUserId: string;
+  accountKey: string;
+  accountLabel: string;
+  calendarId: string;
+  calendarTitle: string;
+  event: GoogleCalendarEventPayload;
+  fetchedAt: string;
+}): IntegrationLeafCandidate | null {
+  const eventId = normalizeString(params.event.id);
+  const summary = normalizeString(params.event.summary) ?? "Untitled event";
+  if (!eventId) {
+    return null;
+  }
+  const description = normalizeString(params.event.description);
+  const status = normalizeString(params.event.status);
+  const htmlLink = normalizeString(params.event.htmlLink);
+  const location = normalizeString(params.event.location);
+  const organizer = isRecord(params.event.organizer) ? params.event.organizer : null;
+  const organizerLabel = normalizeString(organizer?.displayName) ?? normalizeString(organizer?.email);
+  const windowText = googleCalendarEventWindowText(params.event.start, params.event.end);
+  const observedAt = googleCalendarEventDateValue(params.event.start)
+    ?? googleCalendarEventDateValue(params.event.end)
+    ?? params.fetchedAt;
+  const lines = [
+    `# ${summary}`,
+    "",
+    `- Account: ${params.accountLabel}`,
+    "- Provider: Google Calendar",
+    `- Calendar: ${params.calendarTitle}`,
+    `- Event ID: ${eventId}`,
+    windowText ? `- When: ${windowText}` : null,
+    organizerLabel ? `- Organizer: ${organizerLabel}` : null,
+    location ? `- Location: ${location}` : null,
+    status ? `- Status: ${status}` : null,
+    htmlLink ? `- URL: ${htmlLink}` : null,
+    "",
+    "## Summary",
+    "",
+    description ?? `${summary} on ${params.calendarTitle}.`,
+    "",
+  ].filter((line): line is string => typeof line === "string");
+  return {
+    provider: "googlecalendar",
+    ownerUserId: params.ownerUserId,
+    accountKey: params.accountKey,
+    accountLabel: params.accountLabel,
+    subjectKey: `event:${params.calendarId}:${eventId}`,
+    entityKey: `calendar:${params.calendarId}`,
+    entityLabel: params.calendarTitle,
+    branchKey: "events",
+    branchLabel: "Events",
+    title: summary,
+    summary: clipText(
+      `${summary}${windowText ? ` (${windowText})` : ""}.`,
+      220,
+    ),
+    content: `${lines.join("\n").trim()}\n`,
+    tags: [
+      "googlecalendar",
+      "event",
+      ...(status ? [safeTag(`status:${status}`)] : []),
+    ].filter((item): item is string => Boolean(item)),
+    sourceType: "googlecalendar.event",
+    sourceEventId: `googlecalendar-event:${params.calendarId}:${eventId}`,
+    externalObjectId: eventId,
+    externalObjectType: "google_calendar_event",
+    observedAt,
+    confidence: 0.83,
+  };
+}
+
+function linkedInProfileName(value: LinkedInUserInfoPayload): string | null {
+  const direct = normalizeString(value.name);
+  if (direct) {
+    return direct;
+  }
+  const given = normalizeString(value.given_name)
+    ?? normalizeString(value.firstName)
+    ?? normalizeString(value.localizedFirstName);
+  const family = normalizeString(value.family_name)
+    ?? normalizeString(value.lastName)
+    ?? normalizeString(value.localizedLastName);
+  const combined = [given, family]
+    .filter((part): part is string => Boolean(part))
+    .join(" ")
+    .trim();
+  return combined.length > 0 ? combined : null;
+}
+
+function linkedInProfilePersonId(value: LinkedInUserInfoPayload): string | null {
+  const direct = normalizeString(value.id);
+  if (direct) {
+    return direct;
+  }
+  const author = normalizeString(value.author);
+  if (author?.startsWith("urn:li:person:")) {
+    return author.slice("urn:li:person:".length);
+  }
+  return null;
+}
+
+function buildLinkedInProfileCandidate(params: {
+  ownerUserId: string;
+  accountKey: string;
+  accountLabel: string;
+  connectionId: string;
+  userInfo: LinkedInUserInfoPayload;
+  personId: string | null;
+  fetchedAt: string;
+}): IntegrationLeafCandidate {
+  const name = linkedInProfileName(params.userInfo);
+  const givenName = normalizeString(params.userInfo.given_name);
+  const familyName = normalizeString(params.userInfo.family_name);
+  const email = normalizeString(params.userInfo.email);
+  const locale = normalizeString(params.userInfo.locale);
+  const picture = normalizeString(params.userInfo.picture);
+  const sub = normalizeString(params.userInfo.sub);
+  const emailVerified = normalizeBoolean(params.userInfo.email_verified);
+  const lines = [
+    "# LinkedIn profile",
+    "",
+    `- Account: ${params.accountLabel}`,
+    "- Provider: LinkedIn",
+    `- Connection ID: ${params.connectionId}`,
+    name ? `- Name: ${name}` : null,
+    givenName ? `- First name: ${givenName}` : null,
+    familyName ? `- Last name: ${familyName}` : null,
+    email ? `- Email: ${email}` : null,
+    emailVerified !== null ? `- Email verified: ${emailVerified ? "yes" : "no"}` : null,
+    locale ? `- Locale: ${locale}` : null,
+    picture ? `- Picture: ${picture}` : null,
+    sub ? `- Subject ID: ${sub}` : null,
+    params.personId ? `- Person ID: ${params.personId}` : null,
+    "",
+    "## Summary",
+    "",
+    `${params.accountLabel} LinkedIn profile snapshot.`,
+    "",
+  ].filter((line): line is string => typeof line === "string");
+  return {
+    provider: "linkedin",
+    ownerUserId: params.ownerUserId,
+    accountKey: params.accountKey,
+    accountLabel: params.accountLabel,
+    subjectKey: "profile",
+    branchKey: "profile",
+    branchLabel: "Profile",
+    title: `LinkedIn profile for ${params.accountLabel}`,
+    summary: clipText(
+      `${params.accountLabel} LinkedIn profile snapshot${name ? ` for ${name}` : ""}.`,
+      220,
+    ),
+    content: `${lines.join("\n").trim()}\n`,
+    tags: ["linkedin", "profile"],
+    sourceType: "linkedin.profile",
+    sourceEventId: `linkedin-profile:${params.accountKey}`,
+    externalObjectId: params.personId ?? sub ?? params.accountKey,
+    externalObjectType: "linkedin_profile",
+    observedAt: params.fetchedAt,
+    confidence: 0.95,
+  };
+}
+
 function buildSlackProfileCandidate(params: {
   ownerUserId: string;
   accountKey: string;
@@ -1914,7 +2623,14 @@ function persistConnectionIdentity(params: {
 
 export function supportsIntegrationContextFetchProvider(providerId: string): boolean {
   const normalized = providerId.trim().toLowerCase();
-  return normalized === "gmail" || normalized === "github" || normalized === "notion" || normalized === "slack";
+  return normalized === "gmail"
+    || normalized === "github"
+    || normalized === "notion"
+    || normalized === "slack"
+    || normalized === "googlecalendar"
+    || normalized === "googledrive"
+    || normalized === "twitter"
+    || normalized === "linkedin";
 }
 
 async function fetchGmailIntegrationContext(params: {
@@ -2094,19 +2810,15 @@ async function fetchGmailIntegrationContext(params: {
 
   await rebuildIntegrationTree({
     store: params.store,
-    workspaceId: "",
     treeId,
-    summaryModelClient: null,
     embeddingClient: null,
   });
   chunksCompleted += 1;
 
-  summaryNodes = params.store.listIntegrationSummaryNodes({
+  summaryNodes = countSummaryLikeSemanticIntegrationNodes({
+    store: params.store,
     treeId,
-    status: "active",
-    limit: 10_000,
-    offset: 0,
-  }).length;
+  });
   syncProgress({ current_chunk_label: "Gmail context fetch complete" });
 
   return {
@@ -2516,19 +3228,15 @@ async function fetchGitHubIntegrationContext(params: {
   syncProgress({ current_chunk_label: "Rebuilding GitHub context summary" });
   await rebuildIntegrationTree({
     store: params.store,
-    workspaceId: "",
     treeId,
-    summaryModelClient: null,
     embeddingClient: null,
   });
   chunksCompleted += 1;
 
-  summaryNodes = params.store.listIntegrationSummaryNodes({
+  summaryNodes = countSummaryLikeSemanticIntegrationNodes({
+    store: params.store,
     treeId,
-    status: "active",
-    limit: 10_000,
-    offset: 0,
-  }).length;
+  });
   syncProgress({ current_chunk_label: "GitHub context fetch complete" });
 
   return {
@@ -2846,25 +3554,777 @@ async function fetchNotionIntegrationContext(params: {
   syncProgress({ current_chunk_label: "Rebuilding Notion context summary" });
   await rebuildIntegrationTree({
     store: params.store,
-    workspaceId: "",
     treeId,
-    summaryModelClient: null,
     embeddingClient: null,
   });
   chunksCompleted += 1;
 
-  summaryNodes = params.store.listIntegrationSummaryNodes({
+  summaryNodes = countSummaryLikeSemanticIntegrationNodes({
+    store: params.store,
     treeId,
-    status: "active",
-    limit: 10_000,
-    offset: 0,
-  }).length;
+  });
   syncProgress({ current_chunk_label: "Notion context fetch complete" });
 
   return {
     ok: true,
     supported: true,
     provider_id: "notion",
+    connection_id: connection.connectionId,
+    account_key: accountKey,
+    account_label: accountLabel,
+    tree_id: treeId,
+    fetched_at: params.fetchedAt,
+    leaves_created: persistStats.created,
+    leaves_superseding: persistStats.superseding,
+    leaves_unchanged: persistStats.unchanged,
+    messages_seen: contentSeen,
+    messages_persisted: contentPersisted,
+    summary_nodes: summaryNodes,
+    actions,
+  };
+}
+
+async function fetchGoogleDriveIntegrationContext(params: {
+  store: RuntimeStateStore;
+  connectionId: string;
+  composio: ComposioExecuteClient;
+  fetchedAt: string;
+  progress?: IntegrationContextFetchProgressReporter | null;
+}): Promise<IntegrationContextFetchResult> {
+  const connection = params.store.getIntegrationConnection(params.connectionId);
+  if (!connection) {
+    throw new Error(`integration connection ${params.connectionId} not found`);
+  }
+  if (!params.composio.proxyRequest) {
+    throw new Error("Google Drive context fetch requires Composio proxy support");
+  }
+  const connectedAccountId = connection.accountExternalId ?? "";
+  const persistStats = { created: 0, superseding: 0, unchanged: 0 };
+  const actions: string[] = [];
+  let accountKey: string | null = null;
+  let accountLabel: string | null = connection.accountLabel;
+  let treeId: string | null = null;
+  let contentSeen = 0;
+  let contentPersisted = 0;
+  let summaryNodes = 0;
+  let chunksTotal = 4;
+  let chunksCompleted = 0;
+  const syncProgress = (patch: Partial<IntegrationContextFetchProgressSnapshot> = {}) => {
+    params.progress?.patch({
+      account_key: accountKey,
+      account_label: accountLabel,
+      tree_id: treeId,
+      chunks_total: chunksTotal,
+      chunks_completed: chunksCompleted,
+      messages_seen: contentSeen,
+      messages_persisted: contentPersisted,
+      leaves_created: persistStats.created,
+      leaves_superseding: persistStats.superseding,
+      leaves_unchanged: persistStats.unchanged,
+      summary_nodes: summaryNodes,
+      actions,
+      ...patch,
+    });
+  };
+
+  syncProgress({ current_chunk_label: "Fetching Google Drive profile" });
+  const aboutResult = await params.composio.proxyRequest({
+    connectedAccountId,
+    endpoint: "/drive/v3/about?fields=user(displayName,emailAddress,permissionId),storageQuota(limit,usage,usageInDrive,usageInDriveTrash)",
+    method: "GET",
+  });
+  actions.push("GOOGLEDRIVE_PROXY:/drive/v3/about");
+  chunksCompleted += 1;
+  syncProgress({ current_chunk_label: "Saving Google Drive profile" });
+  const about = googleDriveAboutFromData(aboutResult.data);
+  const user = isRecord(about?.user) ? about.user : null;
+  const email = normalizeString(user?.emailAddress) ?? normalizeString(user?.email);
+  const displayName = normalizeString(user?.displayName) ?? normalizeString(user?.name);
+  accountKey = email
+    ?? normalizeString(connection.accountEmail)
+    ?? normalizeString(connection.accountHandle)
+    ?? normalizeString(connection.accountExternalId)
+    ?? connection.connectionId;
+  if (email) {
+    persistConnectionIdentity({
+      store: params.store,
+      connectionId: connection.connectionId,
+      accountEmail: email,
+    });
+  }
+  accountLabel = displayName ?? email ?? accountKey;
+
+  const profilePersist = await persistIntegrationCandidate({
+    store: params.store,
+    workspaceId: "",
+    candidate: buildGoogleDriveProfileCandidate({
+      ownerUserId: connection.ownerUserId,
+      accountKey,
+      accountLabel,
+      connectionId: connection.connectionId,
+      about: about ?? {},
+      fetchedAt: params.fetchedAt,
+    }),
+    embeddingClient: null,
+  });
+  updatePersistStats(profilePersist, persistStats);
+  treeId = profilePersist.tree.treeId;
+  chunksCompleted += 1;
+  syncProgress({ current_chunk_label: "Fetching Google Drive files" });
+
+  const filesResult = await params.composio.proxyRequest({
+    connectedAccountId,
+    endpoint: "/drive/v3/files?pageSize=25&orderBy=modifiedTime%20desc&includeItemsFromAllDrives=true&supportsAllDrives=true&fields=nextPageToken,files(id,name,mimeType,modifiedTime,createdTime,webViewLink,owners(displayName,emailAddress),parents,shared,starred,trashed,size,description)",
+    method: "GET",
+  });
+  actions.push("GOOGLEDRIVE_PROXY:/drive/v3/files");
+  const files = googleDriveFilesFromData(filesResult.data)
+    .filter((file) => normalizeBoolean(file.trashed) !== true);
+  const fileEntityKeys = new Set(
+    files
+      .map((file) => normalizeString(file.id))
+      .filter((id): id is string => Boolean(id))
+      .map((id) => `file:${id}`),
+  );
+  chunksCompleted += 1;
+  syncProgress({
+    current_chunk_label:
+      files.length > 0
+        ? `Importing Google Drive files (0/${files.length})`
+        : "Rebuilding Google Drive context summary",
+  });
+
+  chunksTotal += files.length;
+  for (const [index, file] of files.entries()) {
+    contentSeen += 1;
+    const candidate = buildGoogleDriveFileCandidate({
+      ownerUserId: connection.ownerUserId,
+      accountKey,
+      accountLabel,
+      file,
+      fetchedAt: params.fetchedAt,
+    });
+    if (candidate) {
+      const persisted = await persistIntegrationCandidate({
+        store: params.store,
+        workspaceId: "",
+        candidate,
+        embeddingClient: null,
+      });
+      updatePersistStats(persisted, persistStats);
+      contentPersisted += 1;
+    }
+    chunksCompleted += 1;
+    syncProgress({
+      current_chunk_label:
+        index + 1 < files.length
+          ? `Importing Google Drive files (${index + 1}/${files.length})`
+          : "Reconciling Google Drive files",
+    });
+  }
+
+  const retiredFiles = retireIntegrationEntityLeaves({
+    store: params.store,
+    treeId,
+    entityPrefix: "file:",
+    keepEntityKeys: fileEntityKeys,
+    supersededAt: params.fetchedAt,
+  });
+  if (retiredFiles > 0) {
+    actions.push(`GOOGLEDRIVE_RETIRED_FILE_LEAVES:${retiredFiles}`);
+  }
+  chunksCompleted += 1;
+
+  syncProgress({ current_chunk_label: "Rebuilding Google Drive context summary" });
+  await rebuildIntegrationTree({
+    store: params.store,
+    treeId,
+    embeddingClient: null,
+  });
+  chunksCompleted += 1;
+
+  summaryNodes = countSummaryLikeSemanticIntegrationNodes({
+    store: params.store,
+    treeId,
+  });
+  syncProgress({ current_chunk_label: "Google Drive context fetch complete" });
+
+  return {
+    ok: true,
+    supported: true,
+    provider_id: "googledrive",
+    connection_id: connection.connectionId,
+    account_key: accountKey,
+    account_label: accountLabel,
+    tree_id: treeId,
+    fetched_at: params.fetchedAt,
+    leaves_created: persistStats.created,
+    leaves_superseding: persistStats.superseding,
+    leaves_unchanged: persistStats.unchanged,
+    messages_seen: contentSeen,
+    messages_persisted: contentPersisted,
+    summary_nodes: summaryNodes,
+    actions,
+  };
+}
+
+async function fetchTwitterIntegrationContext(params: {
+  store: RuntimeStateStore;
+  connectionId: string;
+  composio: ComposioExecuteClient;
+  fetchedAt: string;
+  progress?: IntegrationContextFetchProgressReporter | null;
+}): Promise<IntegrationContextFetchResult> {
+  const connection = params.store.getIntegrationConnection(params.connectionId);
+  if (!connection) {
+    throw new Error(`integration connection ${params.connectionId} not found`);
+  }
+  const connectedAccountId = connection.accountExternalId ?? "";
+  const persistStats = { created: 0, superseding: 0, unchanged: 0 };
+  const actions: string[] = [];
+  let accountKey: string | null = null;
+  let accountLabel: string | null = connection.accountLabel;
+  let treeId: string | null = null;
+  let contentSeen = 0;
+  let contentPersisted = 0;
+  let summaryNodes = 0;
+  let chunksTotal = 4;
+  let chunksCompleted = 0;
+  const syncProgress = (patch: Partial<IntegrationContextFetchProgressSnapshot> = {}) => {
+    params.progress?.patch({
+      account_key: accountKey,
+      account_label: accountLabel,
+      tree_id: treeId,
+      chunks_total: chunksTotal,
+      chunks_completed: chunksCompleted,
+      messages_seen: contentSeen,
+      messages_persisted: contentPersisted,
+      leaves_created: persistStats.created,
+      leaves_superseding: persistStats.superseding,
+      leaves_unchanged: persistStats.unchanged,
+      summary_nodes: summaryNodes,
+      actions,
+      ...patch,
+    });
+  };
+
+  syncProgress({ current_chunk_label: "Fetching Twitter profile" });
+  let profile: TwitterUserPayload | null = null;
+  if (params.composio.proxyRequest) {
+    const profileResult = await params.composio.proxyRequest({
+      connectedAccountId,
+      endpoint: "/2/users/me?user.fields=created_at,description,id,location,name,profile_image_url,public_metrics,url,username,verified",
+      method: "GET",
+    });
+    actions.push("TWITTER_PROXY:/2/users/me");
+    profile = twitterUserFromData(profileResult.data);
+  } else {
+    const profileResult = await params.composio.executeAction({
+      connectedAccountId,
+      toolSlug: "TWITTER_USER_LOOKUP_ME",
+      arguments: {},
+    });
+    actions.push("TWITTER_USER_LOOKUP_ME");
+    profile = twitterUserFromData(profileResult.data);
+  }
+  chunksCompleted += 1;
+  syncProgress({ current_chunk_label: "Saving Twitter profile" });
+
+  const userId = normalizeString(profile?.id);
+  const username = normalizeString(profile?.username);
+  const name = normalizeString(profile?.name);
+  accountKey = username
+    ?? normalizeString(connection.accountHandle)
+    ?? normalizeString(connection.accountExternalId)
+    ?? connection.connectionId;
+  if (username) {
+    persistConnectionIdentity({
+      store: params.store,
+      connectionId: connection.connectionId,
+      accountHandle: username,
+    });
+  }
+  accountLabel = name && username ? `${name} (@${username})` : name ?? username ?? accountKey;
+
+  const profilePersist = await persistIntegrationCandidate({
+    store: params.store,
+    workspaceId: "",
+    candidate: buildTwitterProfileCandidate({
+      ownerUserId: connection.ownerUserId,
+      accountKey,
+      accountLabel,
+      connectionId: connection.connectionId,
+      user: profile ?? {},
+      fetchedAt: params.fetchedAt,
+    }),
+    embeddingClient: null,
+  });
+  updatePersistStats(profilePersist, persistStats);
+  treeId = profilePersist.tree.treeId;
+  chunksCompleted += 1;
+  syncProgress({ current_chunk_label: "Fetching Twitter timeline" });
+
+  let posts: TwitterPostPayload[] = [];
+  if (userId) {
+    if (params.composio.proxyRequest) {
+      const timelineResult = await params.composio.proxyRequest({
+        connectedAccountId,
+        endpoint: `/2/users/${encodeURIComponent(userId)}/timelines/reverse_chronological?max_results=20&exclude=replies&tweet.fields=author_id,conversation_id,created_at,entities,lang,public_metrics,referenced_tweets`,
+        method: "GET",
+      });
+      actions.push("TWITTER_PROXY:/2/users/{id}/timelines/reverse_chronological");
+      posts = twitterPostsFromData(timelineResult.data);
+    } else {
+      const timelineResult = await params.composio.executeAction({
+        connectedAccountId,
+        toolSlug: "TWITTER_USER_HOME_TIMELINE_BY_USER_ID",
+        arguments: {
+          id: userId,
+          max_results: 20,
+          exclude: ["replies"],
+        },
+      });
+      actions.push("TWITTER_USER_HOME_TIMELINE_BY_USER_ID");
+      posts = twitterPostsFromData(timelineResult.data);
+    }
+  }
+  const postEntityKeys = new Set(
+    posts
+      .map((post) => normalizeString(post.id))
+      .filter((id): id is string => Boolean(id))
+      .map((id) => `post:${id}`),
+  );
+  chunksCompleted += 1;
+  chunksTotal += posts.length;
+  syncProgress({
+    current_chunk_label:
+      posts.length > 0
+        ? `Importing Twitter posts (0/${posts.length})`
+        : "Rebuilding Twitter context summary",
+  });
+
+  for (const [index, post] of posts.entries()) {
+    contentSeen += 1;
+    const candidate = buildTwitterPostCandidate({
+      ownerUserId: connection.ownerUserId,
+      accountKey,
+      accountLabel,
+      authorUsername: username,
+      post,
+      fetchedAt: params.fetchedAt,
+    });
+    if (candidate) {
+      const persisted = await persistIntegrationCandidate({
+        store: params.store,
+        workspaceId: "",
+        candidate,
+        embeddingClient: null,
+      });
+      updatePersistStats(persisted, persistStats);
+      contentPersisted += 1;
+    }
+    chunksCompleted += 1;
+    syncProgress({
+      current_chunk_label:
+        index + 1 < posts.length
+          ? `Importing Twitter posts (${index + 1}/${posts.length})`
+          : "Reconciling Twitter posts",
+    });
+  }
+
+  const retiredPosts = retireIntegrationEntityLeaves({
+    store: params.store,
+    treeId,
+    entityPrefix: "post:",
+    keepEntityKeys: postEntityKeys,
+    supersededAt: params.fetchedAt,
+  });
+  if (retiredPosts > 0) {
+    actions.push(`TWITTER_RETIRED_POST_LEAVES:${retiredPosts}`);
+  }
+  chunksCompleted += 1;
+
+  syncProgress({ current_chunk_label: "Rebuilding Twitter context summary" });
+  await rebuildIntegrationTree({
+    store: params.store,
+    treeId,
+    embeddingClient: null,
+  });
+  chunksCompleted += 1;
+
+  summaryNodes = countSummaryLikeSemanticIntegrationNodes({
+    store: params.store,
+    treeId,
+  });
+  syncProgress({ current_chunk_label: "Twitter context fetch complete" });
+
+  return {
+    ok: true,
+    supported: true,
+    provider_id: "twitter",
+    connection_id: connection.connectionId,
+    account_key: accountKey,
+    account_label: accountLabel,
+    tree_id: treeId,
+    fetched_at: params.fetchedAt,
+    leaves_created: persistStats.created,
+    leaves_superseding: persistStats.superseding,
+    leaves_unchanged: persistStats.unchanged,
+    messages_seen: contentSeen,
+    messages_persisted: contentPersisted,
+    summary_nodes: summaryNodes,
+    actions,
+  };
+}
+
+async function fetchGoogleCalendarIntegrationContext(params: {
+  store: RuntimeStateStore;
+  connectionId: string;
+  composio: ComposioExecuteClient;
+  fetchedAt: string;
+  progress?: IntegrationContextFetchProgressReporter | null;
+}): Promise<IntegrationContextFetchResult> {
+  const connection = params.store.getIntegrationConnection(params.connectionId);
+  if (!connection) {
+    throw new Error(`integration connection ${params.connectionId} not found`);
+  }
+  const connectedAccountId = connection.accountExternalId ?? "";
+  const persistStats = { created: 0, superseding: 0, unchanged: 0 };
+  const actions: string[] = [];
+  let accountKey: string | null = null;
+  let accountLabel: string | null = connection.accountLabel;
+  let treeId: string | null = null;
+  let contentSeen = 0;
+  let contentPersisted = 0;
+  let summaryNodes = 0;
+  let chunksTotal = 4;
+  let chunksCompleted = 0;
+  const syncProgress = (patch: Partial<IntegrationContextFetchProgressSnapshot> = {}) => {
+    params.progress?.patch({
+      account_key: accountKey,
+      account_label: accountLabel,
+      tree_id: treeId,
+      chunks_total: chunksTotal,
+      chunks_completed: chunksCompleted,
+      messages_seen: contentSeen,
+      messages_persisted: contentPersisted,
+      leaves_created: persistStats.created,
+      leaves_superseding: persistStats.superseding,
+      leaves_unchanged: persistStats.unchanged,
+      summary_nodes: summaryNodes,
+      actions,
+      ...patch,
+    });
+  };
+
+  syncProgress({ current_chunk_label: "Fetching Google Calendar calendars" });
+  const calendarsResult = await params.composio.executeAction({
+    connectedAccountId,
+    toolSlug: "GOOGLECALENDAR_LIST_CALENDARS",
+    arguments: {
+      max_results: GOOGLE_CALENDAR_LIMIT,
+    },
+  });
+  actions.push("GOOGLECALENDAR_LIST_CALENDARS");
+  const calendars = googleCalendarListEntriesFromData(calendarsResult.data);
+  const sortedCalendars = [...calendars].sort((left, right) => {
+    const leftPrimary = normalizeBoolean(left.primary) === true ? 0 : 1;
+    const rightPrimary = normalizeBoolean(right.primary) === true ? 0 : 1;
+    return leftPrimary - rightPrimary
+      || (normalizeString(left.summary) ?? normalizeString(left.id) ?? "").localeCompare(
+        normalizeString(right.summary) ?? normalizeString(right.id) ?? "",
+      );
+  });
+  const primaryCalendar = sortedCalendars.find((calendar) => normalizeBoolean(calendar.primary) === true)
+    ?? sortedCalendars[0]
+    ?? null;
+  chunksCompleted += 1;
+  syncProgress({ current_chunk_label: "Saving Google Calendar profile" });
+
+  const primaryCalendarId = normalizeString(primaryCalendar?.id);
+  const primaryCalendarSummary = normalizeString(primaryCalendar?.summary);
+  accountKey = primaryCalendarId
+    ?? normalizeString(connection.accountEmail)
+    ?? normalizeString(connection.accountHandle)
+    ?? normalizeString(connection.accountExternalId)
+    ?? connection.connectionId;
+  if (primaryCalendarId?.includes("@")) {
+    persistConnectionIdentity({
+      store: params.store,
+      connectionId: connection.connectionId,
+      accountEmail: primaryCalendarId,
+    });
+  }
+  accountLabel = primaryCalendarSummary ?? primaryCalendarId ?? accountKey;
+
+  const profilePersist = await persistIntegrationCandidate({
+    store: params.store,
+    workspaceId: "",
+    candidate: buildGoogleCalendarProfileCandidate({
+      ownerUserId: connection.ownerUserId,
+      accountKey,
+      accountLabel,
+      connectionId: connection.connectionId,
+      primaryCalendar,
+      calendarCount: sortedCalendars.length,
+      fetchedAt: params.fetchedAt,
+    }),
+    embeddingClient: null,
+  });
+  updatePersistStats(profilePersist, persistStats);
+  treeId = profilePersist.tree.treeId;
+  chunksCompleted += 1;
+  chunksTotal += sortedCalendars.length;
+  syncProgress({
+    current_chunk_label:
+      sortedCalendars.length > 0
+        ? `Importing Google Calendar calendars (0/${sortedCalendars.length})`
+        : "Rebuilding Google Calendar context summary",
+  });
+
+  const calendarEntityKeys = new Set<string>();
+  for (const [index, calendar] of sortedCalendars.entries()) {
+    const calendarId = normalizeString(calendar.id);
+    const calendarTitle = normalizeString(calendar.summary) ?? calendarId ?? "Calendar";
+    if (calendarId) {
+      calendarEntityKeys.add(`calendar:${calendarId}`);
+    }
+
+    const calendarCandidate = buildGoogleCalendarCalendarCandidate({
+      ownerUserId: connection.ownerUserId,
+      accountKey,
+      accountLabel,
+      calendar,
+      fetchedAt: params.fetchedAt,
+    });
+    if (calendarCandidate) {
+      contentSeen += 1;
+      const persisted = await persistIntegrationCandidate({
+        store: params.store,
+        workspaceId: "",
+        candidate: calendarCandidate,
+        embeddingClient: null,
+      });
+      updatePersistStats(persisted, persistStats);
+      contentPersisted += 1;
+    }
+
+    if (calendarId) {
+      try {
+        const eventsResult = await params.composio.executeAction({
+          connectedAccountId,
+          toolSlug: "GOOGLECALENDAR_EVENTS_LIST",
+          arguments: {
+            calendarId,
+            maxResults: GOOGLE_CALENDAR_EVENT_LIMIT,
+            singleEvents: true,
+            orderBy: "startTime",
+            timeMin: params.fetchedAt,
+          },
+        });
+        actions.push(`GOOGLECALENDAR_EVENTS_LIST:${calendarId}`);
+        const events = googleCalendarEventsFromData(eventsResult.data)
+          .filter((event) => normalizeString(event.status) !== "cancelled");
+        chunksTotal += events.length;
+        for (const event of events) {
+          const candidate = buildGoogleCalendarEventCandidate({
+            ownerUserId: connection.ownerUserId,
+            accountKey,
+            accountLabel,
+            calendarId,
+            calendarTitle,
+            event,
+            fetchedAt: params.fetchedAt,
+          });
+          contentSeen += 1;
+          if (!candidate) {
+            continue;
+          }
+          const persisted = await persistIntegrationCandidate({
+            store: params.store,
+            workspaceId: "",
+            candidate,
+            embeddingClient: null,
+          });
+          updatePersistStats(persisted, persistStats);
+          contentPersisted += 1;
+          chunksCompleted += 1;
+        }
+      } catch (error) {
+        if (!isComposioForbiddenError(error) && !isComposioNotFoundError(error)) {
+          throw error;
+        }
+        actions.push(
+          isComposioForbiddenError(error)
+            ? `GOOGLECALENDAR_EVENTS_LIST:${calendarId}:forbidden`
+            : `GOOGLECALENDAR_EVENTS_LIST:${calendarId}:missing`,
+        );
+      }
+    }
+
+    chunksCompleted += 1;
+    syncProgress({
+      current_chunk_label:
+        index + 1 < sortedCalendars.length
+          ? `Importing Google Calendar calendars (${index + 1}/${sortedCalendars.length})`
+          : "Reconciling Google Calendar calendars",
+    });
+  }
+
+  const retiredCalendars = retireIntegrationEntityLeaves({
+    store: params.store,
+    treeId,
+    entityPrefix: "calendar:",
+    keepEntityKeys: calendarEntityKeys,
+    supersededAt: params.fetchedAt,
+  });
+  if (retiredCalendars > 0) {
+    actions.push(`GOOGLECALENDAR_RETIRED_CALENDAR_LEAVES:${retiredCalendars}`);
+  }
+  chunksCompleted += 1;
+
+  syncProgress({ current_chunk_label: "Rebuilding Google Calendar context summary" });
+  await rebuildIntegrationTree({
+    store: params.store,
+    treeId,
+    embeddingClient: null,
+  });
+  chunksCompleted += 1;
+
+  summaryNodes = countSummaryLikeSemanticIntegrationNodes({
+    store: params.store,
+    treeId,
+  });
+  syncProgress({ current_chunk_label: "Google Calendar context fetch complete" });
+
+  return {
+    ok: true,
+    supported: true,
+    provider_id: "googlecalendar",
+    connection_id: connection.connectionId,
+    account_key: accountKey,
+    account_label: accountLabel,
+    tree_id: treeId,
+    fetched_at: params.fetchedAt,
+    leaves_created: persistStats.created,
+    leaves_superseding: persistStats.superseding,
+    leaves_unchanged: persistStats.unchanged,
+    messages_seen: contentSeen,
+    messages_persisted: contentPersisted,
+    summary_nodes: summaryNodes,
+    actions,
+  };
+}
+
+async function fetchLinkedInIntegrationContext(params: {
+  store: RuntimeStateStore;
+  connectionId: string;
+  composio: ComposioExecuteClient;
+  fetchedAt: string;
+  progress?: IntegrationContextFetchProgressReporter | null;
+}): Promise<IntegrationContextFetchResult> {
+  const connection = params.store.getIntegrationConnection(params.connectionId);
+  if (!connection) {
+    throw new Error(`integration connection ${params.connectionId} not found`);
+  }
+  const connectedAccountId = connection.accountExternalId ?? "";
+  const persistStats = { created: 0, superseding: 0, unchanged: 0 };
+  const actions: string[] = [];
+  let accountKey: string | null = null;
+  let accountLabel: string | null = connection.accountLabel;
+  let treeId: string | null = null;
+  let contentSeen = 0;
+  let contentPersisted = 0;
+  let summaryNodes = 0;
+  let chunksTotal = 3;
+  let chunksCompleted = 0;
+  const syncProgress = (patch: Partial<IntegrationContextFetchProgressSnapshot> = {}) => {
+    params.progress?.patch({
+      account_key: accountKey,
+      account_label: accountLabel,
+      tree_id: treeId,
+      chunks_total: chunksTotal,
+      chunks_completed: chunksCompleted,
+      messages_seen: contentSeen,
+      messages_persisted: contentPersisted,
+      leaves_created: persistStats.created,
+      leaves_superseding: persistStats.superseding,
+      leaves_unchanged: persistStats.unchanged,
+      summary_nodes: summaryNodes,
+      actions,
+      ...patch,
+    });
+  };
+
+  syncProgress({ current_chunk_label: "Fetching LinkedIn profile" });
+  const userInfoResult = await params.composio.executeAction({
+    connectedAccountId,
+    toolSlug: "LINKEDIN_GET_MY_INFO",
+    arguments: {},
+  });
+  actions.push("LINKEDIN_GET_MY_INFO");
+  const userInfo = linkedInUserInfoFromData(userInfoResult.data) ?? {};
+  chunksCompleted += 1;
+  const personId = linkedInProfilePersonId(userInfo);
+
+  syncProgress({ current_chunk_label: "Saving LinkedIn profile" });
+  const email = normalizeString(userInfo.email);
+  const name = linkedInProfileName(userInfo);
+  const sub = normalizeString(userInfo.sub);
+  accountKey = email
+    ?? normalizeString(connection.accountEmail)
+    ?? normalizeString(connection.accountHandle)
+    ?? personId
+    ?? sub
+    ?? normalizeString(connection.accountExternalId)
+    ?? connection.connectionId;
+  if (email) {
+    persistConnectionIdentity({
+      store: params.store,
+      connectionId: connection.connectionId,
+      accountEmail: email,
+    });
+  }
+  accountLabel = name ?? email ?? accountKey;
+
+  const profilePersist = await persistIntegrationCandidate({
+    store: params.store,
+    workspaceId: "",
+    candidate: buildLinkedInProfileCandidate({
+      ownerUserId: connection.ownerUserId,
+      accountKey,
+      accountLabel,
+      connectionId: connection.connectionId,
+      userInfo,
+      personId,
+      fetchedAt: params.fetchedAt,
+    }),
+    embeddingClient: null,
+  });
+  updatePersistStats(profilePersist, persistStats);
+  treeId = profilePersist.tree.treeId;
+  chunksCompleted += 1;
+  syncProgress({
+    current_chunk_label: "Rebuilding LinkedIn context summary",
+  });
+
+  await rebuildIntegrationTree({
+    store: params.store,
+    treeId,
+    embeddingClient: null,
+  });
+  chunksCompleted += 1;
+
+  summaryNodes = countSummaryLikeSemanticIntegrationNodes({
+    store: params.store,
+    treeId,
+  });
+  syncProgress({ current_chunk_label: "LinkedIn context fetch complete" });
+
+  return {
+    ok: true,
+    supported: true,
+    provider_id: "linkedin",
     connection_id: connection.connectionId,
     account_key: accountKey,
     account_label: accountLabel,
@@ -3084,19 +4544,15 @@ async function fetchSlackIntegrationContext(params: {
   syncProgress({ current_chunk_label: "Rebuilding Slack context summary" });
   await rebuildIntegrationTree({
     store: params.store,
-    workspaceId: "",
     treeId,
-    summaryModelClient: null,
     embeddingClient: null,
   });
   chunksCompleted += 1;
 
-  summaryNodes = params.store.listIntegrationSummaryNodes({
+  summaryNodes = countSummaryLikeSemanticIntegrationNodes({
+    store: params.store,
     treeId,
-    status: "active",
-    limit: 10_000,
-    offset: 0,
-  }).length;
+  });
   syncProgress({ current_chunk_label: "Slack context fetch complete" });
 
   return {
@@ -3172,6 +4628,42 @@ export async function fetchIntegrationContextForConnection(params: {
   }
   if (providerId === "github") {
     return fetchGitHubIntegrationContext({
+      store: params.store,
+      connectionId: connection.connectionId,
+      composio,
+      fetchedAt,
+      progress,
+    });
+  }
+  if (providerId === "googledrive") {
+    return fetchGoogleDriveIntegrationContext({
+      store: params.store,
+      connectionId: connection.connectionId,
+      composio,
+      fetchedAt,
+      progress,
+    });
+  }
+  if (providerId === "googlecalendar") {
+    return fetchGoogleCalendarIntegrationContext({
+      store: params.store,
+      connectionId: connection.connectionId,
+      composio,
+      fetchedAt,
+      progress,
+    });
+  }
+  if (providerId === "twitter") {
+    return fetchTwitterIntegrationContext({
+      store: params.store,
+      connectionId: connection.connectionId,
+      composio,
+      fetchedAt,
+      progress,
+    });
+  }
+  if (providerId === "linkedin") {
+    return fetchLinkedInIntegrationContext({
       store: params.store,
       connectionId: connection.connectionId,
       composio,

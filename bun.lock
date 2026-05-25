@@ -49,6 +49,7 @@
         "yaml": "^2.8.3",
       },
       "devDependencies": {
+        "@electron/notarize": "^2.5.0",
         "@electron/rebuild": "^4.0.1",
         "@types/archiver": "^7.0.0",
         "@types/better-sqlite3": "^7.6.13",

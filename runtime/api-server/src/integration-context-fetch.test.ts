@@ -12,6 +12,7 @@ import {
   type ProxyRequestParams,
 } from "./composio-api-client.js";
 import { fetchIntegrationContextForConnection } from "./integration-context-fetch.js";
+import { countSummaryLikeSemanticIntegrationNodes } from "./integration-memory.js";
 import { globalMemoryDirForWorkspaceRoot } from "./workspace-bundle-paths.js";
 
 const tempDirs: string[] = [];
@@ -171,7 +172,11 @@ test("fetchIntegrationContextForConnection ingests Gmail profile and recent thre
   assert.equal(result.leaves_created, 4);
   assert.equal(result.messages_seen, 3);
   assert.equal(result.messages_persisted, 3);
-  assert.equal(result.summary_nodes, 6);
+  assert.ok(result.tree_id);
+  assert.equal(result.summary_nodes, countSummaryLikeSemanticIntegrationNodes({
+    store,
+    treeId: result.tree_id,
+  }));
 
   const updatedConnection = store.getIntegrationConnection("conn-gmail-1");
   assert.equal(updatedConnection?.accountEmail, "workspace@example.com");
@@ -210,20 +215,21 @@ test("fetchIntegrationContextForConnection ingests Gmail profile and recent thre
     ],
   );
 
-  const summaries = store.listIntegrationSummaryNodes({
+  const semanticNodes = store.listSemanticMemoryNodes({
+    category: "integration",
     treeId: trees[0]!.treeId,
     status: "active",
     limit: 100,
     offset: 0,
   });
-  assert.equal(summaries.length, 6);
+  assert.ok(semanticNodes.length > 0);
 
   const memoryRoot = globalMemoryDirForWorkspaceRoot(workspaceRoot);
   for (const leaf of leaves) {
     assert.ok(fs.existsSync(path.join(memoryRoot, leaf.path)));
   }
-  for (const summary of summaries) {
-    assert.ok(fs.existsSync(path.join(memoryRoot, summary.path)));
+  for (const node of semanticNodes) {
+    assert.ok(fs.existsSync(path.join(memoryRoot, node.path)));
   }
 
   store.close();
@@ -395,7 +401,11 @@ test("fetchIntegrationContextForConnection ingests GitHub profile, notifications
   assert.equal(result.leaves_created, 6);
   assert.equal(result.messages_seen, 5);
   assert.equal(result.messages_persisted, 5);
-  assert.equal(result.summary_nodes, 8);
+  assert.ok(result.tree_id);
+  assert.equal(result.summary_nodes, countSummaryLikeSemanticIntegrationNodes({
+    store,
+    treeId: result.tree_id,
+  }));
 
   const updatedConnection = store.getIntegrationConnection("conn-github-1");
   assert.equal(updatedConnection?.accountHandle, "octocat");
@@ -602,7 +612,11 @@ test("fetchIntegrationContextForConnection skips GitHub notifications when the t
   assert.equal(result.leaves_created, 5);
   assert.equal(result.messages_seen, 4);
   assert.equal(result.messages_persisted, 4);
-  assert.equal(result.summary_nodes, 7);
+  assert.ok(result.tree_id);
+  assert.equal(result.summary_nodes, countSummaryLikeSemanticIntegrationNodes({
+    store,
+    treeId: result.tree_id,
+  }));
   assert.ok(result.actions.includes("GITHUB_LIST_NOTIFICATIONS:missing"));
 
   const trees = store.listIntegrationTrees({
@@ -1328,7 +1342,11 @@ test("fetchIntegrationContextForConnection ingests Notion pages, markdown, datab
   assert.equal(result.messages_seen, 4);
   assert.equal(result.messages_persisted, 4);
   assert.equal(result.leaves_created, 5);
-  assert.ok(result.summary_nodes > 0);
+  assert.ok(result.tree_id);
+  assert.equal(result.summary_nodes, countSummaryLikeSemanticIntegrationNodes({
+    store,
+    treeId: result.tree_id,
+  }));
 
   const trees = store.listIntegrationTrees({
     status: "active",
@@ -1482,7 +1500,11 @@ test("fetchIntegrationContextForConnection ingests Slack workspace, channels, an
   assert.equal(result.leaves_created, 5);
   assert.equal(result.messages_seen, 4);
   assert.equal(result.messages_persisted, 4);
-  assert.equal(result.summary_nodes, 8);
+  assert.ok(result.tree_id);
+  assert.equal(result.summary_nodes, countSummaryLikeSemanticIntegrationNodes({
+    store,
+    treeId: result.tree_id,
+  }));
 
   const updatedConnection = store.getIntegrationConnection("conn-slack-1");
   assert.equal(updatedConnection?.accountHandle, "T123");
@@ -1513,6 +1535,653 @@ test("fetchIntegrationContextForConnection ingests Slack workspace, channels, an
       "profile",
     ],
   );
+
+  const memoryRoot = globalMemoryDirForWorkspaceRoot(workspaceRoot);
+  for (const leaf of leaves) {
+    assert.ok(fs.existsSync(path.join(memoryRoot, leaf.path)));
+  }
+
+  store.close();
+});
+
+test("fetchIntegrationContextForConnection ingests Google Drive profile and recent files into the global integration tree", async () => {
+  const root = makeTempDir("hb-integration-context-fetch-googledrive-");
+  const workspaceRoot = path.join(root, "workspace-root");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.upsertIntegrationConnection({
+    connectionId: "conn-googledrive-1",
+    providerId: "googledrive",
+    ownerUserId: "user-1",
+    accountLabel: "Google Drive (Managed)",
+    accountExternalId: "ca_drive_1",
+    accountHandle: null,
+    accountEmail: null,
+    authMode: "composio",
+    grantedScopes: [],
+    status: "active",
+    secretRef: null,
+  });
+
+  const proxyCalls: string[] = [];
+  const result = await fetchIntegrationContextForConnection({
+    store,
+    connectionId: "conn-googledrive-1",
+    composioClient: {
+      async executeAction<TData = unknown>(_params: ExecuteActionParams): Promise<{ data: TData | null; logId: string | null }> {
+        throw new Error("unexpected executeAction");
+      },
+      async proxyRequest<TData = unknown>(params: ProxyRequestParams): Promise<{ data: TData | null; status: number; headers: Record<string, string> }> {
+        proxyCalls.push(params.endpoint);
+        if (params.endpoint.startsWith("/drive/v3/about")) {
+          return {
+            data: {
+              user: {
+                displayName: "Product Ops",
+                emailAddress: "ops@example.com",
+                permissionId: "perm-1",
+              },
+              storageQuota: {
+                limit: "1000",
+                usage: "400",
+                usageInDrive: "350",
+                usageInDriveTrash: "50",
+              },
+            } as TData,
+            status: 200,
+            headers: {},
+          };
+        }
+        if (params.endpoint.startsWith("/drive/v3/files")) {
+          return {
+            data: {
+              files: [
+                {
+                  id: "file-1",
+                  name: "Q2 Plan",
+                  mimeType: "application/vnd.google-apps.document",
+                  modifiedTime: "2026-05-24T08:30:00Z",
+                  webViewLink: "https://drive.google.com/file/d/file-1/view",
+                  owners: [{ displayName: "Product Ops", emailAddress: "ops@example.com" }],
+                  size: "5120",
+                  description: "Planning notes for Q2 launch work.",
+                },
+                {
+                  id: "folder-1",
+                  name: "Launch Assets",
+                  mimeType: "application/vnd.google-apps.folder",
+                  modifiedTime: "2026-05-24T09:00:00Z",
+                  webViewLink: "https://drive.google.com/drive/folders/folder-1",
+                  owners: [{ displayName: "Product Ops", emailAddress: "ops@example.com" }],
+                },
+              ],
+            } as TData,
+            status: 200,
+            headers: {},
+          };
+        }
+        throw new Error(`unexpected proxy endpoint: ${params.endpoint}`);
+      },
+    },
+  });
+
+  assert.deepEqual(proxyCalls, [
+    "/drive/v3/about?fields=user(displayName,emailAddress,permissionId),storageQuota(limit,usage,usageInDrive,usageInDriveTrash)",
+    "/drive/v3/files?pageSize=25&orderBy=modifiedTime%20desc&includeItemsFromAllDrives=true&supportsAllDrives=true&fields=nextPageToken,files(id,name,mimeType,modifiedTime,createdTime,webViewLink,owners(displayName,emailAddress),parents,shared,starred,trashed,size,description)",
+  ]);
+  assert.equal(result.supported, true);
+  assert.equal(result.provider_id, "googledrive");
+  assert.equal(result.account_key, "ops@example.com");
+  assert.equal(result.account_label, "Product Ops");
+  assert.equal(result.leaves_created, 3);
+  assert.equal(result.messages_seen, 2);
+  assert.equal(result.messages_persisted, 2);
+  assert.ok(result.tree_id);
+  assert.equal(result.summary_nodes, countSummaryLikeSemanticIntegrationNodes({
+    store,
+    treeId: result.tree_id,
+  }));
+
+  const updatedConnection = store.getIntegrationConnection("conn-googledrive-1");
+  assert.equal(updatedConnection?.accountEmail, "ops@example.com");
+
+  const trees = store.listIntegrationTrees({
+    status: "active",
+    limit: 100,
+    offset: 0,
+  });
+  assert.equal(trees.length, 1);
+  assert.equal(trees[0]?.provider, "googledrive");
+  assert.equal(trees[0]?.accountKey, "ops@example.com");
+
+  const leaves = store.listIntegrationLeaves({
+    treeId: trees[0]!.treeId,
+    status: "active",
+    limit: 100,
+    offset: 0,
+  });
+  assert.equal(leaves.length, 3);
+  assert.deepEqual(
+    leaves.map((leaf) => ({
+      subjectKey: leaf.subjectKey,
+      entityKey: leaf.entityKey,
+      branchKey: leaf.branchKey,
+      sourceType: leaf.sourceType,
+    })).sort((left, right) => left.subjectKey.localeCompare(right.subjectKey)),
+    [
+      { subjectKey: "file:file-1", entityKey: "file:file-1", branchKey: "overview", sourceType: "googledrive.file" },
+      { subjectKey: "file:folder-1", entityKey: "file:folder-1", branchKey: "overview", sourceType: "googledrive.folder" },
+      { subjectKey: "profile", entityKey: null, branchKey: "profile", sourceType: "googledrive.profile" },
+    ],
+  );
+
+  const semanticNodes = store.listSemanticMemoryNodes({
+    category: "integration",
+    treeId: trees[0]!.treeId,
+    limit: 100,
+    offset: 0,
+  });
+  assert.ok(semanticNodes.some((node) => node.nodeKind === "files"));
+  assert.ok(semanticNodes.some((node) => node.nodeKind === "file" && node.title === "Q2 Plan"));
+  assert.ok(semanticNodes.some((node) => node.nodeKind === "folder" && node.title === "Launch Assets"));
+
+  const memoryRoot = globalMemoryDirForWorkspaceRoot(workspaceRoot);
+  for (const leaf of leaves) {
+    assert.ok(fs.existsSync(path.join(memoryRoot, leaf.path)));
+  }
+
+  store.close();
+});
+
+test("fetchIntegrationContextForConnection ingests Twitter profile and recent posts into the global integration tree", async () => {
+  const root = makeTempDir("hb-integration-context-fetch-twitter-");
+  const workspaceRoot = path.join(root, "workspace-root");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.upsertIntegrationConnection({
+    connectionId: "conn-twitter-1",
+    providerId: "twitter",
+    ownerUserId: "user-1",
+    accountLabel: "Twitter (Managed)",
+    accountExternalId: "ca_twitter_1",
+    accountHandle: null,
+    accountEmail: null,
+    authMode: "composio",
+    grantedScopes: [],
+    status: "active",
+    secretRef: null,
+  });
+
+  const proxyCalls: string[] = [];
+  const result = await fetchIntegrationContextForConnection({
+    store,
+    connectionId: "conn-twitter-1",
+    composioClient: {
+      async executeAction<TData = unknown>(_params: ExecuteActionParams): Promise<{ data: TData | null; logId: string | null }> {
+        throw new Error("unexpected executeAction");
+      },
+      async proxyRequest<TData = unknown>(params: ProxyRequestParams): Promise<{ data: TData | null; status: number; headers: Record<string, string> }> {
+        proxyCalls.push(params.endpoint);
+        if (params.endpoint === "/2/users/me?user.fields=created_at,description,id,location,name,profile_image_url,public_metrics,url,username,verified") {
+          return {
+            data: {
+              id: "user-42",
+              username: "holabossai",
+              name: "HolaBoss",
+              description: "Workspace memory experiments and agent runtime notes.",
+              verified: true,
+              public_metrics: {
+                followers_count: 1200,
+                following_count: 18,
+                tweet_count: 84,
+              },
+            } as TData,
+            status: 200,
+            headers: {},
+          };
+        }
+        if (params.endpoint.startsWith("/2/users/user-42/timelines/reverse_chronological")) {
+          return {
+            data: {
+              data: [
+                {
+                  id: "post-1",
+                  text: "Shipped semantic memory trees for Gmail, GitHub, and Notion.",
+                  author_id: "user-42",
+                  conversation_id: "conv-1",
+                  created_at: "2026-05-24T08:00:00Z",
+                  lang: "en",
+                  public_metrics: {
+                    like_count: 12,
+                    reply_count: 2,
+                    retweet_count: 3,
+                    quote_count: 1,
+                  },
+                },
+                {
+                  id: "post-2",
+                  text: "Next up is wiring Google Drive and Twitter into context fetch.",
+                  author_id: "user-42",
+                  conversation_id: "conv-2",
+                  created_at: "2026-05-24T09:00:00Z",
+                  lang: "en",
+                  public_metrics: {
+                    like_count: 8,
+                    reply_count: 1,
+                    retweet_count: 1,
+                    quote_count: 0,
+                  },
+                },
+              ],
+            } as TData,
+            status: 200,
+            headers: {},
+          };
+        }
+        throw new Error(`unexpected proxy endpoint: ${params.endpoint}`);
+      },
+    },
+  });
+
+  assert.deepEqual(proxyCalls, [
+    "/2/users/me?user.fields=created_at,description,id,location,name,profile_image_url,public_metrics,url,username,verified",
+    "/2/users/user-42/timelines/reverse_chronological?max_results=20&exclude=replies&tweet.fields=author_id,conversation_id,created_at,entities,lang,public_metrics,referenced_tweets",
+  ]);
+  assert.equal(result.supported, true);
+  assert.equal(result.provider_id, "twitter");
+  assert.equal(result.account_key, "holabossai");
+  assert.equal(result.account_label, "HolaBoss (@holabossai)");
+  assert.equal(result.leaves_created, 3);
+  assert.equal(result.messages_seen, 2);
+  assert.equal(result.messages_persisted, 2);
+  assert.ok(result.tree_id);
+  assert.equal(result.summary_nodes, countSummaryLikeSemanticIntegrationNodes({
+    store,
+    treeId: result.tree_id,
+  }));
+
+  const updatedConnection = store.getIntegrationConnection("conn-twitter-1");
+  assert.equal(updatedConnection?.accountHandle, "holabossai");
+
+  const trees = store.listIntegrationTrees({
+    status: "active",
+    limit: 100,
+    offset: 0,
+  });
+  assert.equal(trees.length, 1);
+  assert.equal(trees[0]?.provider, "twitter");
+  assert.equal(trees[0]?.accountKey, "holabossai");
+
+  const leaves = store.listIntegrationLeaves({
+    treeId: trees[0]!.treeId,
+    status: "active",
+    limit: 100,
+    offset: 0,
+  });
+  assert.equal(leaves.length, 3);
+  assert.deepEqual(
+    leaves.map((leaf) => ({
+      subjectKey: leaf.subjectKey,
+      entityKey: leaf.entityKey,
+      branchKey: leaf.branchKey,
+      sourceType: leaf.sourceType,
+    })).sort((left, right) => left.subjectKey.localeCompare(right.subjectKey)),
+    [
+      { subjectKey: "post:post-1", entityKey: "post:post-1", branchKey: "overview", sourceType: "twitter.post" },
+      { subjectKey: "post:post-2", entityKey: "post:post-2", branchKey: "overview", sourceType: "twitter.post" },
+      { subjectKey: "profile", entityKey: null, branchKey: "profile", sourceType: "twitter.profile" },
+    ],
+  );
+
+  const semanticNodes = store.listSemanticMemoryNodes({
+    category: "integration",
+    treeId: trees[0]!.treeId,
+    limit: 100,
+    offset: 0,
+  });
+  assert.ok(semanticNodes.some((node) => node.nodeKind === "timeline"));
+  assert.ok(semanticNodes.some((node) => node.nodeKind === "post" && node.title.includes("Shipped semantic memory trees")));
+
+  const memoryRoot = globalMemoryDirForWorkspaceRoot(workspaceRoot);
+  for (const leaf of leaves) {
+    assert.ok(fs.existsSync(path.join(memoryRoot, leaf.path)));
+  }
+
+  store.close();
+});
+
+test("fetchIntegrationContextForConnection ingests Google Calendar profile, calendars, and upcoming events into the global integration tree", async () => {
+  const root = makeTempDir("hb-integration-context-fetch-googlecalendar-");
+  const workspaceRoot = path.join(root, "workspace-root");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.upsertIntegrationConnection({
+    connectionId: "conn-googlecalendar-1",
+    providerId: "googlecalendar",
+    ownerUserId: "user-1",
+    accountLabel: "Google Calendar (Managed)",
+    accountExternalId: "ca_calendar_1",
+    accountHandle: null,
+    accountEmail: null,
+    authMode: "composio",
+    grantedScopes: [],
+    status: "active",
+    secretRef: null,
+  });
+
+  const calls: Array<{ toolSlug: string; arguments: Record<string, unknown> }> = [];
+  const result = await fetchIntegrationContextForConnection({
+    store,
+    connectionId: "conn-googlecalendar-1",
+    composioClient: {
+      async executeAction<TData = unknown>(params: ExecuteActionParams): Promise<{ data: TData | null; logId: string | null }> {
+        calls.push({
+          toolSlug: params.toolSlug,
+          arguments: params.arguments ?? {},
+        });
+        if (params.toolSlug === "GOOGLECALENDAR_LIST_CALENDARS") {
+          return {
+            data: {
+              items: [
+                {
+                  id: "ops@example.com",
+                  summary: "Product Ops",
+                  description: "Primary operating calendar.",
+                  primary: true,
+                  accessRole: "owner",
+                  timeZone: "America/Los_Angeles",
+                },
+                {
+                  id: "team@example.com",
+                  summary: "Team Calendar",
+                  description: "Cross-functional planning calendar.",
+                  primary: false,
+                  accessRole: "reader",
+                  timeZone: "America/New_York",
+                },
+              ],
+            } as TData,
+            logId: "log-calendar-list",
+          };
+        }
+        if (params.toolSlug === "GOOGLECALENDAR_EVENTS_LIST" && params.arguments?.calendarId === "ops@example.com") {
+          return {
+            data: {
+              items: [
+                {
+                  id: "event-1",
+                  summary: "Launch sync",
+                  description: "Finalize launch checklist and owner handoff.",
+                  status: "confirmed",
+                  htmlLink: "https://calendar.google.com/calendar/event?eid=event-1",
+                  start: { dateTime: "2026-05-24T08:00:00Z" },
+                  end: { dateTime: "2026-05-24T08:30:00Z" },
+                  organizer: {
+                    displayName: "Ada",
+                    email: "ada@example.com",
+                  },
+                  location: "Zoom",
+                },
+                {
+                  id: "event-cancelled",
+                  summary: "Cancelled event",
+                  status: "cancelled",
+                  start: { dateTime: "2026-05-24T09:00:00Z" },
+                  end: { dateTime: "2026-05-24T09:30:00Z" },
+                },
+              ],
+            } as TData,
+            logId: "log-calendar-events-ops",
+          };
+        }
+        if (params.toolSlug === "GOOGLECALENDAR_EVENTS_LIST" && params.arguments?.calendarId === "team@example.com") {
+          return {
+            data: {
+              items: [
+                {
+                  id: "event-2",
+                  summary: "Team planning",
+                  description: "Review next sprint scope.",
+                  status: "confirmed",
+                  htmlLink: "https://calendar.google.com/calendar/event?eid=event-2",
+                  start: { dateTime: "2026-05-24T10:00:00Z" },
+                  end: { dateTime: "2026-05-24T11:00:00Z" },
+                  organizer: {
+                    displayName: "Grace",
+                    email: "grace@example.com",
+                  },
+                },
+              ],
+            } as TData,
+            logId: "log-calendar-events-team",
+          };
+        }
+        throw new Error(`unexpected tool slug: ${params.toolSlug}`);
+      },
+    },
+  });
+
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls[0], {
+    toolSlug: "GOOGLECALENDAR_LIST_CALENDARS",
+    arguments: {
+      max_results: 6,
+    },
+  });
+  assert.equal(calls[1]?.toolSlug, "GOOGLECALENDAR_EVENTS_LIST");
+  assert.equal(calls[1]?.arguments.calendarId, "ops@example.com");
+  assert.equal(calls[1]?.arguments.maxResults, 8);
+  assert.equal(calls[1]?.arguments.singleEvents, true);
+  assert.equal(calls[1]?.arguments.orderBy, "startTime");
+  assert.equal(typeof calls[1]?.arguments.timeMin, "string");
+  assert.equal(calls[2]?.toolSlug, "GOOGLECALENDAR_EVENTS_LIST");
+  assert.equal(calls[2]?.arguments.calendarId, "team@example.com");
+  assert.equal(calls[2]?.arguments.maxResults, 8);
+  assert.equal(calls[2]?.arguments.singleEvents, true);
+  assert.equal(calls[2]?.arguments.orderBy, "startTime");
+  assert.equal(typeof calls[2]?.arguments.timeMin, "string");
+  assert.equal(result.supported, true);
+  assert.equal(result.provider_id, "googlecalendar");
+  assert.equal(result.account_key, "ops@example.com");
+  assert.equal(result.account_label, "Product Ops");
+  assert.equal(result.leaves_created, 5);
+  assert.equal(result.messages_seen, 4);
+  assert.equal(result.messages_persisted, 4);
+  assert.ok(result.tree_id);
+  assert.equal(result.summary_nodes, countSummaryLikeSemanticIntegrationNodes({
+    store,
+    treeId: result.tree_id,
+  }));
+
+  const updatedConnection = store.getIntegrationConnection("conn-googlecalendar-1");
+  assert.equal(updatedConnection?.accountEmail, "ops@example.com");
+
+  const trees = store.listIntegrationTrees({
+    status: "active",
+    limit: 100,
+    offset: 0,
+  });
+  assert.equal(trees.length, 1);
+  assert.equal(trees[0]?.provider, "googlecalendar");
+  assert.equal(trees[0]?.accountKey, "ops@example.com");
+
+  const leaves = store.listIntegrationLeaves({
+    treeId: trees[0]!.treeId,
+    status: "active",
+    limit: 100,
+    offset: 0,
+  });
+  assert.equal(leaves.length, 5);
+  assert.deepEqual(
+    leaves.map((leaf) => ({
+      subjectKey: leaf.subjectKey,
+      entityKey: leaf.entityKey,
+      branchKey: leaf.branchKey,
+      sourceType: leaf.sourceType,
+    })).sort((left, right) => left.subjectKey.localeCompare(right.subjectKey)),
+    [
+      { subjectKey: "calendar:ops@example.com", entityKey: "calendar:ops@example.com", branchKey: "overview", sourceType: "googlecalendar.calendar" },
+      { subjectKey: "calendar:team@example.com", entityKey: "calendar:team@example.com", branchKey: "overview", sourceType: "googlecalendar.calendar" },
+      { subjectKey: "event:ops@example.com:event-1", entityKey: "calendar:ops@example.com", branchKey: "events", sourceType: "googlecalendar.event" },
+      { subjectKey: "event:team@example.com:event-2", entityKey: "calendar:team@example.com", branchKey: "events", sourceType: "googlecalendar.event" },
+      { subjectKey: "profile", entityKey: null, branchKey: "profile", sourceType: "googlecalendar.profile" },
+    ],
+  );
+
+  const semanticNodes = store.listSemanticMemoryNodes({
+    category: "integration",
+    treeId: trees[0]!.treeId,
+    limit: 100,
+    offset: 0,
+  });
+  assert.ok(semanticNodes.some((node) => node.nodeKind === "calendars"));
+  assert.ok(semanticNodes.some((node) => node.nodeKind === "calendar" && node.title === "Product Ops"));
+  assert.ok(semanticNodes.some((node) => node.nodeKind === "calendar" && node.title === "Team Calendar"));
+
+  const memoryRoot = globalMemoryDirForWorkspaceRoot(workspaceRoot);
+  for (const leaf of leaves) {
+    assert.ok(fs.existsSync(path.join(memoryRoot, leaf.path)));
+  }
+
+  store.close();
+});
+
+test("fetchIntegrationContextForConnection ingests a LinkedIn profile into the global integration tree", async () => {
+  const root = makeTempDir("hb-integration-context-fetch-linkedin-");
+  const workspaceRoot = path.join(root, "workspace-root");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.upsertIntegrationConnection({
+    connectionId: "conn-linkedin-1",
+    providerId: "linkedin",
+    ownerUserId: "user-1",
+    accountLabel: "LinkedIn (Managed)",
+    accountExternalId: "ca_linkedin_1",
+    accountHandle: null,
+    accountEmail: null,
+    authMode: "composio",
+    grantedScopes: [],
+    status: "active",
+    secretRef: null,
+  });
+
+  const calls: Array<{ toolSlug: string; arguments: Record<string, unknown> }> = [];
+  const result = await fetchIntegrationContextForConnection({
+    store,
+    connectionId: "conn-linkedin-1",
+    composioClient: {
+      async executeAction<TData = unknown>(params: ExecuteActionParams): Promise<{ data: TData | null; logId: string | null }> {
+        calls.push({
+          toolSlug: params.toolSlug,
+          arguments: params.arguments ?? {},
+        });
+        if (params.toolSlug === "LINKEDIN_GET_MY_INFO") {
+          return {
+            data: {
+              id: "person-1",
+              name: "Ada Lovelace",
+              email: "ada@example.com",
+              picture: "https://example.com/ada.jpg",
+              author: "urn:li:person:person-1",
+            } as TData,
+            logId: "log-linkedin-me",
+          };
+        }
+        throw new Error(`unexpected tool slug: ${params.toolSlug}`);
+      },
+    },
+  });
+
+  assert.deepEqual(calls, [
+    {
+      toolSlug: "LINKEDIN_GET_MY_INFO",
+      arguments: {},
+    },
+  ]);
+  assert.equal(result.supported, true);
+  assert.equal(result.provider_id, "linkedin");
+  assert.equal(result.account_key, "ada@example.com");
+  assert.equal(result.account_label, "Ada Lovelace");
+  assert.equal(result.leaves_created, 1);
+  assert.equal(result.messages_seen, 0);
+  assert.equal(result.messages_persisted, 0);
+  assert.ok(result.tree_id);
+  assert.equal(result.summary_nodes, countSummaryLikeSemanticIntegrationNodes({
+    store,
+    treeId: result.tree_id,
+  }));
+
+  const updatedConnection = store.getIntegrationConnection("conn-linkedin-1");
+  assert.equal(updatedConnection?.accountEmail, "ada@example.com");
+
+  const trees = store.listIntegrationTrees({
+    status: "active",
+    limit: 100,
+    offset: 0,
+  });
+  assert.equal(trees.length, 1);
+  assert.equal(trees[0]?.provider, "linkedin");
+  assert.equal(trees[0]?.accountKey, "ada@example.com");
+
+  const leaves = store.listIntegrationLeaves({
+    treeId: trees[0]!.treeId,
+    status: "active",
+    limit: 100,
+    offset: 0,
+  });
+  assert.equal(leaves.length, 1);
+  assert.deepEqual(
+    leaves.map((leaf) => ({
+      subjectKey: leaf.subjectKey,
+      entityKey: leaf.entityKey,
+      branchKey: leaf.branchKey,
+      sourceType: leaf.sourceType,
+    })).sort((left, right) => left.subjectKey.localeCompare(right.subjectKey)),
+    [
+      { subjectKey: "profile", entityKey: null, branchKey: "profile", sourceType: "linkedin.profile" },
+    ],
+  );
+
+  const semanticNodes = store.listSemanticMemoryNodes({
+    category: "integration",
+    treeId: trees[0]!.treeId,
+    limit: 100,
+    offset: 0,
+  });
+  assert.ok(semanticNodes.some((node) => node.nodeKind === "profile"));
+  assert.ok(!semanticNodes.some((node) => node.nodeKind === "posts"));
 
   const memoryRoot = globalMemoryDirForWorkspaceRoot(workspaceRoot);
   for (const leaf of leaves) {

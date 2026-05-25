@@ -801,41 +801,6 @@ test("composeAgentPrompt instructs subagents to record durable workspace knowled
   );
 });
 
-test("composeAgentPrompt instructs subagents to record durable workspace knowledge into AGENTS.md when the tool is available", () => {
-  const capabilityManifest = buildAgentCapabilityManifest({
-    defaultTools: ["read"],
-    extraTools: ["update_workspace_instructions"],
-    runtimeToolIds: ["update_workspace_instructions"],
-    workspaceSkillIds: [],
-    resolvedMcpToolRefs: [],
-    toolServerIdMap: {},
-  });
-
-  const prompt = composeAgentPrompt("You are concise.", {
-    defaultTools: ["read"],
-    extraTools: ["update_workspace_instructions"],
-    workspaceSkillIds: [],
-    resolvedMcpToolRefs: [],
-    sessionKind: "subagent",
-    sessionMode: "code",
-    harnessId: "pi",
-    capabilityManifest,
-  });
-
-  assert.match(
-    prompt.systemPrompt,
-    /Record workspace-wide operating defaults in root `AGENTS\.md` with `update_workspace_instructions` when they are clearly stable, likely to recur, or explicitly confirmed by the user/i,
-  );
-  assert.match(
-    prompt.systemPrompt,
-    /durable requirements or preferences, verified recurring commands, default procedures, conventions, policies, decisions, and recurring blockers/i,
-  );
-  assert.match(
-    prompt.systemPrompt,
-    /Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state\. When in doubt, prefer memory or transient context over `AGENTS\.md`, and leave it out until the pattern repeats or the user confirms it should persist as a default\./i,
-  );
-});
-
 test("composeAgentPrompt keeps main sessions free of todo doctrine even if todo tools are present", () => {
   const capabilityManifest = buildAgentCapabilityManifest({
     defaultTools: ["read", "todoread", "todowrite", "scratchpad_read", "scratchpad_write"],
@@ -918,13 +883,13 @@ test("composeAgentPrompt gives workspace onboarding its own design-lab prompt", 
   const capabilityManifest = buildAgentCapabilityManifest({
     defaultTools: ["read", "edit", "bash"],
     extraTools: [
-      "delegate_task",
+      "holaboss_delegate_task",
       "holaboss_create_alignment_question",
       "holaboss_create_alignment_report",
       "holaboss_create_verification_report",
     ],
     runtimeToolIds: [
-      "delegate_task",
+      "holaboss_delegate_task",
       "holaboss_create_alignment_question",
       "holaboss_create_alignment_report",
       "holaboss_create_verification_report",
@@ -937,7 +902,7 @@ test("composeAgentPrompt gives workspace onboarding its own design-lab prompt", 
   const prompt = composeAgentPrompt("You are concise.", {
     defaultTools: ["read", "edit", "bash"],
     extraTools: [
-      "delegate_task",
+      "holaboss_delegate_task",
       "holaboss_create_alignment_question",
       "holaboss_create_alignment_report",
       "holaboss_create_verification_report",
@@ -965,7 +930,8 @@ test("composeAgentPrompt gives workspace onboarding its own design-lab prompt", 
   assert.match(prompt.systemPrompt, /Delegate implementation to subagents only after the user confirms the design report/);
   assert.match(prompt.systemPrompt, /Keep the onboarding thread conversational and uncluttered/);
   assert.match(prompt.systemPrompt, /holaboss_create_alignment_question/);
-  assert.match(prompt.systemPrompt, /multiple-choice question/);
+  assert.match(prompt.systemPrompt, /closed choices/);
+  assert.match(prompt.systemPrompt, /inline answer card/);
   assert.match(prompt.systemPrompt, /Include a human-readable `markdown` body in the report for the review card/);
   assert.match(prompt.systemPrompt, /waiting for implementation results before moving to verification/);
   assert.match(prompt.systemPrompt, /verification report/);
@@ -974,15 +940,15 @@ test("composeAgentPrompt gives workspace onboarding its own design-lab prompt", 
   assert.match(prompt.systemPrompt, /alignment review card/);
   assert.match(prompt.systemPrompt, /verification review card/);
   assert.doesNotMatch(prompt.systemPrompt, /holaboss_approve_alignment/);
-  assert.doesNotMatch(prompt.systemPrompt, /\bonboarding_complete\b/);
+  assert.doesNotMatch(prompt.systemPrompt, /holaboss_onboarding_complete/);
   assert.doesNotMatch(prompt.systemPrompt, /This is an onboarding session\./);
 });
 
 test("composeAgentPrompt gives meeting mode its own critique-lab prompt", () => {
   const capabilityManifest = buildAgentCapabilityManifest({
     defaultTools: ["read", "edit", "bash"],
-    extraTools: ["delegate_task"],
-    runtimeToolIds: ["delegate_task"],
+    extraTools: ["holaboss_delegate_task"],
+    runtimeToolIds: ["holaboss_delegate_task"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     toolServerIdMap: {},
@@ -990,7 +956,7 @@ test("composeAgentPrompt gives meeting mode its own critique-lab prompt", () => 
 
   const prompt = composeAgentPrompt("You are concise.", {
     defaultTools: ["read", "edit", "bash"],
-    extraTools: ["delegate_task"],
+    extraTools: ["holaboss_delegate_task"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
     sessionKind: "meeting_mode",

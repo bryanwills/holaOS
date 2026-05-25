@@ -110,25 +110,32 @@ function buildSessionRefreshFields(newMcpServers: string[]): JsonObject {
  * exact anti-patterns ("no full-width stacked KPI cards", "no text-2xl")
  * to warn against them; observed output then reliably reproduced those
  * patterns — naming the failure mode anchored the agent on it. Visual
- * authority belongs entirely to the `build-dashboard` skill + its
- * bundled `messaging-dashboard` reference; the prompt stays purely
- * operational.
+ * authority belongs entirely to `interface-design` content; the prompt
+ * stays purely operational.
  */
 function buildPolishPassPrompt(appId: string): string {
   return [
     "[Auto-queued post-build polish pass]",
     "",
-    `The dashboard app \`${appId}\` is now running with all its integrations resolved. Re-enter the dashboard skill so the visual layer reflects the canonical reference shape now that real data is wired in.`,
+    `The dashboard app \`${appId}\` was just confirmed running in this workspace. Before continuing with anything else, perform a design polish pass on its src/client/.`,
     "",
-    "1. Invoke `skill({ name: \"build-dashboard\" })` and read its full output, including the bundled `messaging-dashboard` reference under that skill's `reference/` directory.",
+    "1. Invoke `skill({ name: \"interface-design\" })` to load the design rules. Read its full output, including any `.interface-design/system.md` artifact it writes to disk.",
     "",
-    `2. For each \`.tsx\` and \`.css\` file under \`apps/${appId}/src/client/\` that diverges from the bundled reference's shape, REWRITE the whole file using \`bash\` heredoc syntax (\`cat > path/to/file <<'EOF' ... EOF\`), NOT via \`edit\`. Whole-file rewrite is the explicit mode for this pass — incremental \`edit\` calls have repeatedly produced checkbox-compliant no-changes. Note: the design system clamps \`font-bold\` / \`font-semibold\` / \`font-extrabold\` / \`font-black\` to 500 at render time, so do not rely on those classes for emphasis.`,
+    "1.5. Spatial composition sketch. BEFORE any heredoc rewrite, write a plain-text spatial sketch as a comment block at the top of the main route/component file. Answer each question with SPECIFIC field/section names from this app's data model — vague answers (\"the KPI row\", \"the user lands on the main area\") do not satisfy this step. The JSX you write in step 2 MUST implement what the sketch describes.",
+    "    - What are the 3–5 distinct information regions on this dashboard? Name them by content (\"open work counts split by relation\"), not by visual (\"the metrics strip\").",
+    "    - Which two regions belong side-by-side because they answer related questions? Why?",
+    "    - What lives above the fold on a 1280×800 viewport? Why specifically those things and not the others?",
+    "    - Which group of items is similar enough to compress into a horizontal strip in ONE row (3–6 metrics)? Vs. which groups deserve vertical separation because they're conceptually distinct?",
+    "    - Where does the user's eye land first, and what is the one action you want them to take from that landing spot?",
+    "    The screenshot taken in step 4 will be compared against this sketch. If the sketch says \"3 KPIs in a horizontal strip\" and the rendered output stacks them vertically, the pass fails.",
+    "",
+    `2. For each \`.tsx\` and \`.css\` file under \`apps/${appId}/src/client/\`: REWRITE the whole file using \`bash\` heredoc syntax (\`cat > path/to/file <<'EOF' ... EOF\`), NOT via \`edit\`. Whole-file rewrite is the explicit mode for this pass — incremental \`edit\` calls have repeatedly produced checkbox-compliant no-changes. Apply the \`interface-design\` skill's rules end-to-end AND implement the spatial sketch from step 1.5. Note: the design system clamps any \`font-bold\` / \`font-semibold\` / \`font-extrabold\` / \`font-black\` to 500 at render time, so do not rely on those classes for emphasis.`,
     "",
     `3. Re-run \`workspace_apps_build\` + \`workspace_apps_restart_and_wait_ready\` for \`${appId}\`.`,
     "",
-    "4. Verify with `browser_screenshot`. Compare the rendered dashboard against the `build-dashboard` reference shape and the register-time lints. If it diverges, return to step 2 and rewrite again. One iteration is usually enough now that the reference is bundled.",
+    "4. Verify with `browser_screenshot`. Look at the rendered output and compare it line-by-line against the spatial sketch you wrote in step 1.5 AND the `interface-design` rules you loaded. If the screenshot doesn't match either, return to step 2 and rewrite again. Two iterations is normal.",
     "",
-    "5. Only after the screenshot matches the reference, declare the polish pass done.",
+    "5. Only after the screenshot matches the sketch AND the interface-design rules, declare the polish pass done.",
     "",
     "The user is the one who will see the rendered UI. A clean tool-call ceremony without visible visual improvement fails this pass — there is no half-credit for invoking the skill, doing trivial edits, and reporting 'looks good'.",
   ].join("\n");
@@ -1134,10 +1141,10 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     description: runtimeToolBaseDefinition("holaboss_create_verification_report").description
   },
   {
-    id: runtimeToolBaseDefinition("onboarding_complete").id,
+    id: runtimeToolBaseDefinition("holaboss_onboarding_complete").id,
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/onboarding/complete",
-    description: runtimeToolBaseDefinition("onboarding_complete").description
+    description: runtimeToolBaseDefinition("holaboss_onboarding_complete").description
   },
   {
     id: runtimeToolBaseDefinition("cronjobs_list").id,
