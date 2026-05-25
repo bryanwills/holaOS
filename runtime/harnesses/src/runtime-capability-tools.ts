@@ -209,7 +209,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         required: ["report"],
         additionalProperties: false,
       };
-    case "onboarding_complete":
+    case "holaboss_onboarding_complete":
       return {
         type: "object",
         properties: {

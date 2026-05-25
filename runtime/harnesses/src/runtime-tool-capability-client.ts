@@ -642,7 +642,7 @@ function requestPlan(
         },
       };
     }
-    case "onboarding_complete": {
+    case "holaboss_onboarding_complete": {
       const params = isRecord(toolParams) ? toolParams : {};
       return {
         method: "POST",

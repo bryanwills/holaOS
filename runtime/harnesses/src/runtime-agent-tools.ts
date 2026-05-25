@@ -23,7 +23,7 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
     policy: "mutate"
   },
   {
-    id: "onboarding_complete",
+    id: "holaboss_onboarding_complete",
     description:
       "After the user explicitly accepts the verification result, complete workspace onboarding and merge the lab when applicable.",
     policy: "mutate"

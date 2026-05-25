@@ -374,7 +374,7 @@ function runtimeToolAvailability(toolId: string): CapabilityAvailabilityRules | 
   ) {
     return { sessionKinds: ["workspace_onboarding"] };
   }
-  if (toolId === "onboarding_complete") {
+  if (toolId === "holaboss_onboarding_complete") {
     return { excludedSessionKinds: ["workspace_onboarding"] };
   }
   return undefined;
@@ -606,7 +606,7 @@ function executionSemanticsForDescriptor(params: {
       concurrency: "serial_only",
       requires_runtime_service: true,
       requires_browser: false,
-      requires_user_confirmation: normalizedId === "onboarding_complete",
+      requires_user_confirmation: normalizedId === "holaboss_onboarding_complete",
     };
   }
   if (params.kind === "workspace_command") {
