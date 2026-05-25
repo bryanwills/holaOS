@@ -2157,7 +2157,17 @@ interface RuntimeNotificationListOptionsPayload {
       composioRefreshConnection: (connectionId: string) => Promise<{
         connection: IntegrationConnectionPayload;
         changed: boolean;
-        reason?: "no_external_id" | "account_missing" | "no_new_identity";
+        reason?:
+          | "no_external_id"
+          | "account_missing"
+          | "no_new_identity"
+          | "provider_credentials_rejected";
+        /** Set with `provider_credentials_rejected` so the UI can name
+         *  the specific provider in a reconnect prompt. */
+        providerLabel?: string;
+        /** Upstream HTTP status (typically 401/403) when the provider
+         *  rejected Composio's stored token. */
+        providerStatus?: number;
       }>;
       composioDeleteUpstream: (connectedAccountId: string) => Promise<{
         deleted: boolean;

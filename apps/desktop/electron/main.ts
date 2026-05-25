@@ -10786,6 +10786,60 @@ interface ComposioProxyResponse<TData = unknown> {
 }
 
 /**
+ * Thrown by `composioProxyFetch` when the upstream provider (GitHub, Google,
+ * etc.) responded with a non-2xx status. Hono's /composio/proxy returns 200
+ * carrying `{ data, status, headers }` for the upstream response, so the
+ * caller can't tell success from failure by HTTP status alone — without
+ * this check, a 401 "Bad credentials" body gets handed to the whoami
+ * extractor as if it were a normal user object, which is how we ended up
+ * with the misleading "raw shape may have shifted" log instead of the
+ * actually-useful "user needs to reconnect" signal.
+ */
+class ProviderHttpError extends Error {
+  constructor(
+    readonly providerId: string,
+    readonly upstreamStatus: number,
+    readonly bodyExcerpt: string,
+  ) {
+    super(
+      `Provider ${providerId} returned HTTP ${upstreamStatus}: ${bodyExcerpt}`,
+    );
+    this.name = "ProviderHttpError";
+  }
+}
+
+function isProviderAuthFailure(err: unknown): err is ProviderHttpError {
+  return (
+    err instanceof ProviderHttpError &&
+    (err.upstreamStatus === 401 || err.upstreamStatus === 403)
+  );
+}
+
+// Capitalize a provider slug for user-facing copy. The desktop has a
+// richer toolkitDisplayName in src/lib/toolkitDisplay.ts but it isn't
+// accessible from the main process; this covers the providers that show
+// up in proxy whoami today (curated Hero pool) with a generic fallback
+// for everything else.
+function composioToolkitDisplayName(slug: string | null | undefined): string {
+  const normalized = (slug ?? "").trim().toLowerCase();
+  const KNOWN: Record<string, string> = {
+    github: "GitHub",
+    gmail: "Gmail",
+    google: "Google",
+    googlesheets: "Google Sheets",
+    twitter: "Twitter / X",
+    linkedin: "LinkedIn",
+    reddit: "Reddit",
+    notion: "Notion",
+    slack: "Slack",
+    discord: "Discord",
+  };
+  if (KNOWN[normalized]) return KNOWN[normalized];
+  if (!normalized) return "the provider";
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+/**
  * Call a provider's own API as the connected account, via Composio's
  * proxy. Used for whoami fallbacks when Composio's generic
  * `/api/composio/account/{id}` endpoint doesn't carry provider-side
@@ -10797,6 +10851,10 @@ async function composioProxyFetch<TData>(
   endpoint: string,
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   body?: unknown,
+  // Passed through purely for ProviderHttpError context; not used in the
+  // request. Lets the caller see which provider the error came from when
+  // they don't have it on hand to attach themselves.
+  providerIdForErrors = "unknown",
 ): Promise<TData | null> {
   const wrapped = await composioFetch<ComposioProxyResponse<TData>>(
     "/api/composio/proxy",
@@ -10808,6 +10866,20 @@ async function composioProxyFetch<TData>(
       ...(body !== undefined ? { body } : {}),
     },
   );
+  if (wrapped.status >= 400) {
+    const excerpt = (() => {
+      try {
+        return JSON.stringify(wrapped.data).slice(0, 200);
+      } catch {
+        return String(wrapped.data).slice(0, 200);
+      }
+    })();
+    throw new ProviderHttpError(
+      providerIdForErrors,
+      wrapped.status,
+      excerpt,
+    );
+  }
   return wrapped.data ?? null;
 }
 
@@ -11067,6 +11139,7 @@ async function tryProxyWhoami(
       config.url,
       config.method,
       config.body,
+      normalized,
     );
     if (!data) {
       console.warn(
@@ -11094,6 +11167,15 @@ async function tryProxyWhoami(
     // proxy path 606s — without this re-throw, the metadata snapshot
     // never learns the row is dead.
     if (isComposioAccountMissingError(err)) {
+      throw err;
+    }
+    // Provider returned 401/403 — Composio's stored token doesn't work
+    // against the provider anymore (user revoked the app, token rotated
+    // externally, scope changed). Re-throw so the caller (Refresh button)
+    // can surface a specific "needs reconnect" message naming the
+    // provider, rather than the generic "shape shifted" copy that
+    // used to mask this case.
+    if (isProviderAuthFailure(err)) {
       throw err;
     }
     console.warn(
@@ -11417,7 +11499,19 @@ interface ComposioRefreshResult {
   /** True iff the probe resolved a new handle or email and we wrote it back. */
   changed: boolean;
   /** Short reason code when `changed === false`, for the UI to surface. */
-  reason?: "no_external_id" | "account_missing" | "no_new_identity";
+  reason?:
+    | "no_external_id"
+    | "account_missing"
+    | "no_new_identity"
+    | "provider_credentials_rejected";
+  /** Provider display name (e.g. "GitHub") — set when the UI needs to name
+   *  the specific provider in a reconnect prompt. Currently set alongside
+   *  `provider_credentials_rejected` so the message can read "GitHub
+   *  credentials rejected" instead of a generic note. */
+  providerLabel?: string;
+  /** Upstream HTTP status the provider returned (only set with
+   *  `provider_credentials_rejected`, typically 401 or 403). */
+  providerStatus?: number;
 }
 
 async function composioRefreshConnection(
@@ -11448,6 +11542,19 @@ async function composioRefreshConnection(
       // current persisted identity (Phase 2 / Slice 2 will mark these
       // rows stale + prompt the user to reconnect).
       return { connection: target, changed: false, reason: "account_missing" };
+    }
+    if (isProviderAuthFailure(err)) {
+      // Composio still has the connection but its stored access token
+      // failed against the provider (401/403). Surface a typed signal so
+      // the UI can render "GitHub credentials rejected — please reconnect"
+      // instead of the misleading generic "raw shape may have shifted".
+      return {
+        connection: target,
+        changed: false,
+        reason: "provider_credentials_rejected",
+        providerLabel: composioToolkitDisplayName(target.provider_id),
+        providerStatus: err.upstreamStatus,
+      };
     }
     throw err;
   }

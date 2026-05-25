@@ -922,9 +922,21 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
         );
       } else if (result.reason === "no_external_id") {
         setStatusMessage("Connection has no external account to probe.");
+      } else if (result.reason === "provider_credentials_rejected") {
+        // The provider (GitHub, Google, etc.) rejected the access token
+        // Composio has on file. The connection is effectively dead even
+        // though Composio still lists it as active. User has to disconnect
+        // and re-OAuth to recover.
+        const label = result.providerLabel ?? "The provider";
+        const code = result.providerStatus
+          ? ` (HTTP ${result.providerStatus})`
+          : "";
+        setStatusMessage(
+          `${label} rejected the stored credentials${code} — disconnect and reconnect this integration to re-authorize.`,
+        );
       } else {
         setStatusMessage(
-          "Provider didn't return a new handle or email — check dev console for proxy whoami details.",
+          "Provider didn't return a new handle or email — the response shape may have changed.",
         );
       }
     } catch (error) {
