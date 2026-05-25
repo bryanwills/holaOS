@@ -299,7 +299,8 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
   >(new Map());
   const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null);
   const [mutatingOverrideKey, setMutatingOverrideKey] = useState<string | null>(null);
-  const { workspaces, selectedWorkspace } = useWorkspaceDesktop();
+  const { workspaces, selectedWorkspace, composioToolkitsByProvider } =
+    useWorkspaceDesktop();
   const selectedWorkspaceId = selectedWorkspace?.id ?? null;
   const accountMetadata = useIntegrationAccountMetadata(connections);
 
@@ -940,12 +941,14 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
 
   async function handleRefresh(connectionId: string) {
     setRefreshingConnectionId(connectionId);
-    // Reuse the row data we already have in state to label the toast with
-    // the provider name even before the API call returns. This keeps the
-    // toast immediately legible ("Refreshing Gmail…" would also be nice but
-    // refresh is usually < 1s so we just label the outcome).
     const conn = connections.find((c) => c.connection_id === connectionId);
-    const fallbackLabel = conn?.provider_id ?? "this connection";
+    // Always prefer the toolkit's official display name ("Twitter / X",
+    // "Google Sheets") over the raw slug — the slug is what the agent
+    // sees, the display name is what the user sees.
+    const providerLabel = (() => {
+      const slug = (conn?.provider_id ?? "").trim().toLowerCase();
+      return composioToolkitsByProvider[slug]?.name ?? "Integration";
+    })();
     try {
       const result =
         await window.electronAPI.workspace.composioRefreshConnection(
@@ -956,11 +959,11 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
       invalidateIntegrationAccountCache([connectionId]);
       await loadData();
 
-      const label = result.providerLabel ?? fallbackLabel;
-
       if (result.changed) {
-        toast.success(`${label} identity refreshed`);
-      } else if (result.reason === "provider_credentials_rejected") {
+        toast.success(`${providerLabel} identity refreshed`);
+        return;
+      }
+      if (result.reason === "provider_credentials_rejected") {
         // Provider rejected Composio's stored token. The connection looks
         // active to Composio but is dead in practice — show a persistent
         // toast with a one-click Reconnect action, plus a red flash on
@@ -976,10 +979,11 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
           : "";
         const integrationCard =
           conn && integrations.find((i) => i.providerId === conn.provider_id);
-        toast.error(`${label} credentials rejected${code}`, {
+        toast.error(`${providerLabel} credentials rejected${code}`, {
           description:
             "The stored token no longer works against the provider. Reconnect to re-authorize.",
           duration: Number.POSITIVE_INFINITY,
+          closeButton: true,
           action: integrationCard
             ? {
                 label: "Reconnect",
@@ -990,24 +994,26 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
               }
             : undefined,
         });
-      } else if (result.reason === "account_missing") {
-        toast.error(`${label} account no longer exists`, {
+        return;
+      }
+      if (result.reason === "account_missing") {
+        toast.error(`${providerLabel} account no longer exists`, {
           description:
             "Disconnect this row and add the integration again to recover.",
           duration: 8000,
+          closeButton: true,
         });
-      } else if (result.reason === "no_external_id") {
-        // Edge case — quietly inform without alarm.
-        toast.message(`${label} has no external account to probe`);
-      } else {
-        // `no_new_identity` and any future quiet outcome. Don't alarm; it's
-        // a no-op as far as the user cares.
-        toast.message(`${label} — no identity changes`);
+        return;
       }
+      // `no_new_identity` / `no_external_id` / any future quiet outcome
+      // are deliberately silent — the Refresh button stopped spinning, the
+      // user has their feedback. Toasting "nothing changed" trains people
+      // to ignore the toast channel, so we save it for real signals.
     } catch (error) {
-      toast.error(`${fallbackLabel} refresh failed`, {
+      toast.error(`${providerLabel} refresh failed`, {
         description: normalizeErrorMessage(error),
         duration: 8000,
+        closeButton: true,
       });
     } finally {
       setRefreshingConnectionId(null);

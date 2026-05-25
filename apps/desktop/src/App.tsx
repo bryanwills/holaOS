@@ -95,7 +95,6 @@ function App() {
           // always pure HTML, can't be covered.
           position="top-center"
           richColors
-          closeButton
           theme="dark"
         />
       </QueryClientProvider>
