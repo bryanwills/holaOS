@@ -1,6 +1,19 @@
-# messaging-dashboard (canonical dashboard reference)
+# messaging-dashboard (canonical queue reference)
 
 **Copy this whole `src/client/` into your new dashboard app. Don't compose from scratch.**
+
+This is the **queue** reference — one of four canonical dashboard shapes:
+
+| Reference | Shape | When to use |
+|---|---|---|
+| **messaging-dashboard** (this) | Single-column timeline with rail | Forward-looking work that goes out on a schedule — outgoing posts, scheduled emails, queued jobs. The user's question is "what goes out next and when?" |
+| [engagement-inbox](../engagement-inbox/) | Attio-style table + detail drawer + composer | Reactive work that comes in from outside — comments, mentions, DMs, reviews, support replies. The user's question is "what do I respond to next?" |
+| [content-calendar](../content-calendar/) | 7-column weekly grid | Spatial planning across time — multi-channel publishing schedules. The user's question is "where are the gaps in my week?" |
+| [post-analytics](../post-analytics/) | KPI strip + chart + post grid + digest rail | Measuring + auto-reporting — engagement metrics, scheduled email/Slack digests of those metrics. The user's question is "how is what I shipped performing, and what got reported out?" |
+
+**Pick the shape from the user's question, not from your data model.** A
+"posts" table can power any of the four depending on whether the user
+is sending / responding / planning / measuring.
 
 The layout, tokens, type system, hierarchy, spacing, header chrome, and
 connection pill are decided and tested here. Your job when copying is to
@@ -113,7 +126,7 @@ src/client/
 │   ├── __root.tsx             — mounts both styles, sets data-theme
 │   └── index.tsx              — page composition (only stateful file)
 ├── components/
-│   ├── header-bar.tsx         — serif title + status slot + Compose
+│   ├── header-bar.tsx         — sans title + status slot + Compose
 │   ├── connection-pill.tsx    — readiness chip (4 states)
 │   ├── status-badge.tsx       — per-row status with colored dot
 │   └── messages-table.tsx     — list rows + rail + attention strip
