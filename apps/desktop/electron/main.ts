@@ -32,6 +32,20 @@ Sentry.init({
   },
 });
 
+// Swallow EPIPE on stdio writes — a benign teardown race that Electron
+// would otherwise surface as a "holaOS encountered an error" modal.
+// Trigger: a child / utility process (or the embedded runtime) writes via
+// `console.info`/`.warn`/`.error` after its stdio pipe has been closed on
+// the parent side. Sentry's `consoleLoggingIntegration` above wraps those
+// console methods and re-invokes the real ones, so the EPIPE surfaces here
+// with a stack that ends in `sentry/core/build/cjs/instrument/console.js`
+// — not actually a Sentry bug, just an unhandled write to a half-closed
+// socket. Anything other than EPIPE we leave alone so the existing Sentry
+// + Electron handlers still see it.
+process.on("uncaughtException", (err: NodeJS.ErrnoException) => {
+  if (err?.code === "EPIPE") return;
+});
+
 import { electronClient } from "@better-auth/electron/client";
 import { storage as electronAuthStorage } from "@better-auth/electron/storage";
 import { createAuthClient } from "better-auth/client";
