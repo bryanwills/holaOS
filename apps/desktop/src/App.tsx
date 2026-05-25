@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Toaster } from "sonner";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { AppShell } from "@/components/layout/AppShell";
 import { NewAppShell } from "@/components/layout/new-shell";
@@ -85,6 +86,14 @@ function App() {
             {useNewShell ? <NewAppShell /> : <AppShell />}
           </RequireAuth>
         </TooltipProvider>
+        <Toaster
+          position="bottom-right"
+          richColors
+          closeButton
+          // Match the desktop's dark-mode default; sonner picks system if
+          // we leave it unset, but the rest of the app forces dark.
+          theme="dark"
+        />
       </QueryClientProvider>
     </ErrorBoundary>
   );

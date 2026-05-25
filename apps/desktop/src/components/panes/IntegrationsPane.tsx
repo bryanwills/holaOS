@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import {
   Check,
+  Download,
   Loader2,
   LogIn,
   MoreHorizontal,
@@ -14,6 +16,8 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { AddIntegrationDialog } from "@/components/panes/AddIntegrationDialog";
@@ -34,6 +38,7 @@ import {
 } from "@/components/ui/select";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
 import { accountDisplayLabel } from "@/lib/integrationDisplay";
+import { rebindWorkspaceAppsForProvider } from "@/lib/rebindWorkspaceAppsForProvider";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import {
   invalidateIntegrationAccountCache,
@@ -264,6 +269,14 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     string | null
   >(null);
   const [refreshingConnectionId, setRefreshingConnectionId] = useState<
+    string | null
+  >(null);
+  // Transient highlight on a connection row when the provider just rejected
+  // its stored credentials. The row gets a red border / glow until either
+  // the user reconnects, the toast is dismissed, or 6s elapse — whichever
+  // comes first. Doesn't persist across reloads (intentionally — once the
+  // user re-OAuths, the staleness reason is gone).
+  const [flashRejectedConnectionId, setFlashRejectedConnectionId] = useState<
     string | null
   >(null);
   const [togglingContextAutoFetchConnectionId, setTogglingContextAutoFetchConnectionId] =
@@ -768,6 +781,29 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
             // `set_default_account` via chat or wait for the runtime
             // resolver to fall back to first-active.
           }
+          // Legacy apps that declare `integrations:` cache HOLABOSS_APP_GRANT
+          // at boot — rebind+restart so a workspace-default connect becomes
+          // visible to those without a reload. No-op for vibe-coded apps
+          // (they don't declare integrations), but cheap.
+          await rebindWorkspaceAppsForProvider({
+            workspaceId: selectedWorkspaceId,
+            provider: integration.providerId,
+            connectionId: connectedAccountId,
+          });
+          // The agent reaches integrations through the composio-mcp host;
+          // its toolkit list is cached per host. Ensure-running pokes it to
+          // pick up the newly-active connection so `<toolkit>_*` tools
+          // become callable on the next agent turn. Chat-side propose-
+          // connect does this via onAfterConnect; Settings used to skip it.
+          try {
+            await window.electronAPI.workspace.composioMcpEnsureRunning(
+              selectedWorkspaceId,
+            );
+          } catch {
+            // non-fatal — the runtime calls ensure-running again on next
+            // tool invocation, so worst case the user just waits one more
+            // turn.
+          }
         }
         setStatusMessage("");
         void loadData();
@@ -904,7 +940,12 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
 
   async function handleRefresh(connectionId: string) {
     setRefreshingConnectionId(connectionId);
-    setStatusMessage("");
+    // Reuse the row data we already have in state to label the toast with
+    // the provider name even before the API call returns. This keeps the
+    // toast immediately legible ("Refreshing Gmail…" would also be nice but
+    // refresh is usually < 1s so we just label the outcome).
+    const conn = connections.find((c) => c.connection_id === connectionId);
+    const fallbackLabel = conn?.provider_id ?? "this connection";
     try {
       const result =
         await window.electronAPI.workspace.composioRefreshConnection(
@@ -914,33 +955,60 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
       // identity once the persisted handle/email come through loadData.
       invalidateIntegrationAccountCache([connectionId]);
       await loadData();
+
+      const label = result.providerLabel ?? fallbackLabel;
+
       if (result.changed) {
-        setStatusMessage("Identity refreshed.");
-      } else if (result.reason === "account_missing") {
-        setStatusMessage(
-          "Upstream account no longer exists — disconnect and reconnect to recover.",
-        );
-      } else if (result.reason === "no_external_id") {
-        setStatusMessage("Connection has no external account to probe.");
+        toast.success(`${label} identity refreshed`);
       } else if (result.reason === "provider_credentials_rejected") {
-        // The provider (GitHub, Google, etc.) rejected the access token
-        // Composio has on file. The connection is effectively dead even
-        // though Composio still lists it as active. User has to disconnect
-        // and re-OAuth to recover.
-        const label = result.providerLabel ?? "The provider";
+        // Provider rejected Composio's stored token. The connection looks
+        // active to Composio but is dead in practice — show a persistent
+        // toast with a one-click Reconnect action, plus a red flash on
+        // the row so the user's eye lands on the right card.
+        setFlashRejectedConnectionId(connectionId);
+        window.setTimeout(() => {
+          setFlashRejectedConnectionId((current) =>
+            current === connectionId ? null : current,
+          );
+        }, 6000);
         const code = result.providerStatus
           ? ` (HTTP ${result.providerStatus})`
           : "";
-        setStatusMessage(
-          `${label} rejected the stored credentials${code} — disconnect and reconnect this integration to re-authorize.`,
-        );
+        const integrationCard =
+          conn && integrations.find((i) => i.providerId === conn.provider_id);
+        toast.error(`${label} credentials rejected${code}`, {
+          description:
+            "The stored token no longer works against the provider. Reconnect to re-authorize.",
+          duration: Number.POSITIVE_INFINITY,
+          action: integrationCard
+            ? {
+                label: "Reconnect",
+                onClick: () => {
+                  setFlashRejectedConnectionId(null);
+                  void handleConnect(integrationCard);
+                },
+              }
+            : undefined,
+        });
+      } else if (result.reason === "account_missing") {
+        toast.error(`${label} account no longer exists`, {
+          description:
+            "Disconnect this row and add the integration again to recover.",
+          duration: 8000,
+        });
+      } else if (result.reason === "no_external_id") {
+        // Edge case — quietly inform without alarm.
+        toast.message(`${label} has no external account to probe`);
       } else {
-        setStatusMessage(
-          "Provider didn't return a new handle or email — the response shape may have changed.",
-        );
+        // `no_new_identity` and any future quiet outcome. Don't alarm; it's
+        // a no-op as far as the user cares.
+        toast.message(`${label} — no identity changes`);
       }
     } catch (error) {
-      setStatusMessage(normalizeErrorMessage(error));
+      toast.error(`${fallbackLabel} refresh failed`, {
+        description: normalizeErrorMessage(error),
+        duration: 8000,
+      });
     } finally {
       setRefreshingConnectionId(null);
     }
@@ -1196,6 +1264,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
                   )
                 }
                 refreshingConnectionId={refreshingConnectionId}
+                flashRejectedConnectionId={flashRejectedConnectionId}
                 togglingContextAutoFetchConnectionId={
                   togglingContextAutoFetchConnectionId
                 }
@@ -1413,6 +1482,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
                     )
                   }
                   refreshingConnectionId={refreshingConnectionId}
+                  flashRejectedConnectionId={flashRejectedConnectionId}
                   togglingContextAutoFetchConnectionId={
                     togglingContextAutoFetchConnectionId
                   }
@@ -1568,6 +1638,7 @@ function ConnectedProviderCard({
   onClearIntegrationMemory,
   onToggleContextAutoFetch,
   refreshingConnectionId,
+  flashRejectedConnectionId,
   togglingContextAutoFetchConnectionId,
   clearingIntegrationMemoryConnectionId,
   contextFetchStatusByConnectionId,
@@ -1598,6 +1669,9 @@ function ConnectedProviderCard({
     enabled: boolean,
   ) => void;
   refreshingConnectionId: string | null;
+  /** Connection id currently flashing red because its provider just
+   *  rejected the stored credentials. Null when no row is highlighted. */
+  flashRejectedConnectionId: string | null;
   togglingContextAutoFetchConnectionId: string | null;
   clearingIntegrationMemoryConnectionId: string | null;
   contextFetchStatusByConnectionId: Record<
@@ -1698,9 +1772,15 @@ function ConnectedProviderCard({
             : 0;
           const usage = workspaceUsageByConnection.get(conn.connection_id) ?? [];
           const workspaceCount = new Set(usage.map((u) => u.workspace_id)).size;
+          const flashRejected =
+            flashRejectedConnectionId === conn.connection_id;
           return (
             <div
-              className="py-1"
+              className={
+                flashRejected
+                  ? "rounded-md border border-destructive/40 bg-destructive/[0.06] py-1 px-2 transition-colors"
+                  : "py-1"
+              }
               key={conn.connection_id}
             >
               <div className="flex items-center gap-2">
@@ -1738,101 +1818,53 @@ function ConnectedProviderCard({
                       : `${workspaceCount} workspaces`}
                   </span>
                 ) : null}
-                <Button
-                  aria-label={`Fetch ${label} context`}
-                  className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-foreground"
-                  disabled={
-                    disconnecting ||
-                    clearingIntegrationMemory ||
-                    fetchingContext ||
-                    !contextFetchSupported
-                  }
-                  onClick={() => onFetchContext(conn.connection_id)}
-                  title={
-                    contextFetchSupported
-                      ? "Fetch integration context into the memory tree"
-                      : "Context fetch is not implemented for this provider yet."
-                  }
-                  size="sm"
-                  type="button"
-                  variant="ghost"
-                >
-                  {fetchingContext ? (
-                    <Loader2 className="size-3 animate-spin" />
-                  ) : (
-                    "Fetch"
-                  )}
-                </Button>
-                <Button
-                  aria-label={`Clear ${label} memory`}
-                  className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-destructive"
-                  disabled={disconnecting || clearingIntegrationMemory || fetchingContext}
-                  onClick={() =>
-                    onClearIntegrationMemory(conn.connection_id, label)
-                  }
-                  title="Delete the stored memory tree for this account without disconnecting it"
-                  size="sm"
-                  type="button"
-                  variant="ghost"
-                >
-                  {clearingIntegrationMemory ? (
-                    <Loader2 className="size-3 animate-spin" />
-                  ) : (
-                    <Trash2 className="size-3" />
-                  )}
-                </Button>
-                <Button
-                  aria-label={`Refresh ${label} identity`}
-                  title="Refetch handle, email, and avatar from the provider"
-                  className="text-muted-foreground hover:text-foreground"
-                  disabled={
-                    disconnecting ||
-                    clearingIntegrationMemory ||
-                    refreshingConnectionId === conn.connection_id
-                  }
-                  onClick={() => onRefresh(conn.connection_id)}
-                  size="icon-xs"
-                  type="button"
-                  variant="ghost"
-                >
-                  {refreshingConnectionId === conn.connection_id ? (
-                    <Loader2 className="size-3 animate-spin" />
-                  ) : (
-                    <RefreshCw className="size-3" />
-                  )}
-                </Button>
-                <Button
-                  aria-label={`Disconnect ${label}`}
-                  className="text-muted-foreground hover:text-destructive"
-                  disabled={disconnecting || clearingIntegrationMemory}
-                  onClick={() => onDisconnect(conn.connection_id)}
-                  size="icon-xs"
-                  type="button"
-                  variant="ghost"
-                >
-                  {disconnecting ? (
-                    <Loader2 className="size-3 animate-spin" />
-                  ) : (
-                    <Unplug className="size-3" />
-                  )}
-                </Button>
-                {contextFetchSupported ? (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger
-                      render={
-                        <Button
-                          aria-label={`More options for ${label}`}
-                          className="text-muted-foreground hover:text-foreground"
-                          disabled={disconnecting || clearingIntegrationMemory}
-                          size="icon-xs"
-                          type="button"
-                          variant="ghost"
-                        >
-                          <MoreHorizontal className="size-3" />
-                        </Button>
+                {fetchingContext ||
+                refreshingConnectionId === conn.connection_id ||
+                clearingIntegrationMemory ||
+                disconnecting ? (
+                  <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />
+                ) : null}
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        aria-label={`More options for ${label}`}
+                        className="text-muted-foreground hover:text-foreground"
+                        disabled={disconnecting || clearingIntegrationMemory}
+                        size="icon-xs"
+                        type="button"
+                        variant="ghost"
+                      >
+                        <MoreHorizontal className="size-3" />
+                      </Button>
+                    }
+                  />
+                  <DropdownMenuContent align="end" className="min-w-[220px]">
+                    {contextFetchSupported ? (
+                      <DropdownMenuItem
+                        disabled={
+                          fetchingContext ||
+                          disconnecting ||
+                          clearingIntegrationMemory
+                        }
+                        onClick={() => onFetchContext(conn.connection_id)}
+                      >
+                        <Download className="size-3.5" />
+                        Fetch context now
+                      </DropdownMenuItem>
+                    ) : null}
+                    <DropdownMenuItem
+                      disabled={
+                        refreshingConnectionId === conn.connection_id ||
+                        disconnecting ||
+                        clearingIntegrationMemory
                       }
-                    />
-                    <DropdownMenuContent align="end" className="min-w-[220px]">
+                      onClick={() => onRefresh(conn.connection_id)}
+                    >
+                      <RefreshCw className="size-3.5" />
+                      Refresh account info
+                    </DropdownMenuItem>
+                    {contextFetchSupported ? (
                       <DropdownMenuCheckboxItem
                         checked={conn.context_cron_auto_fetch_enabled !== false}
                         disabled={togglingContextAutoFetch}
@@ -1842,9 +1874,32 @@ function ConnectedProviderCard({
                       >
                         Auto-fetch every 30 min
                       </DropdownMenuCheckboxItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                ) : null}
+                    ) : null}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      variant="destructive"
+                      disabled={
+                        disconnecting ||
+                        clearingIntegrationMemory ||
+                        fetchingContext
+                      }
+                      onClick={() =>
+                        onClearIntegrationMemory(conn.connection_id, label)
+                      }
+                    >
+                      <Trash2 className="size-3.5" />
+                      Clear memory…
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      variant="destructive"
+                      disabled={disconnecting || clearingIntegrationMemory}
+                      onClick={() => onDisconnect(conn.connection_id)}
+                    >
+                      <Unplug className="size-3.5" />
+                      Disconnect
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
               {contextFetchStatus ? (
                 <div className="ml-[22px] mt-2 rounded-lg border border-border/60 bg-background/70 px-2.5 py-2">
