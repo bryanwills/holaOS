@@ -8714,7 +8714,7 @@ export function ChatPane({
         verboseTelemetryEnabled ? (
           <div className="shrink-0 px-4 pt-3 sm:px-5">
             {chatErrorMessage ? (
-              <div className="theme-chat-system-bubble rounded-xl border px-3 py-2 text-xs">
+              <div className="theme-chat-error-bubble rounded-xl border px-3 py-2 text-xs">
                 {chatErrorMessage}
               </div>
             ) : null}

@@ -790,7 +790,7 @@ export function TopTabsBar({
 
       {workspaceErrorMessage ? (
         <div
-          className={`${integratedTitleBar ? "window-no-drag " : ""}theme-chat-system-bubble mt-2 rounded-2xl border px-3 py-2 text-xs leading-6`}
+          className={`${integratedTitleBar ? "window-no-drag " : ""}theme-chat-error-bubble mt-2 rounded-2xl border px-3 py-2 text-xs leading-6`}
         >
           {workspaceErrorMessage}
         </div>

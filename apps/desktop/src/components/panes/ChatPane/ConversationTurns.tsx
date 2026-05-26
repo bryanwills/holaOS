@@ -27,7 +27,7 @@ function SystemTurn({ text }: { text: string }) {
     : text;
   return (
     <div className="flex justify-center">
-      <div className="theme-chat-system-bubble max-w-[80%] rounded-lg border px-3 py-1.5 text-center text-xs text-muted-foreground">
+      <div className="theme-chat-system-bubble max-w-[80%] rounded-lg border px-3 py-1.5 text-center text-xs">
         {body}
       </div>
     </div>
