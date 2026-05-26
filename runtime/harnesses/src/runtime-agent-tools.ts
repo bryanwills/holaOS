@@ -211,7 +211,7 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
   {
     id: "workspace_apps_register",
     description:
-      "Register or update one app entry in `workspace.yaml` for the current workspace after validating the target `app.runtime.yaml` file.",
+      "Register or update one app entry in `workspace.yaml` for the current workspace after validating the target `app.runtime.yaml` file. This tool is exclusively for registering WORKSPACE APPS — directories under `apps/<app_id>/` with their own `app.runtime.yaml`. DO NOT use this to add a bare remote MCP server entry for a third-party service the user wants to connect; use `holaboss_workspace_integrations_propose_connect` for that — Composio-backed toolkits get their tools surfaced automatically via the managed composio-mcp host after the user OAuths.",
     policy: "mutate"
   },
   {
@@ -289,7 +289,7 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
   {
     id: "holaboss_workspace_integrations_propose_connect",
     description:
-      "Ask the user to connect a Composio-backed integration (Gmail / Slack / Notion / Linear / GitHub / …) via OAuth. Use this when the user expresses intent to connect or use a known third-party service AND that toolkit is not already exposing tools to you (i.e. no `<toolkit>_<verb>` tool is currently in your tool list). DO NOT chain this with `workspace_apps_*` — connecting an integration does NOT require building an app; once OAuth completes, the toolkit's `<toolkit>_<verb>` tools become available automatically. The chat UI renders a Connect card from the result; do not write your own connect instructions, just briefly explain why this integration is needed. Args: `toolkit_slug` (one of the supported toolkit slugs from the workspace integration store catalog), optional `reason` (short user-facing one-liner shown on the card).",
+      "Ask the user to connect a Composio-backed integration (Gmail / Slack / Notion / Linear / GitHub / Attio / …) via OAuth. This is the ONLY supported path to authorize a toolkit listed in `workspace_integrations_list_catalog` — call it as soon as the user expresses connect/link/sign-in/authorize/'use my X' intent for a third-party service that is not already exposing tools to you (i.e. no `<toolkit>_<verb>` tool is currently in your tool list). Calling this tool alone is sufficient; the user clicks the Connect card, OAuth runs, and the toolkit's `<toolkit>_<verb>` tools appear on the next turn via the managed composio-mcp host. DO NOT additionally scaffold an app, edit `workspace.yaml` `mcp_registry` via shell/file tools, or call any `workspace_apps_*` tool to register the integration — those paths bypass auth and will fail at the MCP host with `Invalid content type` / SSE transport errors. Connecting and building an app are separate intents; build an app only when the user explicitly asks for one. The chat UI renders a Connect card from the result; do not write your own connect instructions, just briefly explain why this integration is needed. Args: `toolkit_slug` (one of the supported toolkit slugs from the workspace integration store catalog — confirm via `workspace_integrations_list_catalog` if unsure), optional `reason` (short user-facing one-liner shown on the card).",
     policy: "coordinate"
   },
   {

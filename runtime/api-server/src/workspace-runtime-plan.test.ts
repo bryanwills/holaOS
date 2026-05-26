@@ -92,6 +92,7 @@ mcp_registry:
       type: remote
       url: "https://mcp.context7.com/mcp"
       enabled: true
+      trusted: true
 `,
     references: {}
   });
@@ -200,6 +201,7 @@ mcp_registry:
       type: remote
       url: "https://mcp.context7.com/mcp"
       enabled: true
+      trusted: true
 `,
     references: {}
   });
@@ -213,6 +215,52 @@ mcp_registry:
     },
   ]);
   assert.deepEqual(plan.resolved_mcp_servers.map((server) => server.server_id), ["gmail", "context7"]);
+});
+
+test("compileWorkspaceRuntimePlan sanitizes agent-improvised external MCP server entries lacking the trusted opt-in", () => {
+  // The failure mode: an agent that user-prompted "connect attio" bypassed
+  // `holaboss_workspace_integrations_propose_connect` and improvised by
+  // shell-writing `mcp_registry.servers.attio` with the public Attio MCP
+  // URL. Without auth, the SSE transport fails immediately. The plan
+  // compiler defense-in-depth strips such entries (managed
+  // `holaboss_composio` + localhost remotes + entries flagged
+  // `trusted: true` are the only allowed shapes) AND removes any
+  // allowlist tool_ids that referenced the stripped server.
+  const plan = compileWorkspaceRuntimePlan({
+    workspace_id: "ws-agent-improvised",
+    workspace_yaml: `
+agents:
+  id: workspace.general
+  model: openai/gpt-5
+mcp_registry:
+  allowlist:
+    tool_ids:
+      - gmail.gmail_search
+      - attio.search-records
+      - attio.list-records
+  servers:
+    gmail:
+      type: remote
+      url: "http://localhost:3099/mcp"
+      enabled: true
+    attio:
+      type: remote
+      url: "https://mcp.attio.com/mcp"
+      enabled: true
+`,
+    references: {},
+  });
+
+  assert.deepEqual(
+    plan.resolved_mcp_servers.map((server) => server.server_id),
+    ["gmail"],
+    "unauthorized external server must be stripped",
+  );
+  assert.deepEqual(
+    plan.mcp_tool_allowlist,
+    ["gmail.gmail_search"],
+    "tool_ids referencing the stripped server must also be removed",
+  );
 });
 
 test("compileWorkspaceRuntimePlan parses application integrations", () => {

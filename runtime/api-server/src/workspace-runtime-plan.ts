@@ -498,6 +498,89 @@ function readAllowlist(registry: JsonRecord): AllowlistParseResult {
   return { resolved_tool_refs: refs, specified: true };
 }
 
+// Reserved server id used by the managed Composio MCP host
+// (`composio-tool-registry.ts:writeComposioMcpRegistryEntry`). Hard-coded
+// here instead of imported to avoid a module cycle between the workspace
+// plan compiler and the composio-mcp registry helpers.
+const MANAGED_COMPOSIO_SERVER_ID = "holaboss_composio";
+
+function isAuthorizedRemoteUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
+  } catch {
+    return false;
+  }
+}
+
+function isAuthorizedMcpServer(serverId: string, value: unknown): boolean {
+  if (serverId === MANAGED_COMPOSIO_SERVER_ID) {
+    return true;
+  }
+  if (!isRecord(value)) {
+    // Lets the downstream shape validation produce its own error rather
+    // than swallowing a malformed entry silently.
+    return true;
+  }
+  // Power-user / explicit opt-in: a hand-edited yaml entry can mark
+  // itself with `trusted: true` to declare "I know what I'm doing, this
+  // external MCP host has its auth wired up properly". Agent yaml writes
+  // via shell won't include this flag (the model has no reason to invent
+  // it and the prompt teaches it not to write `mcp_registry.servers` in
+  // the first place), so the flag effectively distinguishes deliberate
+  // user intent from agent improvisation.
+  if (value.trusted === true) {
+    return true;
+  }
+  const type = typeof value.type === "string" ? value.type.trim() : "";
+  if (type === "local") {
+    return true;
+  }
+  if (type === "remote") {
+    const url = typeof value.url === "string" ? value.url.trim() : "";
+    return url.length > 0 && isAuthorizedRemoteUrl(url);
+  }
+  return true;
+}
+
+function sanitizeUnauthorizedMcpServers(registry: JsonRecord): void {
+  const rawServers = registry.servers;
+  if (!isRecord(rawServers)) {
+    return;
+  }
+  const stripped: string[] = [];
+  for (const [serverId, value] of Object.entries(rawServers)) {
+    const key = serverId.trim();
+    if (!key) continue;
+    if (isAuthorizedMcpServer(key, value)) continue;
+    delete (rawServers as Record<string, unknown>)[serverId];
+    stripped.push(key);
+  }
+  if (stripped.length === 0) {
+    return;
+  }
+  const allowlist = registry.allowlist;
+  if (isRecord(allowlist) && Array.isArray(allowlist.tool_ids)) {
+    const strippedSet = new Set(stripped);
+    const next: string[] = [];
+    for (const raw of allowlist.tool_ids as unknown[]) {
+      if (typeof raw !== "string") continue;
+      const sep = raw.indexOf(".");
+      const serverPart = sep > 0 ? raw.slice(0, sep) : raw;
+      if (strippedSet.has(serverPart.trim())) {
+        continue;
+      }
+      next.push(raw);
+    }
+    (allowlist as Record<string, unknown>).tool_ids = next;
+  }
+  // eslint-disable-next-line no-console
+  console.warn(
+    "[workspace-runtime-plan] stripped unauthorized mcp_registry.servers entries",
+    { server_ids: stripped },
+  );
+}
+
 function readServers(registry: JsonRecord): Record<string, ServerConfig> {
   const rawServers = registry.servers;
   if (!isRecord(rawServers)) {
@@ -685,6 +768,20 @@ function resolveMcpRegistry(config: JsonRecord): McpRegistryCompileResult {
       message: "missing object field 'mcp_registry'"
     });
   }
+
+  // Safety net for the "agent improvised a Connect flow by writing an
+  // external MCP URL into workspace.yaml" failure mode. The only
+  // legitimate writers of `mcp_registry.servers` are the runtime itself
+  // (managed `holaboss_composio` host) and workspace-app registration
+  // (local 127.0.0.1 MCP sidecars). Any other server id with an external
+  // URL is almost certainly an agent shortcut that won't authenticate
+  // and will fail with `Invalid content type` at the SSE transport
+  // layer — strip it here so the rest of the runtime never tries to
+  // bind, and log a warning so the failure is visible. The agent should
+  // be routing this through `holaboss_workspace_integrations_propose_connect`
+  // instead; the prompt + tool-description guidance enforces that at the
+  // model layer, this is the final defense in depth.
+  sanitizeUnauthorizedMcpServers(registry);
 
   const allowlist = readAllowlist(registry);
   const toolRefs = allowlist.resolved_tool_refs;
