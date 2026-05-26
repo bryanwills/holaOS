@@ -118,6 +118,7 @@ import {
   type WorkspaceFileEntry,
 } from "@/lib/workspaceFiles";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
+import { toolkitDisplayName } from "@/lib/toolkitDisplay";
 import * as modelCatalog from "../../../../shared/model-catalog.js";
 import {
   type ChatAttachment,
@@ -6540,7 +6541,7 @@ export function ChatPane({
       await window.electronAPI.workspace.queueSessionInput({
         workspace_id: selectedWorkspaceId,
         session_id: sessionId,
-        text: "continue",
+        text: "[system] All proposed integrations connected. Continue.",
         image_urls: null,
         attachments: [],
         priority: 0,
@@ -6567,7 +6568,7 @@ export function ChatPane({
       await window.electronAPI.workspace.queueSessionInput({
         workspace_id: selectedWorkspaceId,
         session_id: sessionId,
-        text: `[system] ${toolkitSlug} is now connected. You can call its tools.`,
+        text: `[system] ${toolkitDisplayName(toolkitSlug)} connected.`,
         image_urls: null,
         attachments: [],
         priority: 0,

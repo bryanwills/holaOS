@@ -8,6 +8,32 @@ import type {
   ChatMessage,
 } from "./types";
 
+// User-role messages whose text starts with this marker are auto-queued
+// status nudges from the desktop (post-OAuth "Cal.com connected", post-
+// frontier-resolve "Continue", …) — NOT something the user typed. The
+// runtime still treats them as plain inputs so the agent processes them
+// the same way; this just routes them to a quieter system-style bubble
+// in the chat so the human reader doesn't see "[system] cal is now
+// connected. You can call its tools." dressed up as their own message.
+const SYSTEM_INPUT_PREFIX = "[system] ";
+
+function isSystemInputMessage(message: ChatMessage): boolean {
+  return message.role === "user" && message.text.startsWith(SYSTEM_INPUT_PREFIX);
+}
+
+function SystemTurn({ text }: { text: string }) {
+  const body = text.startsWith(SYSTEM_INPUT_PREFIX)
+    ? text.slice(SYSTEM_INPUT_PREFIX.length)
+    : text;
+  return (
+    <div className="flex justify-center">
+      <div className="theme-chat-system-bubble max-w-[80%] rounded-lg border px-3 py-1.5 text-center text-xs text-muted-foreground">
+        {body}
+      </div>
+    </div>
+  );
+}
+
 export function ConversationTurns<Message extends ChatMessage>({
   messages,
   assistantLabel,
@@ -93,14 +119,18 @@ export function ConversationTurns<Message extends ChatMessage>({
           !(liveAssistantTurn && !next);
         const turn =
           message.role === "user" ? (
-            <UserTurn
-              text={message.text}
-              createdAt={message.createdAt}
-              attachments={message.attachments ?? []}
-              onPreviewAttachment={onPreviewAttachment}
-              onLinkClick={onLinkClick}
-              onLocalLinkClick={onLocalLinkClick}
-            />
+            isSystemInputMessage(message) ? (
+              <SystemTurn text={message.text} />
+            ) : (
+              <UserTurn
+                text={message.text}
+                createdAt={message.createdAt}
+                attachments={message.attachments ?? []}
+                onPreviewAttachment={onPreviewAttachment}
+                onLinkClick={onLinkClick}
+                onLocalLinkClick={onLocalLinkClick}
+              />
+            )
           ) : (
             <AssistantTurn
               label={assistantLabel}
