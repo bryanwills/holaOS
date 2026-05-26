@@ -52,7 +52,11 @@ import type { TerminalSessionManagerLike } from "./terminal-session-manager.js";
 import type { QueueWorkerLike } from "./queue-worker.js";
 import { retrieveWorkspaceMemory, type WorkspaceMemoryCategory } from "./workspace-memory.js";
 import type { ComposioMcpManager } from "./composio-mcp-manager.js";
-import { getStoreCatalogEntry } from "./integration-store-catalog.js";
+import {
+  getStoreCatalogEntry,
+  listStoreCatalog,
+  storeCatalogDisplayName,
+} from "./integration-store-catalog.js";
 import { invokeWorkspaceSkill, resolveWorkspaceSkills } from "./workspace-skills.js";
 import {
   listWorkspaceApplicationPorts,
@@ -63,10 +67,7 @@ import {
   resolveWorkspaceAppRuntime,
   updateWorkspaceApplications,
 } from "./workspace-apps.js";
-import {
-  INTEGRATION_CATALOG_PROVIDERS,
-  integrationCatalogProviderIds,
-} from "./integration-catalog.js";
+import { INTEGRATION_CATALOG_PROVIDERS } from "./integration-catalog.js";
 import {
   findForbiddenUpstreamHosts,
   formatHostLintError,
@@ -3188,39 +3189,78 @@ export class RuntimeAgentToolsService {
     } catch {
       // best-effort enrichment; the static catalog still ships
     }
+    const resolveBindingDefault = (key: string): string | null => {
+      try {
+        const binding = this.store.getIntegrationBindingByTarget({
+          workspaceId: params.workspaceId,
+          targetType: "workspace_default",
+          targetId: params.workspaceId,
+          integrationKey: key,
+        });
+        return binding ? binding.connectionId : null;
+      } catch {
+        return null;
+      }
+    };
+
+    // First-class OSS providers — full record (custom scopes, OSS adapter
+    // available for in-app `createIntegrationClient(...)`).
+    const ossProviders = INTEGRATION_CATALOG_PROVIDERS.map((provider) => {
+      const key = provider.provider_id.toLowerCase();
+      const accounts = connectionsByProvider.get(key) ?? [];
+      const storeEntry = getStoreCatalogEntry(key);
+      return {
+        provider_id: provider.provider_id,
+        display_name: provider.display_name,
+        description: provider.description,
+        auth_modes: [...provider.auth_modes],
+        supports_oss: provider.supports_oss,
+        supports_managed: provider.supports_managed,
+        default_scopes: [...provider.default_scopes],
+        docs_url: provider.docs_url,
+        category: storeEntry?.category ?? null,
+        tier: storeEntry?.tier ?? "hero",
+        connected_accounts: accounts as unknown as JsonValue,
+        workspace_default_connection_id: resolveBindingDefault(key),
+      };
+    });
+
+    // Store-catalog-only providers — managed-via-Composio, no OSS
+    // adapter. Still connectable via `holaboss_workspace_integrations_
+    // propose_connect`. Surface them so the agent doesn't conclude the
+    // toolkit "isn't supported" when the user asks for HubSpot / Slack /
+    // Notion / Stripe / etc.
+    const ossKeys = new Set(
+      ossProviders.map((provider) => provider.provider_id.toLowerCase()),
+    );
+    const storeOnlyProviders = listStoreCatalog()
+      .filter((entry) => !ossKeys.has(entry.slug.toLowerCase()))
+      .map((entry) => {
+        const key = entry.slug.toLowerCase();
+        const accounts = connectionsByProvider.get(key) ?? [];
+        return {
+          provider_id: entry.slug,
+          display_name: storeCatalogDisplayName(entry.slug),
+          description: "",
+          auth_modes: ["managed"],
+          supports_oss: false,
+          supports_managed: true,
+          default_scopes: [] as string[],
+          docs_url: null,
+          category: entry.category,
+          tier: entry.tier,
+          connected_accounts: accounts as unknown as JsonValue,
+          workspace_default_connection_id: resolveBindingDefault(key),
+        };
+      });
+
+    const providers = [...ossProviders, ...storeOnlyProviders];
     return {
       workspace_id: params.workspaceId,
-      provider_ids: integrationCatalogProviderIds(),
-      providers: INTEGRATION_CATALOG_PROVIDERS.map((provider) => {
-        const key = provider.provider_id.toLowerCase();
-        const accounts = connectionsByProvider.get(key) ?? [];
-        let defaultConnectionId: string | null = null;
-        try {
-          const binding = this.store.getIntegrationBindingByTarget({
-            workspaceId: params.workspaceId,
-            targetType: "workspace_default",
-            targetId: params.workspaceId,
-            integrationKey: key,
-          });
-          if (binding) defaultConnectionId = binding.connectionId;
-        } catch {
-          // best-effort
-        }
-        return {
-          provider_id: provider.provider_id,
-          display_name: provider.display_name,
-          description: provider.description,
-          auth_modes: [...provider.auth_modes],
-          supports_oss: provider.supports_oss,
-          supports_managed: provider.supports_managed,
-          default_scopes: [...provider.default_scopes],
-          docs_url: provider.docs_url,
-          connected_accounts: accounts as unknown as JsonValue,
-          workspace_default_connection_id: defaultConnectionId,
-        };
-      }),
+      provider_ids: providers.map((provider) => provider.provider_id),
+      providers,
       requirement:
-        "Use the exact canonical provider_id from this catalog in app.runtime.yaml integrations and createIntegrationClient(...). E.g. use 'twitter' for X. When a provider has multiple `connected_accounts` and no `workspace_default_connection_id`, ask the user which account this workspace should default to, then call `holaboss_workspace_integrations_set_default_account` to persist the choice.",
+        "Use the exact canonical `provider_id` from this catalog as the `toolkit_slug` for `holaboss_workspace_integrations_propose_connect`. For OSS providers (`supports_oss: true`) the same id is also the manifest key in `app.runtime.yaml` `integrations:` and for `createIntegrationClient(...)`. Entries with `supports_oss: false` are managed-only via Composio: they connect via OAuth through `propose_connect` and become available as `<toolkit>_<verb>` MCP tools on the next turn, but cannot be embedded into an app's `integrations:` manifest. When a provider has multiple `connected_accounts` and no `workspace_default_connection_id`, ask the user which account this workspace should default to, then call `holaboss_workspace_integrations_set_default_account` to persist the choice.",
     };
   }
 

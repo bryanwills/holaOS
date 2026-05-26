@@ -1740,17 +1740,64 @@ test("listIntegrationCatalog exposes canonical provider ids for app builders", (
     workspaceId: harness.workspaceId,
   }) as {
     provider_ids: string[];
-    providers: Array<{ provider_id: string; display_name: string }>;
+    providers: Array<{
+      provider_id: string;
+      display_name: string;
+      supports_oss: boolean;
+      supports_managed: boolean;
+      auth_modes: string[];
+    }>;
     requirement: string;
   };
 
   assert.ok(catalog.provider_ids.includes("twitter"));
   assert.equal(catalog.provider_ids.includes("x"), false);
-  assert.equal(
-    catalog.providers.some((provider) => provider.provider_id === "twitter"),
-    true,
+  const twitter = catalog.providers.find((p) => p.provider_id === "twitter");
+  assert.ok(twitter, "twitter must be in providers");
+  assert.equal(twitter.supports_oss, true);
+  assert.match(
+    catalog.requirement,
+    /holaboss_workspace_integrations_propose_connect/,
   );
-  assert.match(catalog.requirement, /use 'twitter' for X/i);
+});
+
+test("listIntegrationCatalog includes store-catalog-only providers as managed", () => {
+  // Regression: HubSpot / Slack / Notion / Stripe / Attio etc. all live in
+  // integration-store-catalog.ts but never appeared in this list, so when
+  // the user asked "connect hubspot" the agent fell back to a browser
+  // walkthrough instead of emitting a propose_connect card.
+  const catalog = harness.service.listIntegrationCatalog({
+    workspaceId: harness.workspaceId,
+  }) as {
+    provider_ids: string[];
+    providers: Array<{
+      provider_id: string;
+      display_name: string;
+      supports_oss: boolean;
+      supports_managed: boolean;
+      auth_modes: string[];
+      tier: string;
+      category: string | null;
+    }>;
+  };
+
+  for (const slug of ["hubspot", "slack", "notion", "stripe", "attio", "figma"]) {
+    assert.ok(
+      catalog.provider_ids.includes(slug),
+      `expected ${slug} in provider_ids`,
+    );
+    const entry = catalog.providers.find((p) => p.provider_id === slug);
+    assert.ok(entry, `expected ${slug} in providers`);
+    assert.equal(entry.supports_managed, true);
+    assert.equal(entry.supports_oss, false);
+    assert.deepEqual(entry.auth_modes, ["managed"]);
+  }
+
+  const hubspot = catalog.providers.find((p) => p.provider_id === "hubspot");
+  assert.ok(hubspot);
+  assert.equal(hubspot.display_name, "HubSpot");
+  assert.equal(hubspot.tier, "hero");
+  assert.equal(hubspot.category, "crm");
 });
 
 test("buildWorkspaceApp runs a deterministic app-local build script", async () => {

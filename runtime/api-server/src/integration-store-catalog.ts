@@ -143,6 +143,93 @@ const BY_SLUG = new Map<string, StoreCatalogEntry>(
   RAW_ENTRIES.map((entry) => [entry.slug.toLowerCase(), entry]),
 );
 
+// Mirror of `apps/desktop/src/lib/toolkitDisplay.ts` — when adding a slug
+// here, add it there too (the desktop chat surfaces import from their
+// own copy because they can't reach into the runtime package).
+const DISPLAY_NAMES: Record<string, string> = {
+  gmail: "Gmail",
+  outlook: "Outlook",
+  mailchimp: "Mailchimp",
+  klaviyo: "Klaviyo",
+  kit: "Kit",
+  sendgrid: "SendGrid",
+  googlecalendar: "Google Calendar",
+  googledrive: "Google Drive",
+  googlesheets: "Google Sheets",
+  notion: "Notion",
+  slack: "Slack",
+  discord: "Discord",
+  microsoft_teams: "Microsoft Teams",
+  zoom: "Zoom",
+  intercom: "Intercom",
+  github: "GitHub",
+  gitlab: "GitLab",
+  linear: "Linear",
+  jira: "Jira",
+  asana: "Asana",
+  confluence: "Confluence",
+  clickup: "ClickUp",
+  trello: "Trello",
+  monday: "Monday",
+  shortcut: "Shortcut",
+  height: "Height",
+  vercel: "Vercel",
+  cloudflare: "Cloudflare",
+  fly: "Fly.io",
+  render: "Render",
+  supabase: "Supabase",
+  airtable: "Airtable",
+  sentry: "Sentry",
+  datadog: "Datadog",
+  pagerduty: "PagerDuty",
+  hugging_face: "Hugging Face",
+  pinecone: "Pinecone",
+  twitter: "Twitter",
+  linkedin: "LinkedIn",
+  reddit: "Reddit",
+  youtube: "YouTube",
+  facebook: "Facebook",
+  google_analytics: "Google Analytics",
+  mixpanel: "Mixpanel",
+  amplitude: "Amplitude",
+  posthog: "PostHog",
+  hubspot: "HubSpot",
+  salesforce: "Salesforce",
+  pipedrive: "Pipedrive",
+  attio: "Attio",
+  zendesk: "Zendesk",
+  freshdesk: "Freshdesk",
+  zoho: "Zoho",
+  googleads: "Google Ads",
+  metaads: "Meta Ads",
+  linkedin_ads: "LinkedIn Ads",
+  stripe: "Stripe",
+  shopify: "Shopify",
+  figma: "Figma",
+  ahrefs: "Ahrefs",
+  semrush: "Semrush",
+  webflow: "Webflow",
+  contentful: "Contentful",
+  canva: "Canva",
+  tally: "Tally",
+  googleforms: "Google Forms",
+  calendly: "Calendly",
+  cal: "Cal.com",
+  googletasks: "Google Tasks",
+  dropbox: "Dropbox",
+  one_drive: "OneDrive",
+  box: "Box",
+  google: "Google",
+};
+
+export function storeCatalogDisplayName(slug: string): string {
+  const key = slug.trim().toLowerCase();
+  const known = DISPLAY_NAMES[key];
+  if (known) return known;
+  if (!key) return "this provider";
+  return key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, " ");
+}
+
 export function listStoreCatalog(): StoreCatalogEntry[] {
   return [...RAW_ENTRIES];
 }
