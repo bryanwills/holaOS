@@ -196,6 +196,45 @@ test("inactive connections don't satisfy the gate", () => {
   store.close();
 });
 
+test("gate releases stale proposals older than the TTL", () => {
+  // The user asked for HubSpot, didn't complete OAuth, then 6 minutes
+  // later asked to connect Gitlab instead. The stale HubSpot proposal
+  // shouldn't block the new Gitlab turn forever — the user has moved on.
+  const store = makeStore("hb-gate-ttl");
+  const workspace = seedSession(store);
+  appendProposeConnectEvent(store, {
+    workspaceId: workspace.id,
+    sessionId: "session-1",
+    inputId: "input-1",
+    sequence: 1,
+    toolkitSlug: "hubspot",
+  });
+
+  // Within the 5-minute TTL → still blocking.
+  const fourMinLater = new Date(Date.now() + 4 * 60_000);
+  const within = evaluatePendingIntegrationProposals({
+    store,
+    workspaceId: workspace.id,
+    sessionId: "session-1",
+    now: fourMinLater,
+  });
+  assert.deepEqual(within.unresolvedSlugs, ["hubspot"]);
+  assert.equal(within.blocked, true);
+
+  // Past the 5-minute TTL → proposal is stale, no longer blocks.
+  const sixMinLater = new Date(Date.now() + 6 * 60_000);
+  const expired = evaluatePendingIntegrationProposals({
+    store,
+    workspaceId: workspace.id,
+    sessionId: "session-1",
+    now: sixMinLater,
+  });
+  assert.deepEqual(expired.unresolvedSlugs, []);
+  assert.equal(expired.blocked, false);
+
+  store.close();
+});
+
 test("resumePendingIntegrationInputs wakes deferred inputs after their proposals resolve", () => {
   const store = makeStore("hb-gate-resume");
   const workspace = seedSession(store);

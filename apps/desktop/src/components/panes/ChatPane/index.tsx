@@ -6085,6 +6085,14 @@ export function ChatPane({
     let optimisticUserMessageId = "";
 
     setIsSubmittingMessage(true);
+    // Optimistically clear the "Waiting for you to connect" banner — the
+    // user just sent a new message, so either (a) the proposal-gate will
+    // pass and a fresh agent turn runs (banner stays clear via
+    // run_started), or (b) the gate re-blocks and a new
+    // `waiting_on_pending_integrations` event restores the banner. Either
+    // way, leaving a stale banner up while the user is actively typing is
+    // worse than briefly hiding it.
+    setPendingIntegrationsWait(null);
     trackUmamiEvent("agent_message_sent", {
       workspace_id: selectedWorkspace?.id ?? null,
       has_attachments: pendingAttachments.length > 0,

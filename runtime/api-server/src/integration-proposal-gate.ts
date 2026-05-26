@@ -22,6 +22,16 @@ import type { OutputEventRecord, RuntimeStateStore } from "@holaboss/runtime-sta
 
 const PROPOSE_CONNECT_TOOL_ID = "holaboss_workspace_integrations_propose_connect";
 
+// A propose_connect card blocks the next user input until OAuth resolves
+// or until this TTL elapses. After the TTL the proposal is considered
+// stale — the user has either bailed on the connect attempt or moved on
+// to a different intent, and the agent shouldn't be frozen waiting on a
+// connection the user no longer cares about. Matches `COMPOSIO_POLL_
+// TIMEOUT_MS` in `apps/desktop/src/lib/workspaceDesktop.tsx` so the
+// banner, the card's own "timed out" message, and the gate all expire
+// together.
+const PROPOSE_CONNECT_TTL_MS = 5 * 60_000;
+
 export interface PendingIntegrationProposal {
   toolkit_slug: string;
 }
@@ -88,14 +98,24 @@ export function evaluatePendingIntegrationProposals(params: {
   store: RuntimeStateStore;
   workspaceId: string;
   sessionId: string;
+  // Injected for tests; defaults to wall-clock now.
+  now?: Date;
 }): PendingIntegrationProposalGateResult {
   const events = params.store.listOutputEvents({
     workspaceId: params.workspaceId,
     sessionId: params.sessionId,
     includeHistory: true,
   });
+  const nowMs = (params.now ?? new Date()).getTime();
   const proposed = new Set<string>();
   for (const event of events) {
+    const eventMs = Date.parse(event.createdAt);
+    if (Number.isFinite(eventMs) && nowMs - eventMs > PROPOSE_CONNECT_TTL_MS) {
+      // Stale — older than the TTL. User has either completed OAuth (in
+      // which case the active-connection check below will satisfy this
+      // slug anyway) or moved on; either way it shouldn't gate.
+      continue;
+    }
     for (const slug of proposedSlugsFromToolCallEvent(event)) {
       proposed.add(slug);
     }
