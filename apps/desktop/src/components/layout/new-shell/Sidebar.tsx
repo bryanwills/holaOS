@@ -2,6 +2,7 @@ import { AppIntegrationsDialog } from "@/components/integration/AppIntegrationsD
 import { AppIcon } from "@/components/marketplace/AppIcon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -1918,6 +1919,10 @@ function WorkspaceSwitcher() {
   const [query, setQuery] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [popoverOpen, setPopoverOpen] = useState(false);
+  // Workspace queued for delete-confirmation. Holding the full record (not
+  // just an id) keeps the confirm dialog stable mid-animation even if the
+  // workspaces list re-renders.
+  const [pendingDelete, setPendingDelete] = useState<WorkspaceRecordPayload | null>(null);
 
   const filtered = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
@@ -1927,9 +1932,14 @@ function WorkspaceSwitcher() {
     );
   }, [workspaces, query]);
 
-  const handleDelete = async (workspace: WorkspaceRecordPayload) => {
+  const handleDelete = (workspace: WorkspaceRecordPayload) => {
     if (deletingId) return;
-    if (!window.confirm(`Delete workspace '${workspace.name}'?`)) return;
+    setPendingDelete(workspace);
+  };
+
+  const confirmDelete = async () => {
+    const workspace = pendingDelete;
+    if (!workspace || deletingId) return;
     setDeletingId(workspace.id);
     try {
       await deleteWorkspace(workspace.id);
@@ -1937,6 +1947,7 @@ function WorkspaceSwitcher() {
       // workspaceErrorMessage is already set by WorkspaceDesktopProvider
     } finally {
       setDeletingId(null);
+      setPendingDelete(null);
     }
   };
 
@@ -2088,6 +2099,22 @@ function WorkspaceSwitcher() {
           </div>
         </PopoverContent>
       </Popover>
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+        title={
+          pendingDelete
+            ? `Delete workspace '${pendingDelete.name}'?`
+            : "Delete workspace?"
+        }
+        description="This permanently deletes the workspace's chat history, files, and app data. Your connected accounts stay connected at the account level. This can't be undone."
+        confirmLabel="Delete workspace"
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={() => void confirmDelete()}
+      />
     </div>
   );
 }
