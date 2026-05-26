@@ -166,20 +166,36 @@ export function useIntegrationBinding({
     void refresh();
   }, [refresh]);
 
-  // Bindings can change from outside this hook — agent-driven binds (chat
-  // → runtime → main → state-store) and Settings-driven binds don't go
-  // through `connect()` / `bind()` here, so the sidebar's status dot
-  // would otherwise stay stuck on its mount-time value forever. Poll every
-  // 8s as a low-cost catchall: two IPC reads per AppRow per integration,
-  // negligible at typical scale. The 8s cadence is fast enough that a
-  // user finishing a chat-side connect sees the dot flip "ready" before
-  // they look back at the sidebar.
+  // External state changes (agent-driven binds, multi-device OAuth) bypass
+  // this hook; window focus below is the hot signal, this 60s heartbeat is
+  // the catchall for users who never refocus.
   useEffect(() => {
     if (!selectedWorkspaceId || !trimmedProvider || !trimmedAppId) return;
     const id = setInterval(() => {
       void refresh();
-    }, 8000);
+    }, 60_000);
     return () => clearInterval(id);
+  }, [selectedWorkspaceId, trimmedProvider, trimmedAppId, refresh]);
+
+  // OAuth completion path: user finishes auth in the browser and returns
+  // to the desktop — flip the dot in one IPC roundtrip instead of waiting
+  // on the heartbeat.
+  useEffect(() => {
+    if (!selectedWorkspaceId || !trimmedProvider || !trimmedAppId) return;
+    const onFocus = () => {
+      void refresh();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void refresh();
+      }
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [selectedWorkspaceId, trimmedProvider, trimmedAppId, refresh]);
 
   // The running app captured HOLABOSS_APP_GRANT at boot in its bridge
