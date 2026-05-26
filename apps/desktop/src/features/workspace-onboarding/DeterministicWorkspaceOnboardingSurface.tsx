@@ -422,37 +422,15 @@ export function DeterministicWorkspaceOnboardingSurface() {
     };
   }, [selectedWorkspace?.id]);
 
-  // Once both `heroEntries` and `existingConnectionsBySlug` have loaded,
-  // mark any already-connected hero as `done` and seed the FIRST (newest)
-  // connection id into the tracked map. The continue step then binds
-  // those connections to the new workspace — without this seeding, the
-  // collected map would be empty for unchanged tiles and Phase 2 would
-  // skip them entirely. The user can still flip the selection via the
-  // Switch-account menu before clicking Continue.
-  useEffect(() => {
-    if (!heroEntries || heroEntries.length === 0) return;
-    if (Object.keys(existingConnectionsBySlug).length === 0) return;
-    setPhaseByToolkit((prev) => {
-      const next = { ...prev };
-      for (const entry of heroEntries) {
-        const existing = existingConnectionsBySlug[entry.slug]?.[0];
-        if (existing && !next[entry.slug]) {
-          next[entry.slug] = "done";
-        }
-      }
-      return next;
-    });
-    setConnectionIdByToolkit((prev) => {
-      const next = { ...prev };
-      for (const entry of heroEntries) {
-        const existing = existingConnectionsBySlug[entry.slug]?.[0];
-        if (existing && !next[entry.slug]) {
-          next[entry.slug] = existing.connection_id;
-        }
-      }
-      return next;
-    });
-  }, [heroEntries, existingConnectionsBySlug]);
+  // Intentionally NO auto-staging here. Existing connections from prior
+  // workspaces are surfaced via `existingConnectionsBySlug` so the tile
+  // can render a one-click "use the connection you already authorized"
+  // affordance and `handleConnect`'s short-circuit can skip OAuth — but
+  // the toolkit is NOT pre-included in this workspace until the user
+  // explicitly clicks the tile. Auto-inclusion was a real
+  // privacy/scope-bleed bug: "I once OAuth'd Gmail globally" should NOT
+  // imply "every new workspace also gets Gmail access". The user always
+  // starts from `0 of N connected` and opts each toolkit in.
 
   useEffect(() => {
     let cancelled = false;
@@ -1086,6 +1064,23 @@ export function DeterministicWorkspaceOnboardingSurface() {
                           }
                           onCancel={() => handleCancelConnect(entry.slug)}
                           onConnect={() => void handleConnect(entry)}
+                          onRemoveFromWorkspace={() => {
+                            setPhaseByToolkit((prev) => {
+                              const next = { ...prev };
+                              delete next[entry.slug];
+                              return next;
+                            });
+                            setConnectionIdByToolkit((prev) => {
+                              const next = { ...prev };
+                              delete next[entry.slug];
+                              return next;
+                            });
+                            setErrorByToolkit((prev) => {
+                              const next = { ...prev };
+                              delete next[entry.slug];
+                              return next;
+                            });
+                          }}
                           onSelectAccount={(connectionId) => {
                             setConnectionIdByToolkit((prev) => ({
                               ...prev,
@@ -1185,6 +1180,7 @@ function HeroConnectCard({
   selectedConnectionId,
   onSelectAccount,
   onAddNewAccount,
+  onRemoveFromWorkspace,
 }: {
   entry: HeroEntry;
   phase: ConnectPhase;
@@ -1208,6 +1204,13 @@ function HeroConnectCard({
   /** Pop fresh OAuth to create a NEW connected_account for this provider.
    *  The "Add another account…" menu item. */
   onAddNewAccount: () => void;
+  /** Un-include the toolkit from this workspace. The user previously
+   *  clicked Connect (either via fresh OAuth or via reusing an existing
+   *  account); this flips the tile back to idle and drops the staged
+   *  binding so it won't be persisted on Continue. The underlying
+   *  Composio connected_account stays alive — only this workspace's
+   *  intent to use it is dropped. */
+  onRemoveFromWorkspace: () => void;
 }) {
   const isDone = phase === "done";
   const isConnecting = phase === "connecting";
@@ -1261,12 +1264,16 @@ function HeroConnectCard({
           {phase === "error" ? "Retry" : "Connect"}
         </button>
       ) : null}
-      {isDone && accounts.length > 0 ? (
+      {isDone ? (
         // Power users with multiple Gmails / GitHubs need a way to point
         // this workspace at a specific one (or add a new one). The menu
         // lists every active connection the user has for this provider —
         // picking one is a pure binding swap (no OAuth), and "Add another
         // account…" pops a fresh OAuth that creates a new Composio row.
+        // Always show even when `accounts` is empty (fresh OAuth that
+        // happened post-mount isn't in the snapshot) so the user retains
+        // a path to drop the toolkit out of this workspace via the
+        // "Remove from this workspace" item at the bottom.
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -1301,10 +1308,17 @@ function HeroConnectCard({
                 </DropdownMenuItem>
               );
             })}
-            <DropdownMenuSeparator />
+            {accounts.length > 0 ? <DropdownMenuSeparator /> : null}
             <DropdownMenuItem onClick={onAddNewAccount}>
               <Plus className="size-3.5" />
               <span>Add another account…</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={onRemoveFromWorkspace}
+              className="text-destructive data-[highlighted]:text-destructive"
+            >
+              <X className="size-3.5" />
+              <span>Remove from this workspace</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
