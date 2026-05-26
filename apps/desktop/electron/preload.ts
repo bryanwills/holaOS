@@ -1295,6 +1295,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
       force?: boolean;
     }) =>
       ipcRenderer.invoke("ui:showNativeNotification", payload) as Promise<boolean>,
+    showConfirmDialog: (payload: {
+      title: string;
+      detail: string;
+      confirmLabel?: string;
+      cancelLabel?: string;
+      destructive?: boolean;
+    }) =>
+      ipcRenderer.invoke("ui:showConfirmDialog", payload) as Promise<boolean>,
     setBadgeCount: (count: number) =>
       ipcRenderer.invoke("ui:setBadgeCount", count) as Promise<void>,
     getNotificationsEnabled: () =>

@@ -1897,6 +1897,15 @@ interface RuntimeNotificationListOptionsPayload {
       showNativeNotification: (
         payload: DesktopNativeNotificationPayload
       ) => Promise<boolean>;
+      showConfirmDialog: (
+        payload: {
+          title: string;
+          detail: string;
+          confirmLabel?: string;
+          cancelLabel?: string;
+          destructive?: boolean;
+        }
+      ) => Promise<boolean>;
       setBadgeCount: (count: number) => Promise<void>;
       getNotificationsEnabled: () => Promise<boolean>;
       setNotificationsEnabled: (enabled: boolean) => Promise<boolean>;

@@ -386,6 +386,14 @@ interface DesktopNativeNotificationPayload {
   force?: boolean;
 }
 
+interface DesktopConfirmDialogPayload {
+  title: string;
+  detail: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  destructive?: boolean;
+}
+
 function maybeAuthCallbackUrl(argument: string | undefined): string | null {
   if (!argument) {
     return null;
@@ -23411,6 +23419,44 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, payload: DesktopNativeNotificationPayload) => {
       return await showNativeDesktopNotification(payload);
+    },
+  );
+  handleTrustedIpc(
+    "ui:showConfirmDialog",
+    ["main"],
+    async (_event, payload: DesktopConfirmDialogPayload) => {
+      // Renderer-driven native confirm. Uses `dialog.showMessageBox` so
+      // the user gets the system-style modal (consistent with other
+      // native dialogs in the app) plus a `detail` field for the longer
+      // explanation, which the JS-builtin `window.confirm` cannot
+      // render. `defaultId: 1` puts focus on Cancel for destructive
+      // actions so an accidental Enter doesn't fire the destructive
+      // path.
+      const title = typeof payload?.title === "string" ? payload.title : "";
+      const detail = typeof payload?.detail === "string" ? payload.detail : "";
+      const confirmLabel =
+        typeof payload?.confirmLabel === "string" && payload.confirmLabel.trim()
+          ? payload.confirmLabel
+          : "Confirm";
+      const cancelLabel =
+        typeof payload?.cancelLabel === "string" && payload.cancelLabel.trim()
+          ? payload.cancelLabel
+          : "Cancel";
+      const destructive = Boolean(payload?.destructive);
+      const ownerWindow = BrowserWindow.getFocusedWindow() ?? null;
+      const options = {
+        type: destructive ? ("warning" as const) : ("question" as const),
+        message: title,
+        detail,
+        buttons: [confirmLabel, cancelLabel],
+        defaultId: destructive ? 1 : 0,
+        cancelId: 1,
+        noLink: true,
+      };
+      const result = ownerWindow
+        ? await dialog.showMessageBox(ownerWindow, options)
+        : await dialog.showMessageBox(options);
+      return result.response === 0;
     },
   );
   handleTrustedIpc(

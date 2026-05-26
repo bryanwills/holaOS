@@ -43,7 +43,6 @@ import {
   runtimeStatusVisual,
 } from "@/components/layout/RuntimeStatusIndicator";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { StatusDot } from "@/components/ui/status-dot";
 import { UserAvatar } from "@/components/ui/UserAvatar";
 import { WorkspaceIcon } from "@/components/ui/workspace-icon";
@@ -169,10 +168,6 @@ export function TopTabsBar({
     isMaximized: false,
     isMinimized: false,
   });
-  // Workspace queued for delete-confirmation. Holding the full record (not
-  // just an id) keeps the confirm dialog stable mid-animation even if the
-  // workspaces list re-renders.
-  const [pendingDeleteWorkspace, setPendingDeleteWorkspace] = useState<WorkspaceRecordPayload | null>(null);
   const [workspaceSwitcherPosition, setWorkspaceSwitcherPosition] = useState<{
     top: number;
     left: number;
@@ -190,24 +185,29 @@ export function TopTabsBar({
     updateWorkspaceAppearance,
   } = useWorkspaceDesktop();
 
-  const onDeleteWorkspace = (workspace: WorkspaceRecordPayload) => {
+  const onDeleteWorkspace = async (workspace: WorkspaceRecordPayload) => {
     if (deletingWorkspaceId) {
       return;
     }
-    setPendingDeleteWorkspace(workspace);
-  };
-
-  const confirmDeleteWorkspace = async () => {
-    const workspace = pendingDeleteWorkspace;
-    if (!workspace || deletingWorkspaceId) {
+    // System-modal confirm (not the JS `window.confirm` — that drops the
+    // `detail` line) so the user sees what's being destroyed before they
+    // click. Returns true only when the user explicitly picks the
+    // destructive button.
+    const confirmed = await window.electronAPI.ui.showConfirmDialog({
+      title: `Delete workspace '${workspace.name}'?`,
+      detail:
+        "This permanently deletes the workspace's chat history, files, and app data. Your connected accounts stay connected at the account level. This can't be undone.",
+      confirmLabel: "Delete workspace",
+      cancelLabel: "Cancel",
+      destructive: true,
+    });
+    if (!confirmed) {
       return;
     }
     try {
       await deleteWorkspace(workspace.id);
     } catch {
       // workspaceErrorMessage is already set by the shared desktop state
-    } finally {
-      setPendingDeleteWorkspace(null);
     }
   };
 
@@ -796,22 +796,6 @@ export function TopTabsBar({
         </div>
       ) : null}
 
-      <ConfirmDialog
-        open={pendingDeleteWorkspace !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingDeleteWorkspace(null);
-        }}
-        title={
-          pendingDeleteWorkspace
-            ? `Delete workspace '${pendingDeleteWorkspace.name}'?`
-            : "Delete workspace?"
-        }
-        description="This permanently deletes the workspace's chat history, files, and app data. Your connected accounts stay connected at the account level. This can't be undone."
-        confirmLabel="Delete workspace"
-        cancelLabel="Cancel"
-        destructive
-        onConfirm={() => void confirmDeleteWorkspace()}
-      />
       {!controlCenterActive &&
       workspaceSwitcherOpen &&
       workspaceSwitcherPosition &&
