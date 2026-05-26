@@ -1255,7 +1255,10 @@ function HeroConnectCard({
             <X className="size-3" />
           </button>
         </div>
-      ) : !isDone ? (
+      ) : !isDone && accounts.length === 0 ? (
+        // No existing connection for this toolkit on this account — clicking
+        // Connect goes straight to OAuth. No picker needed; there's nothing
+        // to pick between.
         <button
           className="mt-auto inline-flex w-fit items-center gap-1 text-[11px] leading-4 font-medium text-foreground transition-colors hover:text-primary"
           onClick={onConnect}
@@ -1263,6 +1266,43 @@ function HeroConnectCard({
         >
           {phase === "error" ? "Retry" : "Connect"}
         </button>
+      ) : !isDone ? (
+        // One or more existing connections for this toolkit — clicking
+        // Connect pops a picker so the user explicitly chooses which
+        // account to wire into THIS workspace, instead of silently
+        // grabbing the newest one. "Add another account…" stays available
+        // for users whose desired account isn't in the list yet (e.g.
+        // existing connections are personal and they want to OAuth a work
+        // account for this workspace).
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <button
+                className="mt-auto inline-flex w-fit items-center gap-1 text-[11px] leading-4 font-medium text-foreground transition-colors hover:text-primary"
+                type="button"
+              >
+                {phase === "error" ? "Retry" : "Connect"}
+                <ChevronDown className="size-3" />
+              </button>
+            }
+          />
+          <DropdownMenuContent align="start" className="min-w-[220px]">
+            {accounts.map((acct) => (
+              <DropdownMenuItem
+                key={acct.connection_id}
+                onClick={() => onSelectAccount(acct.connection_id)}
+              >
+                <Check className="size-3.5 opacity-0" />
+                <span className="truncate">{accountDisplayHandle(acct)}</span>
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onAddNewAccount}>
+              <Plus className="size-3.5" />
+              <span>Add another account…</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       ) : null}
       {isDone ? (
         // Power users with multiple Gmails / GitHubs need a way to point
