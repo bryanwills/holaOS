@@ -308,6 +308,7 @@ export function DeterministicWorkspaceOnboardingSurface() {
     composioToolkitsByProvider,
     connectIntegrationProvider,
     continueDeterministicOnboarding,
+    skipWorkspaceOnboarding,
   } = useWorkspaceDesktop();
 
   const [heroEntries, setHeroEntries] = useState<HeroEntry[] | null>(null);
@@ -723,10 +724,25 @@ export function DeterministicWorkspaceOnboardingSurface() {
       // Without this the IDs sit dead in React state and the workspace
       // has no idea which integrations the user "chose" during setup.
       const workspaceId = selectedWorkspace?.id;
+      const entries = workspaceId
+        ? Object.entries(connectionIdByToolkit).filter(
+            ([, connectionId]) => connectionId.trim().length > 0,
+          )
+        : [];
+
+      // Fast path: zero selections means there is no binding to persist
+      // and no context-fetch worker to wait on. Drop straight into the
+      // workspace via the dedicated skip endpoint — the workspace state
+      // transitions directly to active without passing through
+      // `deterministic_context_fetching`, so the user doesn't get parked
+      // on the "Setting up your workspace — Almost ready…" loader for a
+      // step that has nothing to do.
+      if (entries.length === 0) {
+        await skipWorkspaceOnboarding();
+        return;
+      }
+
       if (workspaceId) {
-        const entries = Object.entries(connectionIdByToolkit).filter(
-          ([, connectionId]) => connectionId.trim().length > 0,
-        );
         await Promise.allSettled(
           entries.map(([slug, connectionId]) =>
             bindConnectionToWorkspace({
