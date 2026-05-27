@@ -8,6 +8,7 @@ import { PublishScreen } from "@/components/publish/PublishScreen";
 import { WorkspaceOnboardingSurface } from "@/features/workspace-onboarding/WorkspaceOnboardingSurface";
 import { DesktopBillingProvider } from "@/lib/billing/useDesktopBilling";
 import { useControlCenterCardSignals } from "@/lib/controlCenterLifecycle";
+import { STOPLIGHT_PAD_PX } from "@/lib/StoplightContext";
 import { cn } from "@/lib/utils";
 import {
   useWorkspaceDesktop,
@@ -213,17 +214,34 @@ function ControlCenterTakeover(props: {
     true,
   );
 
+  // macOS traffic lights sit at fixed window coords (x:14 y:16); we'd
+  // overlap them if we pinned the close button to the actual top-left.
+  // Reserve their footprint with the shared STOPLIGHT_PAD_PX so the X
+  // lands just past the rightmost stoplight glyph. Other platforms get a
+  // tight inset.
+  const platform = window.electronAPI?.platform ?? "";
+  const isMac = platform === "darwin";
+  const headerLeftPad = isMac ? STOPLIGHT_PAD_PX : 12;
+
   return (
-    <div className="relative flex min-w-0 flex-1 flex-col bg-background">
-      <button
-        type="button"
-        aria-label="Close all workspaces"
-        title="Close (Esc / ⌘0)"
-        onClick={props.onClose}
-        className="window-no-drag absolute top-3 left-3 z-10 grid size-7 place-items-center rounded-md text-foreground/55 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+    <div className="flex min-w-0 flex-1 flex-col bg-background">
+      {/* Drag handle + close. CC takes over the whole right side, so this
+          replaces TopChrome as the window-drag region — without it the
+          frameless window can't be moved while CC is open. */}
+      <div
+        className="window-drag flex h-10 shrink-0 items-center pr-2"
+        style={{ paddingLeft: headerLeftPad }}
       >
-        <X className="size-3.5" />
-      </button>
+        <button
+          type="button"
+          aria-label="Close all workspaces"
+          title="Close (Esc / ⌘0)"
+          onClick={props.onClose}
+          className="window-no-drag grid size-7 place-items-center rounded-md text-foreground/55 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+        >
+          <X className="size-3.5" />
+        </button>
+      </div>
       <WorkspaceControlCenter
         workspaces={props.workspaces}
         selectedWorkspaceId={props.selectedWorkspaceId}
