@@ -1,4 +1,5 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { FirstWorkspacePane } from "@/components/onboarding/FirstWorkspacePane";
 import { WorkspaceControlCenter } from "@/components/layout/WorkspaceControlCenter";
@@ -94,6 +95,13 @@ function NewAppShellContent() {
       } else if ((e.metaKey || e.ctrlKey) && e.key === "0") {
         e.preventDefault();
         setControlCenterOpen((prev) => !prev);
+      } else if (e.key === "Escape") {
+        // Only swallow Escape when CC is open; other consumers (composers,
+        // dialogs) keep their own ESC handling intact.
+        setControlCenterOpen((prev) => {
+          if (prev) return false;
+          return prev;
+        });
       }
     };
     window.addEventListener("keydown", handler);
@@ -118,7 +126,7 @@ function NewAppShellContent() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden text-foreground antialiased">
-      <Sidebar />
+      {showControlCenter ? null : <Sidebar />}
       {onboardingModeActive ? (
         <div className="flex min-w-0 flex-1 flex-col bg-background">
           <ExperimentalWorkspaceOnboardingTakeover />
@@ -127,6 +135,7 @@ function NewAppShellContent() {
         <ControlCenterTakeover
           workspaces={workspaces}
           selectedWorkspaceId={selectedWorkspaceId}
+          onClose={() => setControlCenterOpen(false)}
           onSelectWorkspace={(id) => setSelectedWorkspaceId(id)}
           onEnterWorkspace={(id) => {
             setSelectedWorkspaceId(id);
@@ -193,6 +202,7 @@ function ExperimentalWorkspaceOnboardingTakeover() {
 function ControlCenterTakeover(props: {
   workspaces: WorkspaceRecordPayload[];
   selectedWorkspaceId: string | null;
+  onClose: () => void;
   onSelectWorkspace: (workspaceId: string) => void;
   onEnterWorkspace: (workspaceId: string) => void;
   onCreateWorkspace: () => void;
@@ -204,7 +214,16 @@ function ControlCenterTakeover(props: {
   );
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col bg-background">
+    <div className="relative flex min-w-0 flex-1 flex-col bg-background">
+      <button
+        type="button"
+        aria-label="Close all workspaces"
+        title="Close (Esc / ⌘0)"
+        onClick={props.onClose}
+        className="window-no-drag absolute top-3 left-3 z-10 grid size-7 place-items-center rounded-md text-foreground/55 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+      >
+        <X className="size-3.5" />
+      </button>
       <WorkspaceControlCenter
         workspaces={props.workspaces}
         selectedWorkspaceId={props.selectedWorkspaceId}
