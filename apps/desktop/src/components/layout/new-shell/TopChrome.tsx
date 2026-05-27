@@ -20,6 +20,7 @@ import {
   SuspendingPopover as Popover,
 } from "./overlay-presence";
 import { useWorkspaceBrowser } from "@/components/panes/useWorkspaceBrowser";
+import { useDesktopPlatform } from "@/lib/desktopPlatform";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import { cn } from "@/lib/utils";
 import {
@@ -28,6 +29,7 @@ import {
 } from "./state/internalTabs";
 import { removeRecentFileByPathAtom } from "./state/recentFiles";
 import { newTabOpenAtom, sidebarCollapsedAtom } from "./state/ui";
+import { WindowControls } from "./WindowControls";
 
 export function TopChrome() {
   const openNewTab = useSetAtom(newTabOpenAtom);
@@ -35,6 +37,9 @@ export function TopChrome() {
   const { browserState } = useWorkspaceBrowser("user");
   const sidebarCollapsed = useAtomValue(sidebarCollapsedAtom);
   const setSidebarCollapsed = useSetAtom(sidebarCollapsedAtom);
+  const platform = useDesktopPlatform();
+  const isMac = platform === "darwin";
+  const isWin = platform === "win32";
   const [internalTabs, setInternalTabs] = useAtom(internalTabsAtom);
   const [activeInternalTabId, setActiveInternalTabId] = useAtom(
     activeInternalTabIdAtom,
@@ -170,11 +175,19 @@ export function TopChrome() {
 
   const agentTabCount = browserState.tabCounts.agent;
 
+  // macOS reserves space for the fixed-position traffic lights when the
+  // sidebar is collapsed; Windows draws its caption controls on the right
+  // side (see <WindowControls />) so the left edge stays flush.
+  const collapsedPadLeft = isMac ? "5rem" : "0.5rem";
+
   return (
     <header
-      className="window-drag flex h-10 shrink-0 items-center gap-1 border-b border-border pr-3 transition-[padding-left] duration-stride ease-out-expo"
+      className={cn(
+        "window-drag flex h-10 shrink-0 items-center gap-1 border-b border-border transition-[padding-left] duration-stride ease-out-expo",
+        isWin ? "pr-0" : "pr-3",
+      )}
       style={{
-        paddingLeft: sidebarCollapsed ? "5rem" : "0.5rem",
+        paddingLeft: sidebarCollapsed ? collapsedPadLeft : "0.5rem",
       }}
     >
       <button
@@ -231,6 +244,12 @@ export function TopChrome() {
       >
         <Plus className="size-3.5" strokeWidth={1.75} />
       </Button>
+      {isWin ? (
+        <>
+          <div className="flex-1" aria-hidden />
+          <WindowControls />
+        </>
+      ) : null}
     </header>
   );
 }

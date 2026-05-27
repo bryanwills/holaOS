@@ -26,6 +26,7 @@ import {
 } from "@/components/panes/ChatPane/ArtifactBrowserModal";
 import type { ArtifactBrowserFilter } from "@/components/panes/ChatPane/types";
 import { FileTypeIcon } from "@/lib/fileIcon";
+import { useDesktopPlatform } from "@/lib/desktopPlatform";
 import { useIntegrationBinding } from "@/lib/useIntegrationBinding";
 import { cn } from "@/lib/utils";
 import type { WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
@@ -1899,11 +1900,18 @@ function RecentFileRow({ entry }: { entry: RecentFile }) {
 // Used to pull the popover leftward so it aligns with the sidebar's
 // inner edge instead of starting from the trigger button — keeping
 // the popover entirely within the sidebar so it never overflows onto
-// the BrowserView.
-const WORKSPACE_POPOVER_LEFT_INSET = 72;
+// the BrowserView. On Windows there are no traffic lights, so the
+// trigger sits at the natural left edge and needs no offset.
+const WORKSPACE_POPOVER_LEFT_INSET_MAC = 72;
+const WORKSPACE_POPOVER_LEFT_INSET_DEFAULT = 0;
 
 function WorkspaceSwitcher() {
   const sidebarWidth = useAtomValue(sidebarWidthAtom);
+  const platform = useDesktopPlatform();
+  const isMac = platform === "darwin";
+  const popoverLeftInset = isMac
+    ? WORKSPACE_POPOVER_LEFT_INSET_MAC
+    : WORKSPACE_POPOVER_LEFT_INSET_DEFAULT;
   const { selectedWorkspaceId, setSelectedWorkspaceId } =
     useWorkspaceSelection();
   const {
@@ -1953,7 +1961,12 @@ function WorkspaceSwitcher() {
   };
 
   return (
-    <div className="window-drag flex h-10 shrink-0 items-center px-2 pl-20">
+    <div
+      className={cn(
+        "window-drag flex h-10 shrink-0 items-center px-2",
+        isMac && "pl-20",
+      )}
+    >
       <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
         <PopoverTrigger
           render={
@@ -1983,7 +1996,7 @@ function WorkspaceSwitcher() {
         />
         <PopoverContent
           align="start"
-          alignOffset={-WORKSPACE_POPOVER_LEFT_INSET}
+          alignOffset={-popoverLeftInset}
           sideOffset={6}
           className="gap-0 p-2"
           style={{
