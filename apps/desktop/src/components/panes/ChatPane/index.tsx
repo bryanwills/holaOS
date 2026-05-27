@@ -8123,6 +8123,7 @@ export function ChatPane({
             <SimpleMarkdown
               className="chat-markdown chat-assistant-markdown max-w-full text-foreground"
               onLinkClick={onOpenLinkInBrowser}
+              onLocalLinkClick={onOpenLocalLink}
             >
               {alignmentReportMarkdown}
             </SimpleMarkdown>
@@ -8219,6 +8220,7 @@ export function ChatPane({
             <SimpleMarkdown
               className="chat-markdown chat-assistant-markdown max-w-full text-foreground"
               onLinkClick={onOpenLinkInBrowser}
+              onLocalLinkClick={onOpenLocalLink}
             >
               {verificationReportMarkdown}
             </SimpleMarkdown>
