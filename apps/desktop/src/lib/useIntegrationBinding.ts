@@ -198,6 +198,18 @@ export function useIntegrationBinding({
     };
   }, [selectedWorkspaceId, trimmedProvider, trimmedAppId, refresh]);
 
+  // Push path: main subscribes to Hono's per-user Composio SSE channel
+  // (composio.connected_account.* webhooks). When Composio flips a
+  // connection ACTIVE on their side, we refresh in ~50ms — not on the
+  // next heartbeat or focus tick.
+  useEffect(() => {
+    if (!selectedWorkspaceId || !trimmedProvider || !trimmedAppId) return;
+    const unsubscribe = window.electronAPI.integration.onUpdated(() => {
+      void refresh();
+    });
+    return unsubscribe;
+  }, [selectedWorkspaceId, trimmedProvider, trimmedAppId, refresh]);
+
   // The running app captured HOLABOSS_APP_GRANT at boot in its bridge
   // transport. Any bind change is invisible until the app process cycles —
   // unconditional restart is cheaper than diffing.

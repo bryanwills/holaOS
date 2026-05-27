@@ -8187,6 +8187,7 @@ function emitAuthAuthenticated(user: AuthUserPayload) {
   for (const listener of gatewayAuthCallbackListeners) {
     listener();
   }
+  startComposioEventsSubscription();
 }
 
 function emitAuthUserUpdated(user: AuthUserPayload | null) {
@@ -8205,6 +8206,9 @@ function emitAuthUserUpdated(user: AuthUserPayload | null) {
     for (const listener of gatewayAuthCallbackListeners) {
       listener();
     }
+    startComposioEventsSubscription();
+  } else {
+    stopComposioEventsSubscription();
   }
 }
 
@@ -16288,6 +16292,103 @@ function emitSessionStreamEvent(payload: HolabossSessionStreamEventPayload) {
   }
 }
 
+// Hono fans out Composio webhook events (composio.connected_account.*) on
+// a per-user SSE channel. Subscribing here turns OAuth-completion latency
+// from "next 60s heartbeat or focus tick in useIntegrationBinding" into
+// "Composio fires webhook → ~50ms network → renderer refresh".
+let composioEventsAbort: AbortController | null = null;
+let composioEventsRetryTimer: NodeJS.Timeout | null = null;
+let composioEventsBackoffMs = 1000;
+const COMPOSIO_EVENTS_BACKOFF_MAX_MS = 30_000;
+
+function emitIntegrationUpdated(payload: unknown) {
+  const windows = BrowserWindow.getAllWindows().filter(
+    (win) => !win.isDestroyed(),
+  );
+  for (const win of windows) {
+    try {
+      win.webContents.send("integration:updated", payload);
+    } catch {
+      // renderer destroyed between filter and send — ignore.
+    }
+  }
+}
+
+function startComposioEventsSubscription() {
+  if (composioEventsAbort) return;
+  if (!AUTH_BASE_URL) return;
+  const cookie = authCookieHeader();
+  if (!cookie) return;
+
+  const controller = new AbortController();
+  composioEventsAbort = controller;
+
+  void (async () => {
+    try {
+      const url = `${AUTH_BASE_URL.replace(/\/+$/, "")}/api/composio/events`;
+      const response = await fetch(url, {
+        headers: {
+          Accept: "text/event-stream",
+          "Cache-Control": "no-cache",
+          Cookie: cookie,
+        },
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) {
+        throw new Error(`composio events stream ${response.status}`);
+      }
+      composioEventsBackoffMs = 1000;
+      const stream = Readable.fromWeb(
+        response.body as unknown as Parameters<typeof Readable.fromWeb>[0],
+      );
+      for await (const event of iterSseEvents(stream)) {
+        if (controller.signal.aborted) break;
+        let parsed: unknown = event.data;
+        try {
+          parsed = JSON.parse(event.data);
+        } catch {
+          continue;
+        }
+        emitIntegrationUpdated(parsed);
+      }
+    } catch (error) {
+      if ((error as { name?: string })?.name === "AbortError") return;
+      // fall through to reconnect
+    }
+    if (composioEventsAbort === controller) {
+      composioEventsAbort = null;
+      if (!controller.signal.aborted) {
+        scheduleComposioEventsReconnect();
+      }
+    }
+  })();
+}
+
+function scheduleComposioEventsReconnect() {
+  if (composioEventsRetryTimer) return;
+  const delay = composioEventsBackoffMs;
+  composioEventsBackoffMs = Math.min(
+    delay * 2,
+    COMPOSIO_EVENTS_BACKOFF_MAX_MS,
+  );
+  composioEventsRetryTimer = setTimeout(() => {
+    composioEventsRetryTimer = null;
+    startComposioEventsSubscription();
+  }, delay);
+}
+
+function stopComposioEventsSubscription() {
+  if (composioEventsRetryTimer) {
+    clearTimeout(composioEventsRetryTimer);
+    composioEventsRetryTimer = null;
+  }
+  if (composioEventsAbort) {
+    composioEventsAbort.abort();
+    composioEventsAbort = null;
+  }
+  composioEventsBackoffMs = 1000;
+}
+
 async function openSessionOutputStream(
   payload: HolabossStreamSessionOutputsPayload,
 ): Promise<HolabossSessionStreamHandlePayload> {
@@ -17144,6 +17245,7 @@ async function ensureAppQuitCleanup(): Promise<void> {
   if (appQuitCleanupFinished) {
     return;
   }
+  stopComposioEventsSubscription();
   if (!appQuitCleanupPromise) {
     // Block the final Electron quit until embedded services have been torn down.
     appQuitCleanupPromise = Promise.allSettled([
