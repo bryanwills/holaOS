@@ -1,10 +1,12 @@
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { useEffect, useRef } from "react";
 import { FirstWorkspacePane } from "@/components/onboarding/FirstWorkspacePane";
+import { WorkspaceControlCenter } from "@/components/layout/WorkspaceControlCenter";
 import { useWorkspaceBrowser } from "@/components/panes/useWorkspaceBrowser";
 import { PublishScreen } from "@/components/publish/PublishScreen";
 import { WorkspaceOnboardingSurface } from "@/features/workspace-onboarding/WorkspaceOnboardingSurface";
 import { DesktopBillingProvider } from "@/lib/billing/useDesktopBilling";
+import { useControlCenterCardSignals } from "@/lib/controlCenterLifecycle";
 import { cn } from "@/lib/utils";
 import {
   useWorkspaceDesktop,
@@ -24,6 +26,7 @@ import { SearchDialog } from "./SearchDialog";
 import { Sidebar } from "./Sidebar";
 import { internalTabsAtom } from "./state/internalTabs";
 import {
+  controlCenterOpenAtom,
   createWorkspaceOpenAtom,
   focusModeAtom,
   newTabOpenAtom,
@@ -51,12 +54,16 @@ function NewAppShellContent() {
   const setNewTabOpen = useSetAtom(newTabOpenAtom);
   const setSearchOpen = useSetAtom(searchOpenAtom);
   const setSidebarCollapsed = useSetAtom(sidebarCollapsedAtom);
-  const { selectedWorkspaceId } = useWorkspaceSelection();
+  const { selectedWorkspaceId, setSelectedWorkspaceId } =
+    useWorkspaceSelection();
   const { onboardingModeActive, workspaces, hasHydratedWorkspaceList } =
     useWorkspaceDesktop();
   const [publishOpen, setPublishOpen] = useAtom(publishOpenAtom);
   const createWorkspaceOpen = useAtomValue(createWorkspaceOpenAtom);
   const setCreateWorkspaceOpen = useSetAtom(createWorkspaceOpenAtom);
+  const [controlCenterOpen, setControlCenterOpen] = useAtom(
+    controlCenterOpenAtom,
+  );
   const hasWorkspaces = workspaces.length > 0;
   const layout = useChatLayout();
   const [focusMode, setFocusMode] = useAtom(focusModeAtom);
@@ -108,11 +115,19 @@ function NewAppShellContent() {
       } else if ((e.metaKey || e.ctrlKey) && e.key === "\\") {
         e.preventDefault();
         setSidebarCollapsed((prev) => !prev);
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "0") {
+        e.preventDefault();
+        setControlCenterOpen((prev) => !prev);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [setNewTabOpen, setSearchOpen, setSidebarCollapsed]);
+  }, [
+    setNewTabOpen,
+    setSearchOpen,
+    setSidebarCollapsed,
+    setControlCenterOpen,
+  ]);
 
   if (hasHydratedWorkspaceList && !hasWorkspaces) {
     return (
@@ -123,6 +138,7 @@ function NewAppShellContent() {
   }
 
   const showMiddle = layout === "split";
+  const showControlCenter = controlCenterOpen;
 
   return (
     <div className="flex h-screen w-screen overflow-hidden text-foreground antialiased">
@@ -131,6 +147,20 @@ function NewAppShellContent() {
         <div className="flex min-w-0 flex-1 flex-col bg-background">
           <ExperimentalWorkspaceOnboardingTakeover />
         </div>
+      ) : showControlCenter ? (
+        <ControlCenterTakeover
+          workspaces={workspaces}
+          selectedWorkspaceId={selectedWorkspaceId}
+          onSelectWorkspace={(id) => setSelectedWorkspaceId(id)}
+          onEnterWorkspace={(id) => {
+            setSelectedWorkspaceId(id);
+            setControlCenterOpen(false);
+          }}
+          onCreateWorkspace={() => {
+            setControlCenterOpen(false);
+            setCreateWorkspaceOpen(true);
+          }}
+        />
       ) : (
         <>
           <div
@@ -179,5 +209,53 @@ function ExperimentalWorkspaceOnboardingTakeover() {
         <WorkspaceOnboardingSurface />
       </div>
     </section>
+  );
+}
+
+// Wraps WorkspaceControlCenter for the new shell. Drag-reorder, density,
+// and completion highlights are deferred to a follow-up that lifts those
+// state slices out of legacy AppShell into shared atoms/hooks.
+function ControlCenterTakeover(props: {
+  workspaces: WorkspaceRecordPayload[];
+  selectedWorkspaceId: string | null;
+  onSelectWorkspace: (workspaceId: string) => void;
+  onEnterWorkspace: (workspaceId: string) => void;
+  onCreateWorkspace: () => void;
+}) {
+  const visibleWorkspaceIdsRef = useRef<string[]>([]);
+  const cardSignals = useControlCenterCardSignals(
+    visibleWorkspaceIdsRef.current,
+    true,
+  );
+
+  return (
+    <div className="flex min-w-0 flex-1 flex-col bg-background">
+      <WorkspaceControlCenter
+        workspaces={props.workspaces}
+        selectedWorkspaceId={props.selectedWorkspaceId}
+        cardsPerRow={3}
+        orderedWorkspaceIds={[]}
+        highlightedWorkspaceIds={[]}
+        cardSignals={cardSignals}
+        onOpenWorkspaceRunningTasks={props.onEnterWorkspace}
+        onOpenWorkspaceAppsExplorer={props.onEnterWorkspace}
+        onSelectWorkspace={props.onSelectWorkspace}
+        onEnterWorkspace={props.onEnterWorkspace}
+        onOpenOutput={(workspaceId) => props.onEnterWorkspace(workspaceId)}
+        onWorkspaceOrderChange={() => {
+          /* drag reorder deferred to a follow-up */
+        }}
+        onVisibleWorkspaceIdsChange={(ids) => {
+          visibleWorkspaceIdsRef.current = ids;
+        }}
+        onCardComposerSubmit={() => {
+          /* highlight suppression handled by AppShell; no-op here */
+        }}
+        onWorkspaceCompletion={() => {
+          /* completion highlights deferred to a follow-up */
+        }}
+        onCreateWorkspace={props.onCreateWorkspace}
+      />
+    </div>
   );
 }
