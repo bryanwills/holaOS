@@ -6,18 +6,11 @@ import {
   type IntegrationReadinessResult,
   checkIntegrationReadiness
 } from "./integration-runtime.js";
+import {
+  INTEGRATION_CATALOG_PROVIDERS,
+  type IntegrationCatalogProviderRecord,
+} from "./integration-catalog.js";
 import { resolveWorkspaceAppRuntime } from "./workspace-apps.js";
-
-export interface IntegrationCatalogProviderRecord {
-  provider_id: string;
-  display_name: string;
-  description: string;
-  auth_modes: string[];
-  supports_oss: boolean;
-  supports_managed: boolean;
-  default_scopes: string[];
-  docs_url: string | null;
-}
 
 export interface IntegrationConnectionPayload {
   connection_id: string;
@@ -27,6 +20,10 @@ export interface IntegrationConnectionPayload {
   account_external_id: string | null;
   account_handle: string | null;
   account_email: string | null;
+  context_cron_auto_fetch_enabled: boolean;
+  last_context_fetch_attempted_at: string | null;
+  last_context_fetch_completed_at: string | null;
+  last_context_fetch_status: string | null;
   auth_mode: string;
   granted_scopes: string[];
   status: string;
@@ -38,7 +35,7 @@ export interface IntegrationConnectionPayload {
 export interface IntegrationBindingPayload {
   binding_id: string;
   workspace_id: string;
-  target_type: "workspace" | "app" | "agent";
+  target_type: "workspace" | "app" | "agent" | "workspace_default" | "conversation_pin";
   target_id: string;
   integration_key: string;
   connection_id: string;
@@ -56,80 +53,18 @@ export class IntegrationServiceError extends Error {
   }
 }
 
-const PHASE_1_INTEGRATION_CATALOG: IntegrationCatalogProviderRecord[] = [
-  {
-    provider_id: "gmail",
-    display_name: "Gmail",
-    description: "Read, draft, and send emails through Gmail.",
-    auth_modes: ["managed", "oauth_app", "manual_token"],
-    supports_oss: true,
-    supports_managed: true,
-    default_scopes: ["gmail.send", "gmail.readonly"],
-    docs_url: null
-  },
-  {
-    provider_id: "googlesheets",
-    display_name: "Google Sheets",
-    description: "Read and manage spreadsheet data through Google Sheets.",
-    auth_modes: ["managed", "oauth_app", "manual_token"],
-    supports_oss: true,
-    supports_managed: true,
-    default_scopes: ["spreadsheets"],
-    docs_url: null
-  },
-  {
-    provider_id: "google",
-    display_name: "Google",
-    description: "Google account (legacy — prefer gmail or googlesheets).",
-    auth_modes: ["managed", "oauth_app", "manual_token"],
-    supports_oss: true,
-    supports_managed: true,
-    default_scopes: [],
-    docs_url: null
-  },
-  {
-    provider_id: "github",
-    display_name: "GitHub",
-    description: "Triage PRs, issues, and repository workflows.",
-    auth_modes: ["managed", "oauth_app", "manual_token"],
-    supports_oss: true,
-    supports_managed: true,
-    default_scopes: ["repo", "read:org"],
-    docs_url: null
-  },
-  {
-    provider_id: "reddit",
-    display_name: "Reddit",
-    description: "Read and manage Reddit content and moderation workflows.",
-    auth_modes: ["managed", "oauth_app", "manual_token"],
-    supports_oss: true,
-    supports_managed: true,
-    default_scopes: ["read", "submit"],
-    docs_url: null
-  },
-  {
-    provider_id: "twitter",
-    display_name: "Twitter / X",
-    description: "Read and publish social updates on X.",
-    auth_modes: ["managed", "oauth_app", "manual_token"],
-    supports_oss: true,
-    supports_managed: true,
-    default_scopes: ["tweet.read", "tweet.write"],
-    docs_url: null
-  },
-  {
-    provider_id: "linkedin",
-    display_name: "LinkedIn",
-    description: "Manage LinkedIn content and workflows.",
-    auth_modes: ["managed", "oauth_app", "manual_token"],
-    supports_oss: true,
-    supports_managed: true,
-    default_scopes: ["r_liteprofile", "w_member_social"],
-    docs_url: null
-  }
-];
-
-const VALID_TARGET_TYPES = new Set(["workspace", "app", "agent"]);
+// `workspace_default` — workspace's preferred account per provider (set
+//   via holaboss_workspace_integrations_set_default_account or Settings).
+// `conversation_pin` — session-scoped account override (reserved; not
+//   yet consumed by the MCP host, but resolver path is wired).
+// See active-account-resolver.ts for the four-layer model.
+const VALID_TARGET_TYPES = new Set([
+  "workspace",
+  "app",
+  "agent",
+  "workspace_default",
+  "conversation_pin",
+]);
 
 function requiredString(value: unknown, fieldName: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
@@ -140,7 +75,7 @@ function requiredString(value: unknown, fieldName: string): string {
 
 function lookupProviderDisplayName(providerId: string): string {
   return (
-    PHASE_1_INTEGRATION_CATALOG.find((provider) => provider.provider_id === providerId)?.display_name ??
+    INTEGRATION_CATALOG_PROVIDERS.find((provider) => provider.provider_id === providerId)?.display_name ??
     providerId
   );
 }
@@ -161,12 +96,22 @@ function optionalBoolean(value: unknown, defaultValue = false): boolean {
   return defaultValue;
 }
 
-function validateTargetType(targetType: string): "workspace" | "app" | "agent" {
+function validateTargetType(
+  targetType: string,
+): "workspace" | "app" | "agent" | "workspace_default" | "conversation_pin" {
   const normalized = requiredString(targetType, "target_type");
   if (!VALID_TARGET_TYPES.has(normalized)) {
-    throw new IntegrationServiceError(400, "target_type must be workspace, app, or agent");
+    throw new IntegrationServiceError(
+      400,
+      "target_type must be workspace, app, agent, workspace_default, or conversation_pin",
+    );
   }
-  return normalized as "workspace" | "app" | "agent";
+  return normalized as
+    | "workspace"
+    | "app"
+    | "agent"
+    | "workspace_default"
+    | "conversation_pin";
 }
 
 function requireWorkspace(store: RuntimeStateStore, workspaceId: string): void {
@@ -183,6 +128,10 @@ function toIntegrationConnectionPayload(record: {
   accountExternalId: string | null;
   accountHandle?: string | null;
   accountEmail?: string | null;
+  contextCronAutoFetchEnabled?: boolean;
+  lastContextFetchAttemptedAt?: string | null;
+  lastContextFetchCompletedAt?: string | null;
+  lastContextFetchStatus?: string | null;
   authMode: string;
   grantedScopes: string[];
   status: string;
@@ -198,6 +147,13 @@ function toIntegrationConnectionPayload(record: {
     account_external_id: record.accountExternalId,
     account_handle: record.accountHandle ?? null,
     account_email: record.accountEmail ?? null,
+    context_cron_auto_fetch_enabled:
+      record.contextCronAutoFetchEnabled ?? true,
+    last_context_fetch_attempted_at:
+      record.lastContextFetchAttemptedAt ?? null,
+    last_context_fetch_completed_at:
+      record.lastContextFetchCompletedAt ?? null,
+    last_context_fetch_status: record.lastContextFetchStatus ?? null,
     auth_mode: record.authMode,
     granted_scopes: record.grantedScopes,
     status: record.status,
@@ -232,15 +188,38 @@ function toIntegrationBindingPayload(record: {
   };
 }
 
+export interface IntegrationServiceHooks {
+  /** Called whenever a connection becomes (or stays) active. Used by the
+   *  api-server to wake inputs that were parked waiting for this provider
+   *  to be connected via a propose_connect card. */
+  onConnectionActive?: (params: {
+    providerId: string;
+    connectionId: string;
+    ownerUserId: string;
+  }) => void;
+  /** Called when a new binding is created for a workspace target. */
+  onBindingCreated?: (params: {
+    bindingId: string;
+    workspaceId: string;
+    targetType: string;
+    targetId: string;
+    integrationKey: string;
+    connectionId: string;
+    isDefault: boolean;
+  }) => void;
+}
+
 export class RuntimeIntegrationService {
   readonly store: RuntimeStateStore;
+  readonly hooks: IntegrationServiceHooks;
 
-  constructor(store: RuntimeStateStore) {
+  constructor(store: RuntimeStateStore, hooks: IntegrationServiceHooks = {}) {
     this.store = store;
+    this.hooks = hooks;
   }
 
   getCatalog(): { providers: IntegrationCatalogProviderRecord[] } {
-    return { providers: PHASE_1_INTEGRATION_CATALOG };
+    return { providers: INTEGRATION_CATALOG_PROVIDERS };
   }
 
   listConnections(params: { providerId?: string; ownerUserId?: string } = {}): {
@@ -307,6 +286,22 @@ export class RuntimeIntegrationService {
       isDefault
     });
 
+    if (!existing) {
+      try {
+        this.hooks.onBindingCreated?.({
+          bindingId: binding.bindingId,
+          workspaceId: binding.workspaceId,
+          targetType: binding.targetType,
+          targetId: binding.targetId,
+          integrationKey: binding.integrationKey,
+          connectionId: binding.connectionId,
+          isDefault: binding.isDefault,
+        });
+      } catch {
+        // Hook is best-effort — never block the binding write.
+      }
+    }
+
     return toIntegrationBindingPayload(binding);
   }
 
@@ -369,6 +364,11 @@ export class RuntimeIntegrationService {
       providerId,
       ownerUserId,
       accountLabel,
+      contextCronAutoFetchEnabled:
+        existing?.contextCronAutoFetchEnabled ?? true,
+      lastContextFetchAttemptedAt: existing?.lastContextFetchAttemptedAt ?? null,
+      lastContextFetchCompletedAt: existing?.lastContextFetchCompletedAt ?? null,
+      lastContextFetchStatus: existing?.lastContextFetchStatus ?? null,
       authMode,
       grantedScopes: params.grantedScopes ?? existing?.grantedScopes ?? [],
       status: "active",
@@ -378,7 +378,27 @@ export class RuntimeIntegrationService {
       accountEmail: params.accountEmail ?? existing?.accountEmail ?? null
     });
 
+    this.notifyConnectionActive(
+      record.connectionId,
+      record.providerId,
+      record.ownerUserId,
+      record.status,
+    );
     return toIntegrationConnectionPayload(record);
+  }
+
+  private notifyConnectionActive(
+    connectionId: string,
+    providerId: string,
+    ownerUserId: string,
+    status: string,
+  ): void {
+    if (status.trim().toLowerCase() !== "active") return;
+    try {
+      this.hooks.onConnectionActive?.({ providerId, connectionId, ownerUserId });
+    } catch {
+      // Hook is best-effort — never block the connection write.
+    }
   }
 
   updateConnection(connectionId: string, params: {
@@ -396,6 +416,7 @@ export class RuntimeIntegrationService {
      */
     accountHandle?: string | null;
     accountEmail?: string | null;
+    contextCronAutoFetchEnabled?: boolean;
   }): IntegrationConnectionPayload {
     const normalizedId = requiredString(connectionId, "connection_id");
     const existing = this.store.getIntegrationConnection(normalizedId);
@@ -416,9 +437,22 @@ export class RuntimeIntegrationService {
       accountHandle:
         params.accountHandle !== undefined ? params.accountHandle : existing.accountHandle,
       accountEmail:
-        params.accountEmail !== undefined ? params.accountEmail : existing.accountEmail
+        params.accountEmail !== undefined ? params.accountEmail : existing.accountEmail,
+      contextCronAutoFetchEnabled:
+        params.contextCronAutoFetchEnabled !== undefined
+          ? params.contextCronAutoFetchEnabled
+          : existing.contextCronAutoFetchEnabled,
+      lastContextFetchAttemptedAt: existing.lastContextFetchAttemptedAt,
+      lastContextFetchCompletedAt: existing.lastContextFetchCompletedAt,
+      lastContextFetchStatus: existing.lastContextFetchStatus,
     });
 
+    this.notifyConnectionActive(
+      record.connectionId,
+      record.providerId,
+      record.ownerUserId,
+      record.status,
+    );
     return toIntegrationConnectionPayload(record);
   }
 

@@ -5,6 +5,7 @@ import {
   renderCapabilityToolRoutingPromptSection,
   type AgentCapabilityManifest,
 } from "./agent-capability-registry.js";
+import type { AgentRecalledMemoryContext } from "./memory-retrieval-pack.js";
 import {
   buildPromptCacheProfileFromSections,
   collectCompatibleContextMessageContents,
@@ -19,34 +20,6 @@ import {
 import type {
   HarnessPromptLayerPayload,
 } from "../../harnesses/src/types.js";
-
-export interface AgentRecalledMemoryContext {
-  entries?: Array<{
-    scope: string;
-    memory_type: string;
-    title: string;
-    summary: string;
-    path: string;
-    verification_policy: string;
-    staleness_policy?: string | null;
-    freshness_state?: string | null;
-    freshness_note?: string | null;
-    source_type?: string | null;
-    observed_at?: string | null;
-    last_verified_at?: string | null;
-    confidence?: number | null;
-    updated_at?: string | null;
-    excerpt?: string | null;
-  }> | null;
-  selection_trace?: Array<{
-    memory_id: string;
-    score: number;
-    freshness_state: string;
-    matched_tokens: string[];
-    reasons: string[];
-    source_type?: string | null;
-  }> | null;
-}
 
 export interface AgentCurrentUserContext {
   profile_id?: string | null;
@@ -86,6 +59,23 @@ export interface AgentRecentRuntimeContext {
   lines?: string[] | null;
 }
 
+export interface AgentSessionAttachmentContext {
+  turns?: Array<{
+    message_id: string;
+    created_at?: string | null;
+    text?: string | null;
+    attachments?: Array<{
+      id: string;
+      kind: "image" | "file" | "folder";
+      name: string;
+      mime_type: string;
+      size_bytes: number;
+      workspace_path: string;
+    }> | null;
+  }> | null;
+  truncated?: boolean | null;
+}
+
 export interface AgentScratchpadContext {
   exists: boolean;
   file_path: string;
@@ -120,6 +110,7 @@ export interface ComposeBaseAgentPromptRequest {
   operatorSurfaceContext?: AgentOperatorSurfaceContext | null;
   pendingUserMemoryContext?: AgentPendingUserMemoryContext | null;
   recentRuntimeContext?: AgentRecentRuntimeContext | null;
+  sessionAttachmentContext?: AgentSessionAttachmentContext | null;
   scratchpadContext?: AgentScratchpadContext | null;
   evolveCandidateContext?: AgentEvolveCandidateContext | null;
   capabilityManifest?: AgentCapabilityManifest | null;
@@ -153,7 +144,12 @@ function normalizeSessionKind(value: string | null | undefined): string {
 
 function isMainSessionKind(value: string | null | undefined): boolean {
   const normalized = normalizeSessionKind(value);
-  return normalized === "main_session" || normalized === "onboarding";
+  return (
+    normalized === "main_session" ||
+    normalized === "onboarding" ||
+    normalized === "workspace_onboarding" ||
+    normalized === "meeting_mode"
+  );
 }
 
 function addAvailableToolName(available: Set<string>, value: string | null | undefined): void {
@@ -190,9 +186,14 @@ function hasWorkspaceInstructionUpdateTool(request: ComposeBaseAgentPromptReques
   return available.has("update_workspace_instructions");
 }
 
-function hasWorkspaceAppCatalogInstallTools(request: ComposeBaseAgentPromptRequest): boolean {
+function hasMemoryRetrieveTool(request: ComposeBaseAgentPromptRequest): boolean {
   const available = collectAvailableToolNames(request);
-  return available.has("workspace_apps_find") && available.has("workspace_apps_install");
+  return available.has("memory_retrieve");
+}
+
+function hasWorkspaceIntegrationCatalogTool(request: ComposeBaseAgentPromptRequest): boolean {
+  const available = collectAvailableToolNames(request);
+  return available.has("workspace_integrations_list_catalog");
 }
 
 function sessionPolicyPromptSection(request: ComposeBaseAgentPromptRequest): string {
@@ -204,6 +205,23 @@ function sessionPolicyPromptSection(request: ComposeBaseAgentPromptRequest): str
     case "onboarding":
       lines.push(
         "This is an onboarding session. Prioritize onboarding progress, use onboarding-specific runtime tools when available, keep the conversation anchored to setup and confirmation work, and do not assume browser tooling is available."
+      );
+      break;
+    case "workspace_onboarding":
+      lines.push(
+        "This is a workspace onboarding lab controller session. Act as a user-facing architect and builder with executor-grade tools.",
+        "Run onboarding as a gated design process: converse with the user to gather requirements, converge those requirements into a concrete design report, wait for user confirmation, then execute and implement the confirmed design in the lab workspace.",
+        "Keep the user-facing onboarding thread focused and sequential. Delegate implementation to subagents only after the user confirms the design report, then wait for the delegated implementation to finish before continuing the onboarding conversation.",
+        "After implementation, verify the result and present a concise verification report to the user. If the user is not satisfied, continue the conversation-design-implementation-verification loop in the lab.",
+        "Required requirements to obtain: cronjobs or recurring work, apps to install, custom apps to create, workspace file and folder organization, skills or repeatable workflows, and AI manager personality and behavior.",
+        "Only call onboarding completion and merge the lab after the user explicitly accepts the verified implementation."
+      );
+      break;
+    case "meeting_mode":
+      lines.push(
+        "This is a meeting-mode lab controller session. Act as a user-facing critique facilitator and builder with executor-grade tools.",
+        "The user has already used the workspace and is rapidly critiquing what did not work well. Capture concrete issues first, build a prioritized backlog, then apply confirmed improvements in the lab workspace.",
+        "Present concise change reports after implementation and keep iterating until the user explicitly accepts the result."
       );
       break;
     case "task_proposal":
@@ -224,10 +242,9 @@ function sessionPolicyPromptSection(request: ComposeBaseAgentPromptRequest): str
         "If the task is blocked by a recoverable user action such as login, authorization, MFA, CAPTCHA, permission, account selection, confirmation, credentials, or missing context, use the `question` tool with the exact unblock request instead of finishing with a limitation.",
         "For browser tasks, if you reach a login or access wall, leave the browser where it is, ask the user to complete the required step, and wait for the main session to resume you."
       );
-      if (hasWorkspaceAppCatalogInstallTools(request)) {
+      if (hasWorkspaceIntegrationCatalogTool(request)) {
         lines.push(
-          "When `workspace_apps_find` and `workspace_apps_install` are surfaced and the task could match an existing workspace app, call `workspace_apps_find` before scaffolding a new app, downloading a native installer, or doing manual marketplace inspection.",
-          "If `workspace_apps_find` returns an exact or clearly suitable catalog match, prefer `workspace_apps_install`; only scaffold a new workspace app or install a native desktop app when no suitable catalog app exists, the install route fails, or the user explicitly asked for a custom app or OS-level client."
+          "Hard requirement: before adding any `integrations:` entry to `app.runtime.yaml` or using `createIntegrationClient(...)`, call `workspace_integrations_list_catalog` and use the exact returned canonical `provider_id` for both the manifest `key` and `provider`, and for `createIntegrationClient(...)`. Do not invent provider names or aliases from product branding."
         );
       }
       break;
@@ -367,6 +384,7 @@ function operatorSurfaceContextPromptSection(context: AgentOperatorSurfaceContex
     "Treat the active user-owned surface as the default referent for deictic questions such as `what am I looking at right now`, `what is this`, `what page/file/screen is this`, or `what about now`, unless the user explicitly narrows to browser, tab, site, URL, terminal, editor, or another surface.",
     "Prefer the active user-owned surface when the user clearly wants you to continue from what they already opened, navigated, selected, or prepared.",
     "Prefer agent-owned surfaces for exploratory, multi-step, parallel, or potentially disruptive work.",
+    "An active browser surface or already-open site is not by itself a routing signal for non-UI questions. For recall, triage, recent activity, or factual lookup requests, prefer current-turn context and other non-browser authoritative sources before inspecting browser state unless the user is asking about that surface.",
     "If the active user-owned surface is not a browser surface, do not answer from browser state just because browser tools are available.",
     "Operator surfaces are continuity context, not authority grants. Do not mutate a user-owned surface unless surfaced runtime capabilities explicitly allow takeover or direct control.",
   ];
@@ -440,6 +458,57 @@ function recentRuntimeContextPromptSection(
     "Run-specific routing recovery:",
     ...lines,
   ]);
+}
+
+function sessionAttachmentContextPromptSection(
+  context: AgentSessionAttachmentContext | null | undefined,
+): string {
+  const turns = Array.isArray(context?.turns)
+    ? context.turns.filter(
+        (
+          turn,
+        ): turn is NonNullable<AgentSessionAttachmentContext["turns"]>[number] =>
+          Boolean(turn) &&
+          Array.isArray(turn.attachments) &&
+          turn.attachments.length > 0,
+      )
+    : [];
+  if (turns.length === 0) {
+    return "";
+  }
+
+  const lines = [
+    "Session attachment timeline:",
+    "These files were introduced on earlier user turns in this same session and remain part of the session context.",
+    "Do not ask the user to reattach them for ordinary follow-up work in this session.",
+    "Use the staged workspace paths below when you need to reopen the exact source files.",
+  ];
+
+  for (const turn of turns) {
+    const createdAt = nonEmptyText(turn.created_at);
+    const text = nonEmptyText(turn.text);
+    const attachments = Array.isArray(turn.attachments) ? turn.attachments : [];
+    const turnSummary = createdAt
+      ? `Earlier user turn at ${createdAt}.`
+      : "Earlier user turn.";
+    lines.push(turnSummary);
+    if (text) {
+      lines.push(`Turn text: ${text}`);
+    }
+    for (const attachment of attachments) {
+      lines.push(
+        `- ${attachment.name} [${attachment.kind}, ${attachment.mime_type}] at \`${attachment.workspace_path}\``,
+      );
+    }
+  }
+
+  if (context?.truncated) {
+    lines.push(
+      "Older attachment turns were omitted from this prompt block for size, but remain in the session history.",
+    );
+  }
+
+  return linesSection(lines);
 }
 
 function scratchpadContextPromptSection(
@@ -538,34 +607,100 @@ function evolveCandidateContextPromptSection(context: AgentEvolveCandidateContex
 }
 
 function recalledMemoryPromptSection(context: AgentRecalledMemoryContext | null | undefined): string {
-  const entries = Array.isArray(context?.entries) ? context.entries : [];
-  if (entries.length === 0) {
+  const retrievalPack = context?.retrieval_pack ?? null;
+  const evidence = Array.isArray(context?.evidence) ? context.evidence : [];
+  const gaps = Array.isArray(context?.gaps)
+    ? context.gaps
+    : Array.isArray(retrievalPack?.open_questions)
+      ? retrievalPack.open_questions
+      : [];
+  const coverage = context?.coverage ?? null;
+  const hasPack =
+    retrievalPack
+    && (
+      (Array.isArray(retrievalPack.known_facts) && retrievalPack.known_facts.length > 0)
+      || (Array.isArray(retrievalPack.recent_high_signal_items) && retrievalPack.recent_high_signal_items.length > 0)
+      || (Array.isArray(retrievalPack.constraints) && retrievalPack.constraints.length > 0)
+      || (Array.isArray(retrievalPack.blockers) && retrievalPack.blockers.length > 0)
+      || gaps.length > 0
+      || nonEmptyText(retrievalPack.recommended_next_source)
+    );
+  if (evidence.length === 0 && !hasPack) {
     return "";
   }
 
   const lines = [
     "Recalled durable memory:",
-    "Use these as durable memories, not as guaranteed current truth. Verify entries marked `check_before_use` or `must_reconfirm` before acting on them, and treat stale entries as hints until reconfirmed.",
+    "Use this as recalled context, not as guaranteed current truth. Rely on freshness state, coverage, and live-verification hints before acting on workspace-sensitive details.",
   ];
 
-  for (const entry of entries) {
-    const scope = nonEmptyText(entry.scope) || "memory";
-    const memoryType = nonEmptyText(entry.memory_type) || "memory";
-    const title = nonEmptyText(entry.title) || "Untitled memory";
-    const summary = nonEmptyText(entry.summary) || "No summary available.";
-    const path = nonEmptyText(entry.path);
-    const verificationPolicy = nonEmptyText(entry.verification_policy) || "none";
-    const stalenessPolicy = nonEmptyText(entry.staleness_policy) || "stable";
-    const freshnessState = nonEmptyText(entry.freshness_state) || "fresh";
-    const freshnessNote = nonEmptyText(entry.freshness_note);
-    const excerpt = nonEmptyText(entry.excerpt);
-    const pathSuffix = path ? ` (\`${path}\`)` : "";
-    const freshnessSuffix = freshnessNote
-      ? ` Freshness: \`${freshnessState}\` (\`${stalenessPolicy}\`) - ${freshnessNote}`
-      : ` Freshness: \`${freshnessState}\` (\`${stalenessPolicy}\`).`;
-    lines.push(`- [${scope}/${memoryType}] ${title}${pathSuffix}: ${summary} Verification: \`${verificationPolicy}\`.${freshnessSuffix}`);
-    if (excerpt) {
-      lines.push(`Excerpt: ${excerpt}`);
+  const intent = nonEmptyText(context?.intent);
+  if (intent) {
+    lines.push(`Retrieval intent: \`${intent}\`.`);
+  }
+
+  if (hasPack && retrievalPack) {
+    const renderSectionItems = (
+      heading: string,
+      items: Array<{
+        category: string;
+        kind: string;
+        title: string;
+        summary: string;
+        freshness_state: string;
+        score: number;
+      }> | null | undefined,
+    ) => {
+      if (!Array.isArray(items) || items.length === 0) {
+        return;
+      }
+      lines.push(`${heading}:`);
+      for (const item of items.slice(0, 4)) {
+        lines.push(
+          `- [${item.category}/${item.kind}] ${item.title}: ${item.summary} Freshness: \`${item.freshness_state}\`. Score: ${item.score.toFixed(2)}.`,
+        );
+      }
+    };
+
+    renderSectionItems("Known facts", retrievalPack.known_facts);
+    renderSectionItems("Recent high-signal items", retrievalPack.recent_high_signal_items);
+    renderSectionItems("Constraints", retrievalPack.constraints);
+    renderSectionItems("Blockers", retrievalPack.blockers);
+
+    if (gaps.length > 0) {
+      lines.push("Open questions:");
+      for (const gap of gaps.slice(0, 4)) {
+        lines.push(`- ${gap.question} Best source: \`${gap.best_source}\`.`);
+      }
+    }
+    const recommendedNextSource = nonEmptyText(retrievalPack.recommended_next_source);
+    if (recommendedNextSource) {
+      lines.push(`Recommended next source: \`${recommendedNextSource}\`.`);
+    }
+    if (retrievalPack.recommended_next_step) {
+      lines.push(
+        `Recommended next step: \`${retrievalPack.recommended_next_step.type}\` via \`${retrievalPack.recommended_next_step.source ?? "memory"}\` - ${retrievalPack.recommended_next_step.reason}`,
+      );
+    }
+  }
+
+  if (coverage) {
+    lines.push(
+      `Coverage: confidence=\`${nonEmptyText(coverage.confidence) || "unknown"}\`, vector=${coverage.used_vector === true ? "yes" : "no"}, lexical=${coverage.used_lexical === true ? "yes" : "no"}, neighbors=${coverage.used_neighbors === true ? "yes" : "no"}.`,
+    );
+  }
+
+  if (evidence.length > 0) {
+    lines.push("Evidence:");
+    for (const item of evidence.slice(0, 5)) {
+      const summary = nonEmptyText(item.summary_for_prompt) || nonEmptyText(item.summary) || "No summary available.";
+      const freshnessNote = nonEmptyText(item.freshness_note);
+      const sourceLabel = nonEmptyText(item.source_label);
+      const sourceSuffix = sourceLabel ? ` Source: ${sourceLabel}.` : "";
+      const freshnessSuffix = freshnessNote ? ` ${freshnessNote}` : "";
+      lines.push(
+        `- [${item.category}/${item.kind}] ${summary} Freshness: \`${item.freshness_state}\`. Score: ${item.score.toFixed(2)}. Reasons: ${item.reasons.join(", ") || "none"}.${sourceSuffix}${freshnessSuffix}`,
+      );
     }
   }
 
@@ -764,6 +899,16 @@ function pushSharedRuntimeContextPromptSections(
     content: recalledMemoryPromptSection(request.recalledMemoryContext)
   });
 
+  pushPromptLayer(promptSections, {
+    id: "session_attachment_context",
+    channel: "context_message",
+    apply_at: "runtime_config",
+    precedence: "runtime_context",
+    priority: 580,
+    volatility: "run",
+    content: sessionAttachmentContextPromptSection(request.sessionAttachmentContext)
+  });
+
   if (options.includeRecentRuntimeContext) {
     pushPromptLayer(promptSections, {
       id: "recent_runtime_context",
@@ -804,6 +949,8 @@ export function buildBaseAgentPromptSections(
 
   const executionLines = [
     "Execution doctrine:",
+    "For non-trivial tasks, slow down: separate knowns, assumptions, and unknowns, then confirm the unknowns that materially affect the next action using the cheapest authoritative path available.",
+    "If a remaining uncertainty affects a high-stakes, destructive, externally visible, costly, or hard-to-reverse action, do not guess; resolve it directly or ask the user for confirmation when the uncertainty is about intent, consent, account choice, judgment, or acceptable risk.",
     "Inspect before mutating workspace, app, browser, runtime state, or external systems when possible.",
     "After edits, commands, browser actions, or state-changing tool calls, verify the result with the most direct inspection path available.",
     "Use available tools, skills, and MCP integrations when they are more reliable than reasoning alone.",
@@ -816,18 +963,36 @@ export function buildBaseAgentPromptSections(
     "Use tools, not hidden state. The newest user message is primary.",
     "Resume unfinished work only when the newest message asks to continue it; otherwise respond to the new message directly.",
     "Ask for missing identity details instead of guessing.",
-    "Use `AGENTS.md` as the durable workspace ledger for stable instructions, procedures, facts, conventions, decisions, and recurring blockers; use local skills for situational workflows."
+    "Use `AGENTS.md` for workspace-wide operating rules, defaults, conventions, and recurring commands that should shape behavior by default on future runs; use local skills for situational workflows."
   ];
   if (hasWorkspaceInstructionUpdateTool(request)) {
     executionLines.push(
-      "Record durable workspace knowledge in root `AGENTS.md` with `update_workspace_instructions` when it is clearly stable, likely to recur, or explicitly confirmed by the user instead of relying only on transient context.",
-      "This includes durable requirements or preferences, verified commands or procedures, stable facts, conventions, decisions, and recurring blockers from the user, direct inspection, or grounded tool or subagent results.",
-      "Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state. When in doubt, leave it out until the pattern repeats or the user confirms it should persist."
+      "Record workspace-wide operating defaults in root `AGENTS.md` with `update_workspace_instructions` when they are clearly stable, likely to recur, or explicitly confirmed by the user instead of relying only on transient context.",
+      "Before writing to `AGENTS.md`, ask whether the agent should obey the information by default on most future runs in this workspace even when the current subject is not in scope.",
+      "This includes durable requirements or preferences, verified recurring commands, default procedures, conventions, policies, decisions, and recurring blockers that should shape behavior by default in future runs.",
+      "Do not record named-subject knowledge in `AGENTS.md` unless it is explicitly intended to become a workspace-wide default instruction. This includes customer, project, vendor, person, system, or workflow-specific facts such as contacts, owners, thresholds, URLs, channels, prior outcomes, and subject-specific procedures.",
+      "A statement being durable or phrased as `remember this` does not by itself make it an `AGENTS.md` item; if it is mainly contextual knowledge to recall later, keep it in memory instead.",
+      "Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state. When in doubt, prefer memory or transient context over `AGENTS.md`, and leave it out until the pattern repeats or the user confirms it should persist as a default."
+    );
+  }
+  if (hasMemoryRetrieveTool(request)) {
+    executionLines.push(
+      "Build a temporary working model from current-turn context, recalled memory, and direct tool results before choosing tools.",
+      "Before choosing a retrieval path, first infer the most likely source of truth for the answer and prefer the most local authoritative source.",
+      "If the answer is not already established by the current turn, currently loaded context, or a direct tool result in this run, probe `memory_retrieve` before broadening to browser, web, file search, connected integrations, or other external retrieval routes.",
+      "If the answer is likely to be workspace-specific or previously learned contextual knowledge such as customer, project, person, workflow, decision, procedure, owner, threshold, contact, internal URL, or other facts that could plausibly have come from prior interactions or previously ingested knowledge in this workspace, use `memory_retrieve` first.",
+      "Hard retrieval order for non-UI questions: current-turn context or direct tool result in this run, then `memory_retrieve`, then the narrowest authoritative local or connected source, and only then browser or web.",
+      "If you are about to inspect an open browser surface first for a non-UI question while `memory_retrieve` is available, stop and call `memory_retrieve` instead.",
+      "Do not skip `memory_retrieve` just because a connected tool surface looks partial, because a relevant browser tab is already open, or because the browser shares auth state with that system.",
+      "Do not open a browser tab or other live external surface first for an unknown fact lookup when memory could plausibly already contain the answer.",
+      "Use browser as the top retrieval route only when the user is explicitly asking about the current page, current tab, or current browser UI state.",
+      "For other freshness-sensitive questions, do not jump to browser first; prefer current-turn context, then `memory_retrieve`, then the most direct connected integration or MCP/app route for that system before broader browser or web retrieval.",
+      "If memory does not return a strong relevant result, then broaden outward to the next most plausible source, which may include local file search, connected integrations, workspace data/tools, or web search depending on where the answer is most likely to live."
     );
   }
   if (capabilityManifest?.browser_tools.length) {
     executionLines.push(
-      "When browser tools are available, treat them as a fallback UI surface, not the default route. Use them only when the user explicitly asks for browser use, the task inherently requires UI interaction, visual confirmation matters, or non-browser routes are blocked. When you do use them, prefer DOM-grounded actions and extraction. If a required fact may be rendered in attributes, custom elements, or hydration data instead of visible text, inspect those page-local DOM sources before concluding it is unavailable. Use screenshots only when visual confirmation matters."
+      "When browser tools are available, treat them as a fallback UI surface, not the default route. Browser is the top option only for questions about the current page, current tab, or current browser UI state. Otherwise use it only when the user explicitly asks for browser use, the task inherently requires UI interaction, visual confirmation matters, or non-browser routes are blocked. When you do use it, prefer DOM-grounded actions and extraction. If a required fact may be rendered in attributes, custom elements, or hydration data instead of visible text, inspect those page-local DOM sources before concluding it is unavailable. Use screenshots only when visual confirmation matters."
     );
   }
   if (request.workspaceSkillIds.length > 0) {
@@ -836,14 +1001,20 @@ export function buildBaseAgentPromptSections(
   if (request.resolvedMcpToolRefs.length > 0) {
     executionLines.push(
       "Use MCP tools directly, and prefer surfaced MCP/app tools over browser work, web search, bash, or file inspection when they match the target system, including its URLs.",
-      "Do not route an MCP-backed task through the browser just because browser tools are available; use browser tools for that system only when the user explicitly asks for browser use, the task explicitly requires UI interaction, independent visual verification is required, or the MCP route is blocked."
     );
+    if (capabilityManifest?.browser_tools.length) {
+      executionLines.push(
+        "Do not treat browser as the default path for non-UI freshness checks in a connected system; for recent or important activity in that system, prefer the MCP/app route before browser when it can provide the live state directly.",
+        "Do not route an MCP-backed task through the browser just because browser tools are available; use browser tools for that system only when the user explicitly asks for browser use, the task explicitly requires UI interaction, independent visual verification is required, or the MCP route is blocked."
+      );
+    }
   } else if (
     (request.resolvedMcpServerIds?.length ?? 0) > 0 ||
     (request.capabilityManifest?.context.mcp_server_ids?.length ?? 0) > 0
   ) {
     executionLines.push(
       "If connected MCP access exists without tool names listed here, do not assume MCP is unavailable; use surfaced MCP tools when relevant.",
+      "For connected systems, recent-activity questions should broaden from current-turn context and memory to the connected MCP/app route before browser exploration.",
       "If browser tools are also available, do not default to browser exploration for the same connected system; keep MCP as the first route unless the user explicitly asks for browser use, the task explicitly requires UI interaction, or the MCP path is blocked."
     );
   }
@@ -917,6 +1088,7 @@ export function buildMainSessionPromptSections(
     "Conversation and orchestration doctrine:",
     "Keep this session conversational and user-facing, but use direct file, shell, browser, MCP/app, and runtime tools when they are surfaced and they are the clearest path.",
     "Use this session to understand the request, execute directly when appropriate, choose when to delegate, brief delegated work clearly, and translate results back to the user.",
+    "For non-trivial requests, work in this order: inventory knowns and unknowns, confirm the unknowns that materially affect the next step, ask the user for confirmation if the remaining decision is high-stakes or judgment-based, then execute.",
     "Use surfaced capabilities to inspect before mutating when possible, and verify results before claiming success.",
     "Treat explicit user requirements, verification targets, and deliverable shape as completion criteria for direct and delegated work, not optional detail.",
     "Do not report work as done, verified, or already satisfied unless direct inspection, direct tool results, or grounded child results confirm it.",
@@ -925,18 +1097,57 @@ export function buildMainSessionPromptSections(
     "Use coordination tools instead of hidden state. The newest user message is primary.",
     "Resume unfinished work only when the newest message clearly asks to continue it; otherwise respond to the new message directly.",
     "Ask for missing identity details instead of guessing.",
-    "Use `AGENTS.md` as the durable workspace ledger. Keep durable instructions, verified procedures, stable facts, conventions, decisions, and recurring blockers there; turn conditional or situational guidance into indexed local skills, using `skill-creator` when available."
+    "Use `AGENTS.md` for workspace-wide operating rules, defaults, conventions, and recurring commands that should shape behavior by default in future runs; turn conditional or situational guidance into indexed local skills, using `skill-creator` when available."
   ];
   if (hasWorkspaceInstructionUpdateTool(request)) {
     conversationLines.push(
-      "Record durable workspace knowledge in root `AGENTS.md` with `update_workspace_instructions` when it is clearly stable, likely to recur, or explicitly confirmed by the user instead of relying only on transient context.",
-      "This includes durable requirements or preferences, verified commands or procedures, stable facts, conventions, decisions, and recurring blockers from the user, direct inspection, or grounded tool or subagent results.",
-      "Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state. When in doubt, leave it out until the pattern repeats or the user confirms it should persist."
+      "Record workspace-wide operating defaults in root `AGENTS.md` with `update_workspace_instructions` when they are clearly stable, likely to recur, or explicitly confirmed by the user instead of relying only on transient context.",
+      "Before writing to `AGENTS.md`, ask whether the agent should obey the information by default on most future runs in this workspace even when the current subject is not in scope.",
+      "This includes durable requirements or preferences, verified recurring commands, default procedures, conventions, policies, decisions, and recurring blockers that should shape behavior by default in future runs.",
+      "Do not record named-subject knowledge in `AGENTS.md` unless it is explicitly intended to become a workspace-wide default instruction. This includes customer, project, vendor, person, system, or workflow-specific facts such as contacts, owners, thresholds, URLs, channels, prior outcomes, and subject-specific procedures.",
+      "A statement being durable or phrased as `remember this` does not by itself make it an `AGENTS.md` item; if it is mainly contextual knowledge to recall later, keep it in memory instead.",
+      "Do not record one-off task requests, unresolved hypotheses, partial investigations, or temporary runtime state. When in doubt, prefer memory or transient context over `AGENTS.md`, and leave it out until the pattern repeats or the user confirms it should persist as a default."
+    );
+  }
+  if (hasMemoryRetrieveTool(request)) {
+    conversationLines.push(
+      "Build a temporary working model from current-turn context, recalled memory, and direct tool results before choosing retrieval or execution steps.",
+      "Before choosing a retrieval path, first infer the most likely source of truth for the answer and prefer the most local authoritative source.",
+      "If the answer is not already established by the current turn, currently loaded context, or a direct tool result in this run, probe `memory_retrieve` before broadening to browser, web, file search, connected integrations, or other external retrieval routes.",
+      "If the answer is likely to be workspace-specific or previously learned contextual knowledge such as customer, project, person, workflow, decision, procedure, owner, threshold, contact, internal URL, or other facts that could plausibly have come from prior interactions or previously ingested knowledge in this workspace, use `memory_retrieve` first.",
+      "Hard retrieval order for non-UI questions: current-turn context or direct tool result in this run, then `memory_retrieve`, then the narrowest authoritative local or connected source, and only then browser or web.",
+      "If you are about to inspect an open browser surface first for a non-UI question while `memory_retrieve` is available, stop and call `memory_retrieve` instead.",
+      "Do not skip `memory_retrieve` just because a connected tool surface looks partial, because a relevant browser tab is already open, or because the browser shares auth state with that system.",
+      "Do not open a browser tab or other live external surface first for an unknown fact lookup when memory could plausibly already contain the answer.",
+      "Use browser as the top retrieval route only when the user is explicitly asking about the current page, current tab, or current browser UI state.",
+      "For other freshness-sensitive questions, do not jump to browser first; prefer current-turn context, then `memory_retrieve`, then the most direct connected integration or MCP/app route for that system before broader browser or web retrieval.",
+      "If memory does not return a strong relevant result, then broaden outward to the next most plausible source, which may include local file search, connected integrations, workspace data/tools, or web search depending on where the answer is most likely to live."
     );
   }
   if (normalizedSessionKind === "onboarding") {
     conversationLines.splice(4, 0,
       "Keep onboarding work in this session. Do not delegate onboarding progress or setup confirmation work to hidden subagents.",
+    );
+  } else if (normalizedSessionKind === "workspace_onboarding") {
+    conversationLines.splice(4, 0,
+      "This session is the workspace onboarding design lab controller.",
+      "You are a user-facing architect and builder. Keep the onboarding thread conversational and uncluttered; do implementation work through delegated workers only after the user has confirmed the design.",
+      "Actively obtain the required workspace alignment inputs: cronjobs or recurring work, apps to install, custom apps to create, workspace file and folder organization, skills or repeatable workflows, and AI manager personality and behavior.",
+      "Use `holaboss_onboarding_status` to ground the current onboarding state before changing phases or claiming what comes next.",
+      "While aligning, if one or several concrete decisions would move the design forward faster as closed choices, call `holaboss_create_alignment_question` and wait for the inline answer card instead of asking the user to answer in freeform chat. Prefer a short question deck when 2-5 tightly related decisions should be answered together, and allow freeform inline responses when the user may want to answer in their own words.",
+      "While aligning, converse first, then when ready, call `holaboss_create_alignment_report` to converge the answers into a concise alignment report that states the proposed workspace structure, apps, custom apps design and features, skills, cronjobs, and AI manager behavior. Include a human-readable `markdown` body in the report for the review card, and keep any structured fields needed for implementation alongside it.",
+      "After creating the alignment report, stop and wait for the alignment review card. Do not ask the user to type approval words such as `approve`, and do not restate the report as a freeform chat approval handoff.",
+      "Once onboarding state moves to implementing through the review UI, delegate the approved implementation inside the lab workspace. Keep onboarding sequential by waiting for implementation results before moving to verification.",
+      "After delegated implementation finishes, inspect or verify the lab result yourself, then create the verification handoff with `holaboss_create_verification_report`, again including a concise human-readable `markdown` body plus any structured verification fields that should remain machine-readable.",
+      "After creating the verification report, stop and wait for the verification review card. Final acceptance, revision, and merge are handled by the UI, not by a runtime tool call from the model."
+    );
+  } else if (normalizedSessionKind === "meeting_mode") {
+    conversationLines.splice(4, 0,
+      "This session is the meeting-mode design lab controller.",
+      "The user is reviewing a workspace they have already used and will rapidly critique what did not work well.",
+      "Collect critiques into a concrete backlog first. Ask only enough to make each critique actionable.",
+      "After the user confirms priorities, apply the changes inside the lab workspace with executor-grade tools and delegated workers.",
+      "Report the updated design or changes, then iterate until explicit user acceptance before merging."
     );
   } else {
     conversationLines.splice(4, 0,
@@ -983,12 +1194,18 @@ export function buildMainSessionPromptSections(
       "Use relevant MCP tools directly instead of only describing them.",
       "Prefer surfaced MCP/app tools over opening the web app, browser exploration, or web research when they can satisfy the request, including when the user supplies a URL for that system; use browser/web around an MCP-backed system only when the user explicitly asks for browser use, for UI verification, for requested independent confirmation, or after the MCP path is blocked."
     );
+    if (capabilityManifest?.browser_tools.length) {
+      conversationLines.push(
+        "Do not treat browser as the default path for non-UI freshness checks in a connected system; for recent or important activity in that system, prefer the MCP/app route before browser when it can provide the live state directly.",
+      );
+    }
   } else if (
     (request.resolvedMcpServerIds?.length ?? 0) > 0 ||
     (request.capabilityManifest?.context.mcp_server_ids?.length ?? 0) > 0
   ) {
     conversationLines.push(
-      "If connected MCP access exists without tool names listed here, do not assume MCP is unavailable; use surfaced MCP tools when relevant."
+      "If connected MCP access exists without tool names listed here, do not assume MCP is unavailable; use surfaced MCP tools when relevant.",
+      "For connected systems, recent-activity questions should broaden from current-turn context and memory to the connected MCP/app route before browser exploration."
     );
   }
   pushPromptLayer(promptSections, {

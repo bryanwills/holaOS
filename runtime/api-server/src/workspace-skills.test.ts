@@ -41,11 +41,13 @@ function expectedResolvedSkill(params: {
   origin: "workspace" | "embedded";
   grantedTools?: string[];
   grantedCommands?: string[];
+  description?: string;
 }) {
   const sourceDir = fs.realpathSync(path.join(params.root, params.skillId));
   return {
     skill_id: params.skillId,
     skill_name: params.skillId,
+    description: params.description ?? `${params.skillId} skill`,
     source_dir: sourceDir,
     file_path: path.join(sourceDir, "SKILL.md"),
     origin: params.origin,
@@ -293,6 +295,7 @@ test("resolveWorkspaceSkills captures declared granted tools and commands and in
       origin: "workspace",
       grantedTools: ["bash", "deploy"],
       grantedCommands: ["deploy-docs"],
+      description: "Deployment helper",
     }),
   ]);
 
@@ -322,6 +325,8 @@ test("embedded app-builder-sdk skill only references bundled local assets", () =
   // duplicates and no nested sdk-package/reference/ duplicates.
   assert.doesNotMatch(skillBody, /`sdk\/[^`]+`/);
   assert.doesNotMatch(skillBody, /`sdk-package\/reference\//);
+  assert.doesNotMatch(skillBody, /`ui-reference\//);
+  assert.doesNotMatch(skillBody, /`ui-package\//);
 
   for (const relativePath of [
     "sdk-package/README.txt",
@@ -332,14 +337,42 @@ test("embedded app-builder-sdk skill only references bundled local assets", () =
     "reference/pinterest-publishing/app.ts",
     "reference/slack-messaging/server.ts",
     "reference/slack-messaging/app.runtime.yaml",
-    "ui-reference/components.json",
-    "ui-reference/tokens.css",
-    "ui-reference/themes/holaos.css",
   ]) {
     assert.equal(
       fs.existsSync(path.join(skillDir, relativePath)),
       true,
       `expected embedded skill asset to exist: ${relativePath}`,
+    );
+  }
+});
+
+test("embedded build-dashboard skill bundles the messaging-dashboard reference", () => {
+  const sourceDir = path.dirname(fileURLToPath(import.meta.url));
+  const skillDir = path.resolve(
+    sourceDir,
+    "../../harnesses/src/embedded-skills/build-dashboard",
+  );
+  // SKILL.md must exist and delegate the visual layer to this skill.
+  const skillBody = fs.readFileSync(path.join(skillDir, "SKILL.md"), "utf8");
+  assert.match(skillBody, /messaging-dashboard/);
+
+  // Reference must be bundled alongside the skill (not external) so the
+  // packaged runtime can read it without leaving the bundle dir.
+  for (const relativePath of [
+    "reference/messaging-dashboard/README.md",
+    "reference/messaging-dashboard/src/client/app.css",
+    "reference/messaging-dashboard/src/client/routes/__root.tsx",
+    "reference/messaging-dashboard/src/client/routes/index.tsx",
+    "reference/messaging-dashboard/src/client/components/header-bar.tsx",
+    "reference/messaging-dashboard/src/client/components/connection-pill.tsx",
+    "reference/messaging-dashboard/src/client/components/status-badge.tsx",
+    "reference/messaging-dashboard/src/client/components/messages-table.tsx",
+    "reference/messaging-dashboard/src/client/lib/sample-data.ts",
+  ]) {
+    assert.equal(
+      fs.existsSync(path.join(skillDir, relativePath)),
+      true,
+      `expected build-dashboard bundled asset to exist: ${relativePath}`,
     );
   }
 });

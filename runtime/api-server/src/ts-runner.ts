@@ -38,9 +38,10 @@ import type {
   AgentOperatorSurfaceType,
   AgentPendingUserMemoryContext,
   AgentRecentRuntimeContext,
-  AgentRecalledMemoryContext,
+  AgentSessionAttachmentContext,
   AgentScratchpadContext,
 } from "./agent-runtime-prompt.js";
+import type { AgentRecalledMemoryContext } from "./memory-retrieval-pack.js";
 import {
   decodeTsRunnerRequestPayload,
   fallbackEventIdentity,
@@ -79,9 +80,7 @@ import {
   type WorkspaceMcpSidecarCliRequest,
 } from "./workspace-mcp-sidecar.js";
 import type { CompiledWorkspaceRuntimePlan } from "./workspace-runtime-plan.js";
-import { createBackgroundTaskMemoryModelClient } from "./background-task-model.js";
-import { recalledMemoryContextFromManifest } from "./memory-recall-manifest.js";
-import { createRecallEmbeddingModelClient } from "./recall-embedding-model.js";
+import { buildRecalledWorkspaceMemoryContext } from "./workspace-memory.js";
 import { readSessionScratchpad } from "./session-scratchpad.js";
 import { pendingUserMemoryContextFromProposals } from "./user-memory-proposals.js";
 import { NATIVE_WEB_SEARCH_TOOL_IDS } from "../../harnesses/src/native-web-search-tools.js";
@@ -97,7 +96,7 @@ const RUNTIME_EXEC_CONTEXT_KEY = "_sandbox_runtime_exec_v1";
 const DEFAULT_SESSION_MODE = "code";
 const DEFAULT_PROVIDER_ID = "openai";
 const WORKSPACE_MCP_READY_TIMEOUT_S = 10;
-const RECALL_SCOPE_ENTRY_LIMIT = 200;
+const RECALLED_MEMORY_PREFETCH_WAIT_MS = 150;
 const MAIN_SESSION_DEFAULT_TOOLS = [
   "read",
   "edit",
@@ -151,7 +150,7 @@ const ONBOARDING_SESSION_RUNTIME_TOOL_IDS = new Set([
       !MAIN_SESSION_ONLY_RUNTIME_TOOL_IDS.has(toolId),
   ),
   "onboarding_status",
-  "onboarding_complete",
+  "holaboss_onboarding_complete",
 ]);
 const BROWSER_RETRY_REQUEST_PATTERN = /\b(?:try again|retry|do it again|again)\b/i;
 const BROWSER_ACTION_REQUEST_PATTERN =
@@ -542,72 +541,18 @@ async function loadRecalledMemoryContext(params: {
         dbPath,
       })
     : null;
+  if (!store) {
+    return null;
+  }
   try {
-    const workspaceEntries = store
-      ? store.listMemoryEntries({
-          workspaceId: params.workspaceId,
-          status: "active",
-          limit: RECALL_SCOPE_ENTRY_LIMIT,
-          offset: 0,
-        })
-      : [];
-    const userEntries = store
-      ? store.listMemoryEntries({
-          scope: "user",
-          status: "active",
-          limit: RECALL_SCOPE_ENTRY_LIMIT,
-          offset: 0,
-        })
-      : [];
-    const byMemoryId = new Map<string, (typeof workspaceEntries)[number]>();
-    for (const entry of [...workspaceEntries, ...userEntries]) {
-      const existing = byMemoryId.get(entry.memoryId);
-      if (!existing) {
-        byMemoryId.set(entry.memoryId, entry);
-        continue;
-      }
-      const existingTime = Date.parse(existing.updatedAt);
-      const nextTime = Date.parse(entry.updatedAt);
-      if (
-        Number.isFinite(nextTime) &&
-        (!Number.isFinite(existingTime) || nextTime > existingTime)
-      ) {
-        byMemoryId.set(entry.memoryId, entry);
-      }
-    }
-    const entries = [...byMemoryId.values()].sort((left, right) => {
-      const updatedDiff =
-        Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
-      if (updatedDiff !== 0 && Number.isFinite(updatedDiff)) {
-        return updatedDiff;
-      }
-      const createdDiff =
-        Date.parse(right.createdAt) - Date.parse(left.createdAt);
-      if (createdDiff !== 0 && Number.isFinite(createdDiff)) {
-        return createdDiff;
-      }
-      return left.memoryId.localeCompare(right.memoryId);
-    });
-    return await recalledMemoryContextFromManifest({
-      query: params.instruction,
-      workspaceRoot: params.workspaceRoot,
-      workspaceId: params.workspaceId,
-      entries,
+    return await buildRecalledWorkspaceMemoryContext({
       store,
-      maxEntries: 5,
-      modelClient: selectorModelClientFromRequest({
-        request: params.request,
-        workspaceId: params.workspaceId,
-        sessionId: params.sessionId,
-        inputId: params.inputId,
-      }),
-      embeddingClient: createRecallEmbeddingModelClient({
-        selectedModel: params.request.model,
-        defaultProviderId: defaultProviderId(),
-        workspaceId: params.workspaceId,
-        sessionId: params.sessionId,
-        inputId: params.inputId,
-      }),
+      workspaceId: params.workspaceId,
+      query: params.instruction,
+      selectedModel: params.request.model,
+      sessionId: params.sessionId,
+      inputId: params.inputId,
+      maxResults: 5,
     });
   } catch (error) {
     params.logger?.warn?.(
@@ -648,7 +593,7 @@ function startRecalledMemoryContextPrefetch(params: {
 
 async function consumeRecalledMemoryContextPrefetch(
   prefetch: RecalledMemoryPrefetchHandle,
-  maxWaitMs = 25,
+  maxWaitMs = RECALLED_MEMORY_PREFETCH_WAIT_MS,
 ): Promise<AgentRecalledMemoryContext | null> {
   if (prefetch.settledAt !== null) {
     return await prefetch.promise;
@@ -881,6 +826,186 @@ function loadRecentRuntimeContext(params: {
   return { lines };
 }
 
+const SESSION_ATTACHMENT_CONTEXT_TURN_LIMIT = 12;
+const SESSION_ATTACHMENT_CONTEXT_ATTACHMENT_LIMIT = 24;
+const SESSION_ATTACHMENT_TEXT_PREVIEW_MAX_LENGTH = 240;
+type SessionAttachmentContextTurn = NonNullable<
+  AgentSessionAttachmentContext["turns"]
+>[number];
+type SessionAttachmentContextAttachment = NonNullable<
+  SessionAttachmentContextTurn["attachments"]
+>[number];
+
+function parseAttachmentContextAttachment(
+  value: unknown,
+): SessionAttachmentContextAttachment | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const id = typeof record.id === "string" ? record.id.trim() : "";
+  const name = typeof record.name === "string" ? record.name.trim() : "";
+  const mimeType =
+    typeof record.mime_type === "string" ? record.mime_type.trim() : "";
+  const workspacePath =
+    typeof record.workspace_path === "string"
+      ? record.workspace_path.trim()
+      : "";
+  const sizeBytes =
+    typeof record.size_bytes === "number" && Number.isFinite(record.size_bytes)
+      ? Math.max(0, Math.trunc(record.size_bytes))
+      : 0;
+  const kind =
+    record.kind === "image"
+      ? "image"
+      : record.kind === "folder"
+        ? "folder"
+        : record.kind === "file"
+          ? "file"
+          : mimeType.startsWith("image/")
+            ? "image"
+            : mimeType === "inode/directory"
+              ? "folder"
+              : "file";
+  if (!id || !name || !mimeType || !workspacePath) {
+    return null;
+  }
+  return {
+    id,
+    kind,
+    name,
+    mime_type: mimeType,
+    size_bytes: sizeBytes,
+    workspace_path: workspacePath,
+  };
+}
+
+function sessionAttachmentContextAttachments(
+  params: {
+    store: RuntimeStateStore;
+    workspaceId: string;
+    messageId: string;
+    metadata: Record<string, unknown>;
+  },
+): SessionAttachmentContextAttachment[] {
+  const metadataAttachments = Array.isArray(params.metadata.attachments)
+    ? params.metadata.attachments
+        .map((item) => parseAttachmentContextAttachment(item))
+        .filter((item): item is SessionAttachmentContextAttachment => Boolean(item))
+    : [];
+  if (metadataAttachments.length > 0) {
+    return metadataAttachments;
+  }
+  if (!params.messageId.startsWith("user-")) {
+    return [];
+  }
+  const inputId = params.messageId.slice(5);
+  if (!inputId) {
+    return [];
+  }
+  const payloadAttachments = params.store.getInput({
+    workspaceId: params.workspaceId,
+    inputId,
+  })?.payload.attachments;
+  if (!Array.isArray(payloadAttachments)) {
+    return [];
+  }
+  return payloadAttachments
+    .map((item) => parseAttachmentContextAttachment(item))
+    .filter((item): item is SessionAttachmentContextAttachment => Boolean(item));
+}
+
+function previewSessionAttachmentTurnText(text: string): string {
+  const collapsed = text.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= SESSION_ATTACHMENT_TEXT_PREVIEW_MAX_LENGTH) {
+    return collapsed;
+  }
+  return `${collapsed.slice(0, SESSION_ATTACHMENT_TEXT_PREVIEW_MAX_LENGTH - 1).trimEnd()}…`;
+}
+
+function loadSessionAttachmentContext(params: {
+  workspaceRoot: string;
+  workspaceId: string;
+  sessionId: string;
+  currentInputId: string;
+  logger?: LoggerLike;
+}): AgentSessionAttachmentContext | null {
+  const sandboxRoot = path.dirname(params.workspaceRoot);
+  const dbPath = defaultHostStateDbPathForSandbox(sandboxRoot);
+  if (!fs.existsSync(dbPath)) {
+    return null;
+  }
+
+  const store = new RuntimeStateStore({
+    workspaceRoot: params.workspaceRoot,
+    sandboxRoot,
+    dbPath,
+  });
+  try {
+    const messages = store.listSessionMessages({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      role: "user",
+      order: "desc",
+      limit: 100,
+      offset: 0,
+    });
+    const excludeMessageId = `user-${params.currentInputId}`;
+    const eligibleTurns = messages
+      .filter((message) => message.id !== excludeMessageId)
+      .map((message) => ({
+        message_id: message.id,
+        created_at: message.createdAt,
+        text: previewSessionAttachmentTurnText(message.text),
+        attachments: sessionAttachmentContextAttachments({
+          store,
+          workspaceId: params.workspaceId,
+          messageId: message.id,
+          metadata: message.metadata,
+        }),
+      }))
+      .filter((turn) => turn.attachments.length > 0);
+    const turns: NonNullable<AgentSessionAttachmentContext["turns"]> = [];
+    let attachmentCount = 0;
+    for (const turn of eligibleTurns) {
+      const remainingAttachmentSlots =
+        SESSION_ATTACHMENT_CONTEXT_ATTACHMENT_LIMIT - attachmentCount;
+      if (
+        remainingAttachmentSlots <= 0 ||
+        turns.length >= SESSION_ATTACHMENT_CONTEXT_TURN_LIMIT
+      ) {
+        break;
+      }
+      const slicedAttachments = turn.attachments.slice(0, remainingAttachmentSlots);
+      turns.push({
+        ...turn,
+        attachments: slicedAttachments,
+      });
+      attachmentCount += slicedAttachments.length;
+    }
+    if (turns.length === 0) {
+      return null;
+    }
+    const totalEligibleAttachments = eligibleTurns.reduce(
+      (sum, turn) => sum + turn.attachments.length,
+      0,
+    );
+    return {
+      turns: turns.reverse(),
+      truncated:
+        eligibleTurns.length > turns.length ||
+        totalEligibleAttachments > attachmentCount,
+    };
+  } catch (error) {
+    params.logger?.warn?.(
+      `Failed to load session attachment context workspace_id=${params.workspaceId} session_id=${params.sessionId}: ${errorMessage(error)}`,
+    );
+    return null;
+  } finally {
+    store.close();
+  }
+}
+
 function normalizeRuntimeApiHost(value: string): string {
   const trimmed = value.trim();
   if (!trimmed || trimmed === "0.0.0.0" || trimmed === "::") {
@@ -971,37 +1096,6 @@ function defaultSessionMode(): string {
   );
 }
 
-function selectorModelClientFromRequest(params: {
-  request: TsRunnerRequest;
-  workspaceId: string;
-  sessionId: string;
-  inputId: string;
-}) {
-  const runtimeExecContext = isRecord(
-    params.request.context[RUNTIME_EXEC_CONTEXT_KEY],
-  )
-    ? (params.request.context[RUNTIME_EXEC_CONTEXT_KEY] as Record<
-        string,
-        unknown
-      >)
-    : {};
-  return createBackgroundTaskMemoryModelClient({
-    workspaceId: params.workspaceId,
-    sessionId: params.sessionId,
-    inputId: params.inputId,
-    selectedModel: firstNonEmptyString(
-      typeof params.request.model === "string" ? params.request.model : "",
-      null,
-    ),
-    defaultProviderId: defaultProviderId(),
-    runtimeExecModelProxyApiKey: firstNonEmptyString(
-      runtimeExecContext.model_proxy_api_key,
-    ),
-    runtimeExecSandboxId: firstNonEmptyString(runtimeExecContext.sandbox_id),
-    runtimeExecRunId: firstNonEmptyString(runtimeExecContext.run_id),
-  });
-}
-
 function defaultExtraTools(harnessId?: string | null): string[] {
   const configured = (process.env.HOLABOSS_EXTRA_TOOLS ?? "")
     .split(",")
@@ -1062,6 +1156,11 @@ function projectRuntimeToolIdsForSession(params: {
   if (normalized === "main_session") {
     return [...params.runtimeToolIds];
   }
+  if (normalized === "subagent") {
+    return params.runtimeToolIds.filter(
+      (toolId) => !SUBAGENT_ORCHESTRATION_RUNTIME_TOOL_IDS.has(toolId),
+    );
+  }
   return params.runtimeToolIds.filter(
     (toolId) =>
       !SUBAGENT_ORCHESTRATION_RUNTIME_TOOL_IDS.has(toolId) &&
@@ -1082,6 +1181,16 @@ function projectExtraToolIdsForSession(params: {
   if (normalized === "main_session") {
     return Array.from(
       new Set([...defaultExtraTools(params.harnessId), ...params.extraToolIds]),
+    );
+  }
+  if (normalized === "subagent") {
+    return Array.from(
+      new Set([
+        ...defaultExtraTools(params.harnessId),
+        ...params.extraToolIds.filter(
+          (toolId) => !SUBAGENT_ORCHESTRATION_RUNTIME_TOOL_IDS.has(toolId),
+        ),
+      ]),
     );
   }
   return Array.from(
@@ -1326,6 +1435,7 @@ function buildAgentRuntimeConfigRequest(params: {
   extraToolIds: string[];
   delegatedExtraToolIds?: string[] | null;
   workspaceSkillIds: string[];
+  workspaceSkillDescriptions: Record<string, string>;
   workspaceCommandIds: string[];
   toolServerIdMap: Readonly<Record<string, string>>;
   resolvedMcpToolRefs: CompiledWorkspaceRuntimePlan["resolved_mcp_tool_refs"];
@@ -1335,6 +1445,7 @@ function buildAgentRuntimeConfigRequest(params: {
   operatorSurfaceContext?: AgentOperatorSurfaceContext | null;
   pendingUserMemoryContext?: AgentPendingUserMemoryContext | null;
   recentRuntimeContext?: AgentRecentRuntimeContext | null;
+  sessionAttachmentContext?: AgentSessionAttachmentContext | null;
   sessionScratchpadContext?: AgentScratchpadContext | null;
   evolveCandidateContext?: AgentEvolveCandidateContext | null;
 }): AgentRuntimeConfigCliRequest {
@@ -1411,12 +1522,14 @@ function buildAgentRuntimeConfigRequest(params: {
     operator_surface_context: params.operatorSurfaceContext ?? undefined,
     pending_user_memory_context: params.pendingUserMemoryContext ?? undefined,
     recent_runtime_context: params.recentRuntimeContext ?? undefined,
+    session_attachment_context: params.sessionAttachmentContext ?? undefined,
     evolve_candidate_context: params.evolveCandidateContext ?? undefined,
     selected_model: firstNonEmptyString(params.request.model) ?? undefined,
     default_provider_id: defaultProviderId(),
     session_mode: defaultSessionMode(),
     workspace_config_checksum: params.compiledPlan.config_checksum,
     workspace_skill_ids: [...params.workspaceSkillIds],
+    workspace_skill_descriptions: { ...params.workspaceSkillDescriptions },
     workspace_command_ids: [...params.workspaceCommandIds],
     default_tools: frontSession
       ? defaultToolsForSessionKind(normalizedSessionKind)
@@ -2201,6 +2314,18 @@ export async function executeTsRunnerRequest(
           logger,
         }),
     );
+    const sessionAttachmentContext = measureBootstrapStage(
+      bootstrapStageTimingsMs,
+      "load_session_attachment_context",
+      () =>
+        loadSessionAttachmentContext({
+          workspaceRoot: bootstrap.workspaceRoot,
+          workspaceId: request.workspace_id,
+          sessionId: request.session_id,
+          currentInputId: request.input_id,
+          logger,
+        }),
+    );
     const runtimeConfig = measureBootstrapStage(
       bootstrapStageTimingsMs,
       "project_runtime_config",
@@ -2229,6 +2354,9 @@ export async function executeTsRunnerRequest(
               ...stagedRuntimeTools.toolIds,
             ],
             workspaceSkillIds: workspaceSkills.map((skill) => skill.skill_id),
+            workspaceSkillDescriptions: Object.fromEntries(
+              workspaceSkills.map((skill) => [skill.skill_id, skill.description]),
+            ),
             workspaceCommandIds: stagedCommands.commandIds,
             toolServerIdMap: serverIdMap,
             resolvedMcpToolRefs,
@@ -2240,6 +2368,7 @@ export async function executeTsRunnerRequest(
             operatorSurfaceContext,
             pendingUserMemoryContext,
             recentRuntimeContext,
+            sessionAttachmentContext,
             sessionScratchpadContext,
             evolveCandidateContext: evolveCandidateContext(request),
           }),

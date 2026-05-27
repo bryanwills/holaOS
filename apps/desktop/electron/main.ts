@@ -32,6 +32,20 @@ Sentry.init({
   },
 });
 
+// Swallow EPIPE on stdio writes — a benign teardown race that Electron
+// would otherwise surface as a "holaOS encountered an error" modal.
+// Trigger: a child / utility process (or the embedded runtime) writes via
+// `console.info`/`.warn`/`.error` after its stdio pipe has been closed on
+// the parent side. Sentry's `consoleLoggingIntegration` above wraps those
+// console methods and re-invokes the real ones, so the EPIPE surfaces here
+// with a stack that ends in `sentry/core/build/cjs/instrument/console.js`
+// — not actually a Sentry bug, just an unhandled write to a half-closed
+// socket. Anything other than EPIPE we leave alone so the existing Sentry
+// + Electron handlers still see it.
+process.on("uncaughtException", (err: NodeJS.ErrnoException) => {
+  if (err?.code === "EPIPE") return;
+});
+
 import { electronClient } from "@better-auth/electron/client";
 import { storage as electronAuthStorage } from "@better-auth/electron/storage";
 import { createAuthClient } from "better-auth/client";
@@ -78,6 +92,7 @@ import {
   readdirSync,
   statSync,
   type FSWatcher,
+  unlinkSync,
   watch,
   writeFileSync,
 } from "node:fs";
@@ -90,12 +105,12 @@ import {
   type ServerResponse,
 } from "node:http";
 import { request as httpsRequest } from "node:https";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { URL, pathToFileURL } from "node:url";
-import ExcelJS from "exceljs";
 import JSZip from "jszip";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
@@ -216,6 +231,39 @@ const APP_DISPLAY_NAME = "holaOS";
 const MAC_APP_MENU_PRODUCT_LABEL = "holaOS";
 const AUTH_CALLBACK_PROTOCOL = "ai.holaboss.app";
 const DESKTOP_LAUNCH_ID = randomUUID();
+const nodeRequire = createRequire(__filename);
+
+interface XlsxPopulateCell {
+  address(): string;
+  value(): unknown;
+  value(value: unknown): XlsxPopulateCell;
+  hyperlink(): string | undefined;
+  hyperlink(hyperlink: string): XlsxPopulateCell;
+}
+
+interface XlsxPopulateRange {
+  value(): unknown;
+}
+
+interface XlsxPopulateWorksheet {
+  name(): string;
+  cell(row: number, column: number): XlsxPopulateCell;
+  usedRange(): XlsxPopulateRange | undefined;
+  hyperlink(address: string): string | undefined;
+  hyperlink(address: string, hyperlink: string | null | undefined): XlsxPopulateWorksheet;
+}
+
+interface XlsxPopulateWorkbook {
+  sheet(indexOrName: number | string): XlsxPopulateWorksheet | undefined;
+  sheets(): XlsxPopulateWorksheet[];
+  outputAsync(): Promise<Buffer | Uint8Array | ArrayBuffer>;
+}
+
+interface XlsxPopulateStatic {
+  fromDataAsync(data: Buffer | Uint8Array | ArrayBuffer): Promise<XlsxPopulateWorkbook>;
+}
+
+const XlsxPopulate = nodeRequire("xlsx-populate") as XlsxPopulateStatic;
 Sentry.setTags({
   desktop_launch_id: DESKTOP_LAUNCH_ID,
   process_kind: "electron_main",
@@ -358,7 +406,50 @@ function devLaunchContextPath(): string {
   return path.join(app.getPath("appData"), APP_DISPLAY_NAME, "dev-launch.json");
 }
 
+const DEFAULT_APP_PROTOCOL_FLAGS_WITH_SEPARATE_VALUE = new Set([
+  "--require",
+  "-r",
+]);
+
+function defaultAppLaunchTargetArg(): string | null {
+  for (let index = 1; index < process.argv.length; index += 1) {
+    const argument = process.argv[index]?.trim();
+    if (!argument) {
+      continue;
+    }
+    if (argument.startsWith("-")) {
+      if (
+        DEFAULT_APP_PROTOCOL_FLAGS_WITH_SEPARATE_VALUE.has(argument) &&
+        index + 1 < process.argv.length
+      ) {
+        index += 1;
+      }
+      continue;
+    }
+    if (maybeAuthCallbackUrl(argument)) {
+      continue;
+    }
+    return path.resolve(argument);
+  }
+  return null;
+}
+
+function clearStaleDevLaunchContext() {
+  if (defaultAppLaunchTargetArg()) {
+    return;
+  }
+  try {
+    unlinkSync(devLaunchContextPath());
+  } catch {
+    // Ignore missing or concurrently-removed files.
+  }
+}
+
 function loadRecoveredDevLaunchContext(): DevLaunchContext | null {
+  if (!defaultAppLaunchTargetArg()) {
+    return null;
+  }
+
   const hasAuthCallbackArgument = process.argv.some((value) =>
     maybeAuthCallbackUrl(value),
   );
@@ -386,6 +477,7 @@ function loadRecoveredDevLaunchContext(): DevLaunchContext | null {
   }
 }
 
+clearStaleDevLaunchContext();
 const recoveredDevLaunchContext = loadRecoveredDevLaunchContext();
 const RESOLVED_DEV_SERVER_URL =
   process.env.VITE_DEV_SERVER_URL?.trim() ||
@@ -1696,7 +1788,7 @@ function configureStableUserDataPath() {
 }
 
 function persistDevLaunchContext() {
-  if (!RESOLVED_DEV_SERVER_URL) {
+  if (!RESOLVED_DEV_SERVER_URL || !defaultAppLaunchTargetArg()) {
     return;
   }
 
@@ -2671,12 +2763,6 @@ interface TemplateListResponsePayload {
   spotlight: SpotlightItemPayload[];
 }
 
-interface ProactiveIngestItemResultPayload {
-  status?: string;
-  event_id?: string;
-  detail?: string | null;
-}
-
 type WorkspaceLocationPayload = "local" | "cloud";
 
 interface WorkspaceRecordPayload {
@@ -2687,7 +2773,11 @@ interface WorkspaceRecordPayload {
   harness: string | null;
   error_message: string | null;
   onboarding_status: string;
+  onboarding_state?: string | null;
   onboarding_session_id: string | null;
+  alignment_question?: Record<string, unknown> | null;
+  alignment_report?: Record<string, unknown> | null;
+  verification_report?: Record<string, unknown> | null;
   onboarding_completed_at: string | null;
   onboarding_completion_summary: string | null;
   onboarding_requested_at: string | null;
@@ -2697,10 +2787,21 @@ interface WorkspaceRecordPayload {
   deleted_at_utc: string | null;
   workspace_path?: string | null;
   folder_state?: "healthy" | "missing" | null;
+  workspace_role?: string | null;
+  source_workspace_id?: string | null;
+  lab_purpose?: string | null;
+  lab_status?: string | null;
 }
 
 interface WorkspaceResponsePayload {
   workspace: WorkspaceRecordPayload;
+}
+
+interface WorkspaceLabResponsePayload {
+  lab: WorkspaceRecordPayload | null;
+  source: WorkspaceRecordPayload | null;
+  session: AgentSessionRecordPayload | null;
+  created?: boolean;
 }
 
 interface WorkspaceListResponsePayload {
@@ -2708,6 +2809,22 @@ interface WorkspaceListResponsePayload {
   total: number;
   limit: number;
   offset: number;
+}
+
+interface WorkspaceOnboardingStatusPayload {
+  workspace_id: string;
+  onboarding_status: string;
+  onboarding_state: string | null;
+  alignment_question: Record<string, unknown> | null;
+  alignment_report: Record<string, unknown> | null;
+  verification_report: Record<string, unknown> | null;
+  onboarding_completed_at: string | null;
+  onboarding_completion_summary: string | null;
+  onboarding_requested_at: string | null;
+  onboarding_requested_by: string | null;
+  lab_workspace_id?: string | null;
+  lab_purpose?: string | null;
+  lab_status?: string | null;
 }
 
 interface DiagnosticsExportRequestPayload {
@@ -2838,69 +2955,6 @@ interface EnsureWorkspaceMainSessionResponsePayload {
   migrated_legacy_session_count: number;
 }
 
-type MemoryUpdateProposalKind = "preference" | "identity" | "profile";
-type MemoryUpdateProposalState = "pending" | "accepted" | "dismissed";
-
-interface MemoryUpdateProposalRecordPayload {
-  proposal_id: string;
-  workspace_id: string;
-  session_id: string;
-  input_id: string;
-  proposal_kind: MemoryUpdateProposalKind;
-  target_key: string;
-  title: string;
-  summary: string;
-  payload: Record<string, unknown>;
-  evidence: string | null;
-  confidence: number | null;
-  source_message_id: string | null;
-  state: MemoryUpdateProposalState;
-  persisted_memory_id: string | null;
-  created_at: string;
-  updated_at: string;
-  accepted_at: string | null;
-  dismissed_at: string | null;
-}
-
-interface MemoryUpdateProposalListRequestPayload {
-  workspaceId: string;
-  sessionId?: string | null;
-  inputId?: string | null;
-  state?: MemoryUpdateProposalState | null;
-  limit?: number;
-  offset?: number;
-}
-
-interface MemoryUpdateProposalListResponsePayload {
-  proposals: MemoryUpdateProposalRecordPayload[];
-  count: number;
-}
-
-interface MemoryUpdateProposalAcceptPayload {
-  proposalId: string;
-  workspaceId: string;
-  summary?: string | null;
-}
-
-interface MemoryUpdateProposalAcceptResponsePayload {
-  proposal: MemoryUpdateProposalRecordPayload;
-}
-
-interface MemoryUpdateProposalDismissResponsePayload {
-  proposal: MemoryUpdateProposalRecordPayload;
-}
-
-interface RemoteTaskProposalGenerationResponsePayload {
-  accepted: boolean;
-  accepted_count: number;
-  event_count: number;
-  correlation_id: string;
-}
-
-interface ProactiveContextCaptureResponsePayload {
-  context: Record<string, unknown>;
-}
-
 interface TaskProposalStateUpdatePayload {
   proposal: TaskProposalRecordPayload;
 }
@@ -2989,6 +3043,10 @@ interface IntegrationConnectionPayload {
   account_external_id: string | null;
   account_handle: string | null;
   account_email: string | null;
+  context_cron_auto_fetch_enabled: boolean;
+  last_context_fetch_attempted_at: string | null;
+  last_context_fetch_completed_at: string | null;
+  last_context_fetch_status: string | null;
   auth_mode: string;
   granted_scopes: string[];
   status: string;
@@ -3044,6 +3102,42 @@ interface IntegrationUpdateConnectionPayload {
   /** Backfill provider-side identity. `null` clears, omit to leave alone. */
   account_handle?: string | null;
   account_email?: string | null;
+  context_cron_auto_fetch_enabled?: boolean;
+  last_context_fetch_attempted_at?: string | null;
+  last_context_fetch_completed_at?: string | null;
+  last_context_fetch_status?: string | null;
+}
+
+function normalizeIntegrationConnectionPayload(
+  connection: Omit<
+    IntegrationConnectionPayload,
+    | "account_handle"
+    | "account_email"
+    | "context_cron_auto_fetch_enabled"
+    | "last_context_fetch_attempted_at"
+    | "last_context_fetch_completed_at"
+    | "last_context_fetch_status"
+  > & {
+    account_handle?: string | null;
+    account_email?: string | null;
+    context_cron_auto_fetch_enabled?: boolean;
+    last_context_fetch_attempted_at?: string | null;
+    last_context_fetch_completed_at?: string | null;
+    last_context_fetch_status?: string | null;
+  },
+): IntegrationConnectionPayload {
+  return {
+    ...connection,
+    account_handle: connection.account_handle ?? null,
+    account_email: connection.account_email ?? null,
+    context_cron_auto_fetch_enabled:
+      connection.context_cron_auto_fetch_enabled ?? true,
+    last_context_fetch_attempted_at:
+      connection.last_context_fetch_attempted_at ?? null,
+    last_context_fetch_completed_at:
+      connection.last_context_fetch_completed_at ?? null,
+    last_context_fetch_status: connection.last_context_fetch_status ?? null,
+  };
 }
 
 interface OAuthAppConfigPayload {
@@ -3233,6 +3327,13 @@ interface UpdateQueuedSessionInputResponsePayload {
   updated_at: string;
 }
 
+interface CancelQueuedSessionInputResponsePayload {
+  input_id: string;
+  session_id: string;
+  status: string;
+  updated_at: string;
+}
+
 interface HolabossClientConfigPayload {
   projectsUrl: string;
   marketplaceUrl: string;
@@ -3332,6 +3433,8 @@ interface HolabossCreateWorkspacePayload {
   template_commit?: string | null;
   /** App names from template metadata, used for integration resolution without materialization. */
   template_apps?: string[];
+  workspace_onboarding_mode?: "start" | "skip" | null;
+  workspace_onboarding_engine?: "deterministic" | "agentic" | null;
   /** Optional absolute path for the workspace's on-disk folder. When provided, the runtime registers this
    * as the workspace root instead of the default managed location. */
   workspace_path?: string | null;
@@ -3371,6 +3474,12 @@ interface HolabossUpdateQueuedSessionInputPayload {
   session_id: string;
   input_id: string;
   text: string;
+}
+
+interface HolabossCancelQueuedSessionInputPayload {
+  workspace_id: string;
+  session_id: string;
+  input_id: string;
 }
 
 interface HolabossStreamSessionOutputsPayload {
@@ -8966,25 +9075,9 @@ function defaultAppProtocolClientArgs(): string[] {
     return [packageRoot];
   }
 
-  const flagsWithSeparateValue = new Set(["--require", "-r"]);
-  for (let index = 1; index < process.argv.length; index += 1) {
-    const argument = process.argv[index]?.trim();
-    if (!argument) {
-      continue;
-    }
-    if (argument.startsWith("-")) {
-      if (
-        flagsWithSeparateValue.has(argument) &&
-        index + 1 < process.argv.length
-      ) {
-        index += 1;
-      }
-      continue;
-    }
-    if (maybeAuthCallbackUrl(argument)) {
-      continue;
-    }
-    return [path.resolve(argument)];
+  const launchTargetArg = defaultAppLaunchTargetArg();
+  if (launchTargetArg) {
+    return [launchTargetArg];
   }
 
   const appPath = app.getAppPath().trim();
@@ -9547,123 +9640,6 @@ async function requestDesktopControlPlaneJson<T>({
   }
 }
 
-async function ingestWorkspaceHeartbeat(params: {
-  workspaceId: string;
-  actorId: string;
-  sourceRef: string;
-  correlationId: string;
-}): Promise<RemoteTaskProposalGenerationResponsePayload> {
-  const workspaceId = params.workspaceId.trim();
-  if (!workspaceId) {
-    throw new Error("workspace_id is required to ingest a heartbeat event.");
-  }
-
-  const correlationId = params.correlationId.trim();
-  if (!correlationId) {
-    throw new Error("correlation_id is required to ingest a heartbeat event.");
-  }
-
-  appendRuntimeEventLog({
-    category: "workspace",
-    event: "workspace.heartbeat.emit",
-    outcome: "start",
-    detail:
-      `workspace_id=${workspaceId} source=${params.sourceRef} ` +
-      `correlation_id=${correlationId}`,
-  });
-
-  try {
-    const bundledContext =
-      await requestWorkspaceRuntimeJson<ProactiveContextCaptureResponsePayload>(
-        workspaceId,
-        {
-          method: "POST",
-          path: "/api/v1/proactive/context/capture",
-          payload: {
-            workspace_id: workspaceId,
-          },
-          retryTransientErrors: true,
-        },
-      );
-    const results = await requestControlPlaneJson<
-      ProactiveIngestItemResultPayload[]
-    >({
-      service: "proactive",
-      method: "POST",
-      path: "/api/v1/proactive/ingest",
-      payload: {
-        events: [
-          {
-            event_id: `evt-heartbeat-${crypto.randomUUID().replace(/-/g, "")}`,
-            event_type: "heartbeat",
-            workspace_id: workspaceId,
-            actor: {
-              type: "system",
-              id: params.actorId,
-            },
-            correlation_id: correlationId,
-            origin: "system",
-            timestamp: utcNowIso(),
-            source_refs: [params.sourceRef],
-            window: "24h",
-            proposal_scope: "window",
-            captured_context: bundledContext.context,
-          },
-        ],
-      },
-    });
-    const acceptedCount = results.filter(
-      (item) => (item?.status || "").trim().toLowerCase() === "accepted",
-    ).length;
-    appendRuntimeEventLog({
-      category: "workspace",
-      event: "workspace.heartbeat.emit",
-      outcome: "success",
-      detail:
-        `workspace_id=${workspaceId} source=${params.sourceRef} ` +
-        `correlation_id=${correlationId} accepted=${acceptedCount}/${results.length}`,
-    });
-    return {
-      accepted: acceptedCount > 0,
-      accepted_count: acceptedCount,
-      event_count: results.length,
-      correlation_id: correlationId,
-    };
-  } catch (error) {
-    appendRuntimeEventLog({
-      category: "workspace",
-      event: "workspace.heartbeat.emit",
-      outcome: "error",
-      detail:
-        `workspace_id=${workspaceId} source=${params.sourceRef} ` +
-        `correlation_id=${correlationId} error=${error instanceof Error ? error.message : String(error)}`,
-    });
-    throw error;
-  }
-}
-
-async function emitWorkspaceReadyHeartbeat(params: {
-  workspaceId: string;
-  holabossUserId: string;
-}): Promise<void> {
-  const workspaceId = params.workspaceId.trim();
-  const holabossUserId = params.holabossUserId.trim();
-  if (
-    !workspaceId ||
-    !holabossUserId ||
-    holabossUserId === LOCAL_OSS_TEMPLATE_USER_ID
-  ) {
-    return;
-  }
-
-  await ingestWorkspaceHeartbeat({
-    workspaceId,
-    actorId: "desktop_workspace_create",
-    sourceRef: "workspace-created:ready",
-    correlationId: `workspace-ready-${workspaceId}`,
-  });
-}
-
 function getHolabossClientConfig(): HolabossClientConfigPayload {
   return {
     projectsUrl: projectsBaseUrl(),
@@ -9899,24 +9875,32 @@ async function archiveBackgroundTask(
   );
 }
 
-async function listMemoryUpdateProposals(
-  payload: MemoryUpdateProposalListRequestPayload,
-): Promise<MemoryUpdateProposalListResponsePayload> {
+async function continueBackgroundTask(
+  payload: ContinueBackgroundTaskPayload,
+): Promise<ContinueBackgroundTaskResponsePayload> {
   if (!payload.workspaceId.trim()) {
-    return { proposals: [], count: 0 };
+    throw new Error("workspaceId is required");
   }
-  return requestWorkspaceRuntimeJson<MemoryUpdateProposalListResponsePayload>(
+  if (!payload.subagentId.trim()) {
+    throw new Error("subagentId is required");
+  }
+  if (!payload.ownerMainSessionId.trim()) {
+    throw new Error("ownerMainSessionId is required");
+  }
+  const instruction = payload.instruction.trim();
+  if (!instruction) {
+    throw new Error("instruction is required");
+  }
+  return requestWorkspaceRuntimeJson<ContinueBackgroundTaskResponsePayload>(
     payload.workspaceId,
     {
-      method: "GET",
-      path: "/api/v1/memory-update-proposals",
-      params: {
+      method: "POST",
+      path: `/api/v1/capabilities/runtime-tools/subagents/${encodeURIComponent(payload.subagentId)}/continue`,
+      payload: {
         workspace_id: payload.workspaceId,
-        session_id: payload.sessionId ?? undefined,
-        input_id: payload.inputId ?? undefined,
-        state: payload.state ?? undefined,
-        limit: payload.limit ?? 200,
-        offset: payload.offset ?? 0,
+        session_id: payload.ownerMainSessionId,
+        instruction,
+        title: payload.title ?? undefined,
       },
     },
   );
@@ -9939,38 +9923,6 @@ async function acceptTaskProposal(
         created_by: payload.created_by,
         priority: payload.priority ?? 0,
         model: payload.model ?? null,
-      },
-    },
-  );
-}
-
-async function acceptMemoryUpdateProposal(
-  payload: MemoryUpdateProposalAcceptPayload,
-): Promise<MemoryUpdateProposalAcceptResponsePayload> {
-  return requestWorkspaceRuntimeJson<MemoryUpdateProposalAcceptResponsePayload>(
-    payload.workspaceId,
-    {
-      method: "POST",
-      path: `/api/v1/memory-update-proposals/${encodeURIComponent(payload.proposalId)}/accept`,
-      payload: {
-        workspace_id: payload.workspaceId,
-        summary: payload.summary ?? undefined,
-      },
-    },
-  );
-}
-
-async function dismissMemoryUpdateProposal(
-  workspaceId: string,
-  proposalId: string,
-): Promise<MemoryUpdateProposalDismissResponsePayload> {
-  return requestWorkspaceRuntimeJson<MemoryUpdateProposalDismissResponsePayload>(
-    workspaceId,
-    {
-      method: "POST",
-      path: `/api/v1/memory-update-proposals/${encodeURIComponent(proposalId)}/dismiss`,
-      payload: {
-        workspace_id: workspaceId,
       },
     },
   );
@@ -10172,6 +10124,48 @@ async function listIntegrationBindings(
   );
 }
 
+interface WorkspaceDefaultAccountResponsePayload {
+  connection_id: string | null;
+}
+
+interface SetWorkspaceDefaultAccountResponsePayload {
+  connection_id: string;
+}
+
+// Layer 2 of the four-layer account-resolution model — "when this
+// workspace makes a direct (non-app) Composio call for provider X,
+// use this connection by default". REST routes are on the runtime
+// API server; these IPC wrappers exist so the Settings UI + the
+// IntegrationsPane connect flow can read / write them. See
+// active-account-resolver.ts for the full resolution stack.
+async function getWorkspaceDefaultAccount(
+  workspaceId: string,
+  providerId: string,
+): Promise<WorkspaceDefaultAccountResponsePayload> {
+  return requestWorkspaceRuntimeJson<WorkspaceDefaultAccountResponsePayload>(
+    workspaceId,
+    {
+      method: "GET",
+      path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/integrations/${encodeURIComponent(providerId)}/default-account`,
+    },
+  );
+}
+
+async function setWorkspaceDefaultAccount(
+  workspaceId: string,
+  providerId: string,
+  connectionId: string,
+): Promise<SetWorkspaceDefaultAccountResponsePayload> {
+  return requestWorkspaceRuntimeJson<SetWorkspaceDefaultAccountResponsePayload>(
+    workspaceId,
+    {
+      method: "PUT",
+      path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/integrations/${encodeURIComponent(providerId)}/default-account`,
+      payload: { connection_id: connectionId },
+    },
+  );
+}
+
 async function upsertIntegrationBinding(
   workspaceId: string,
   targetType: string,
@@ -10202,6 +10196,170 @@ async function deleteIntegrationBinding(
   });
 }
 
+interface WorkspaceIntegrationConnectionView {
+  connected_account_id: string;
+  status: string;
+  user_id: string;
+  created_at: string;
+}
+
+interface WorkspaceIntegrationView {
+  toolkit_slug: string;
+  toolkit_name: string;
+  toolkit_logo: string | null;
+  supported: boolean;
+  effective_state: "auto" | "disabled" | "pinned";
+  effective_connection_id: string | null;
+  pinned_connection_id: string | null;
+  connections: WorkspaceIntegrationConnectionView[];
+}
+
+interface WorkspaceIntegrationsListResponse {
+  workspace_id: string;
+  integrations: WorkspaceIntegrationView[];
+}
+
+interface MemoryBrowserTreeNode {
+  name: string;
+  path: string;
+  kind: "directory" | "file";
+  size_bytes: number | null;
+  modified_at: string | null;
+  children?: MemoryBrowserTreeNode[];
+}
+
+interface MemoryBrowserTreeResponse {
+  workspace_id: string;
+  root: MemoryBrowserTreeNode;
+  counts: {
+    directories: number;
+    files: number;
+  };
+}
+
+interface MemoryBrowserFileResponse {
+  workspace_id: string;
+  path: string;
+  name: string;
+  size_bytes: number;
+  modified_at: string;
+  content: string;
+}
+
+type MemoryBrowserGraphForest = "workspace" | "integrations";
+type MemoryBrowserGraphNodeKind = "root" | "tree" | "entity" | "branch" | "summary" | "leaf";
+
+interface MemoryBrowserGraphNode {
+  id: string;
+  kind: MemoryBrowserGraphNodeKind;
+  category: "interaction" | "integration";
+  tree_id: string | null;
+  label: string;
+  subtitle: string | null;
+  status: string | null;
+  level: number | null;
+  child_count: number | null;
+  path: string | null;
+}
+
+interface MemoryBrowserGraphEdge {
+  from: string;
+  to: string;
+  kind: "contains" | "parent_child" | "reference";
+}
+
+interface MemoryBrowserGraphResponse {
+  workspace_id: string;
+  forest: MemoryBrowserGraphForest;
+  focus_tree_id: string | null;
+  nodes: MemoryBrowserGraphNode[];
+  edges: MemoryBrowserGraphEdge[];
+}
+
+async function listWorkspaceIntegrations(
+  workspaceId: string,
+): Promise<WorkspaceIntegrationsListResponse> {
+  return requestWorkspaceRuntimeJson<WorkspaceIntegrationsListResponse>(workspaceId, {
+    method: "GET",
+    path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/integrations`,
+  });
+}
+
+async function setWorkspaceIntegrationOverride(
+  workspaceId: string,
+  toolkitSlug: string,
+  payload: { state: "disabled" | "pinned"; pinned_connection_id?: string | null },
+): Promise<unknown> {
+  return requestWorkspaceRuntimeJson<unknown>(workspaceId, {
+    method: "PUT",
+    path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/integrations/${encodeURIComponent(toolkitSlug)}`,
+    payload,
+  });
+}
+
+async function clearWorkspaceIntegrationOverride(
+  workspaceId: string,
+  toolkitSlug: string,
+): Promise<{ deleted: boolean }> {
+  return requestWorkspaceRuntimeJson<{ deleted: boolean }>(workspaceId, {
+    method: "DELETE",
+    path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/integrations/${encodeURIComponent(toolkitSlug)}`,
+  });
+}
+
+async function listMemoryBrowserTree(
+  workspaceId: string,
+): Promise<MemoryBrowserTreeResponse> {
+  return requestWorkspaceRuntimeJson<MemoryBrowserTreeResponse>(workspaceId, {
+    method: "GET",
+    path: "/api/v1/memory/browser/tree",
+    params: {
+      workspace_id: workspaceId,
+    },
+  });
+}
+
+async function readMemoryBrowserFile(
+  workspaceId: string,
+  targetPath: string,
+): Promise<MemoryBrowserFileResponse> {
+  const normalizedPath =
+    typeof targetPath === "string" ? targetPath.trim() : "";
+  if (!normalizedPath) {
+    throw new Error("readMemoryBrowserFile: path is required");
+  }
+  return requestWorkspaceRuntimeJson<MemoryBrowserFileResponse>(workspaceId, {
+    method: "GET",
+    path: "/api/v1/memory/browser/file",
+    params: {
+      workspace_id: workspaceId,
+      path: normalizedPath,
+    },
+  });
+}
+
+async function listMemoryBrowserGraph(
+  workspaceId: string,
+  params: {
+    forest: MemoryBrowserGraphForest;
+    treeId?: string | null;
+  },
+): Promise<MemoryBrowserGraphResponse> {
+  const forest = params.forest;
+  if (forest !== "workspace" && forest !== "integrations") {
+    throw new Error("listMemoryBrowserGraph: forest must be workspace or integrations");
+  }
+  return requestWorkspaceRuntimeJson<MemoryBrowserGraphResponse>(workspaceId, {
+    method: "GET",
+    path: "/api/v1/memory/browser/graph",
+    params: {
+      workspace_id: workspaceId,
+      forest,
+      tree_id: params.treeId?.trim() || undefined,
+    },
+  });
+}
+
 // Restarts a single workspace app via the runtime's capabilities tool. Used
 // after an integration binding is added/changed so the app re-reads
 // HOLABOSS_APP_GRANT (which is captured at boot in the bridge-transport
@@ -10228,10 +10386,50 @@ async function createIntegrationConnection(
   return localIntegrationMetadataStore.createConnection(payload);
 }
 
+function runtimeIntegrationConnectionUpdatePayload(
+  payload: IntegrationUpdateConnectionPayload,
+): Record<string, unknown> {
+  const update: Record<string, unknown> = {};
+  if (payload.status !== undefined) {
+    update.status = payload.status;
+  }
+  if (payload.secret_ref !== undefined) {
+    update.secret_ref = payload.secret_ref;
+  }
+  if (payload.account_label !== undefined) {
+    update.account_label = payload.account_label;
+  }
+  if (payload.account_handle !== undefined) {
+    update.account_handle = payload.account_handle;
+  }
+  if (payload.account_email !== undefined) {
+    update.account_email = payload.account_email;
+  }
+  if (payload.context_cron_auto_fetch_enabled !== undefined) {
+    update.context_cron_auto_fetch_enabled =
+      payload.context_cron_auto_fetch_enabled;
+  }
+  return update;
+}
+
 async function updateIntegrationConnection(
   connectionId: string,
   payload: IntegrationUpdateConnectionPayload,
 ): Promise<IntegrationConnectionPayload> {
+  const runtimeUpdate = runtimeIntegrationConnectionUpdatePayload(payload);
+  if (Object.keys(runtimeUpdate).length > 0) {
+    try {
+      await requestRuntimeJson<IntegrationConnectionPayload>({
+        method: "PATCH",
+        path: `/api/v1/integrations/connections/${encodeURIComponent(connectionId)}`,
+        payload: runtimeUpdate,
+      });
+    } catch (error) {
+      if (payload.context_cron_auto_fetch_enabled !== undefined) {
+        throw error;
+      }
+    }
+  }
   return localIntegrationMetadataStore.updateConnection(connectionId, payload);
 }
 
@@ -10249,6 +10447,56 @@ async function mergeIntegrationConnections(
     keepConnectionId,
     removeConnectionIds,
   );
+}
+
+async function listConnectionWorkspaceUsage(): Promise<{
+  usage: Array<{
+    connection_id: string;
+    workspaces: Array<{
+      workspace_id: string;
+      target_type: string;
+      target_id: string;
+      integration_key: string;
+    }>;
+  }>;
+}> {
+  return localIntegrationMetadataStore.listConnectionWorkspaceUsage();
+}
+
+async function listIntegrationStoreCatalog(): Promise<{
+  entries: Array<{ slug: string; tier: "hero" | "supported"; category: string }>;
+}> {
+  return requestRuntimeJson<{
+    entries: Array<{ slug: string; tier: "hero" | "supported"; category: string }>;
+  }>({
+    method: "GET",
+    path: "/api/v1/integrations/store-catalog",
+  });
+}
+
+async function listAllWorkspaceIntegrationOverrides(): Promise<{
+  overrides: Array<{
+    workspace_id: string;
+    toolkit_slug: string;
+    state: "disabled" | "pinned";
+    pinned_connection_id: string | null;
+    created_at: string;
+    updated_at: string;
+  }>;
+}> {
+  return requestRuntimeJson<{
+    overrides: Array<{
+      workspace_id: string;
+      toolkit_slug: string;
+      state: "disabled" | "pinned";
+      pinned_connection_id: string | null;
+      created_at: string;
+      updated_at: string;
+    }>;
+  }>({
+    method: "GET",
+    path: "/api/v1/integrations/all-workspace-overrides",
+  });
 }
 
 async function listOAuthConfigs(): Promise<OAuthAppConfigListResponsePayload> {
@@ -10285,7 +10533,7 @@ async function startOAuthFlow(
 
 async function composioFetch<T>(
   path: string,
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "DELETE",
   payload?: unknown,
 ): Promise<T> {
   if (!AUTH_BASE_URL) {
@@ -10330,11 +10578,23 @@ async function composioConnect(payload: {
   callback_url?: string;
   whoami?: PendingIntegrationWhoami | null;
 }): Promise<ComposioConnectResult> {
+  const provider = composioToolkitSlugForProvider(payload.provider);
   return composioFetch<ComposioConnectResult>(
     "/api/composio/connect",
     "POST",
-    payload,
+    {
+      ...payload,
+      provider,
+    },
   );
+}
+
+function composioToolkitSlugForProvider(provider: string): string {
+  const normalized = provider.trim().toLowerCase();
+  if (normalized === "x") {
+    return "twitter";
+  }
+  return normalized;
 }
 
 interface ComposioToolkit {
@@ -10374,6 +10634,232 @@ async function composioListConnections(): Promise<{
     "/api/composio/connections",
     "GET",
   );
+}
+
+// Extracts the raw session_token value out of a Better-Auth cookie
+// string. The bearer plugin we enabled on Hono accepts this exact
+// value as `Authorization: Bearer <token>`, so the runtime can use it
+// to call /composio/internal/* without carrying a cookie jar. Verified
+// end-to-end by the cookie/bearer probe.
+function extractSessionTokenFromCookieHeader(cookie: string): string | null {
+  if (!cookie) return null;
+  for (const segment of cookie.split(/;\s*/)) {
+    const idx = segment.indexOf("=");
+    if (idx < 0) continue;
+    const name = segment.slice(0, idx).trim();
+    if (!name) continue;
+    if (
+      name === "better-auth.session_token" ||
+      name === "__Secure-better-auth.session_token"
+    ) {
+      const value = segment.slice(idx + 1).trim();
+      if (!value) continue;
+      try {
+        return decodeURIComponent(value);
+      } catch {
+        return value;
+      }
+    }
+  }
+  return null;
+}
+
+function authBearerToken(): string {
+  const cookie = authCookieHeader();
+  if (!cookie) return "";
+  return extractSessionTokenFromCookieHeader(cookie) ?? "";
+}
+
+// Diagnostic helper — hits the runtime's /api/v1/debug/composio-
+// runtime-test endpoint, which exercises ComposioApiClient end-to-end
+// (runtime env-injected bearer token → Hono /internal/tools/execute →
+// Composio). Wired to a button in IntegrationsPane so we can confirm
+// the full server-side stack. Also useful for low-level debugging
+// while provider fetch plans are still expanding (the product
+// integration context fetch flow now uses
+// /api/v1/integrations/context-fetch).
+async function debugComposioRuntimeTest(
+  params: {
+    providerSlug?: string;
+    toolSlug?: string;
+    arguments?: Record<string, unknown>;
+  } = {},
+): Promise<unknown> {
+  return requestRuntimeJson<unknown>({
+    method: "POST",
+    path: "/api/v1/debug/composio-runtime-test",
+    payload: {
+      ...(params.providerSlug ? { provider_slug: params.providerSlug } : {}),
+      ...(params.toolSlug ? { tool_slug: params.toolSlug } : {}),
+      ...(params.arguments ? { arguments: params.arguments } : {}),
+    },
+  });
+}
+
+type IntegrationContextFetchStatusPayload = {
+  connection_id: string;
+  provider_id: string;
+  run_id: string;
+  supported: boolean;
+  status: "running" | "completed" | "failed" | "unsupported";
+  account_key: string | null;
+  account_label: string | null;
+  tree_id: string | null;
+  current_chunk_label: string | null;
+  chunks_total: number;
+  chunks_completed: number;
+  messages_seen: number;
+  messages_persisted: number;
+  leaves_created: number;
+  leaves_superseding: number;
+  leaves_unchanged: number;
+  summary_nodes: number;
+  actions: string[];
+  started_at: string | null;
+  updated_at: string;
+  completed_at: string | null;
+  fetched_at: string | null;
+  error_message: string | null;
+  reason: string | null;
+};
+
+type IntegrationContextFetchStartResponsePayload = {
+  ok: true;
+  started: boolean;
+  deduped: boolean;
+  status: IntegrationContextFetchStatusPayload;
+};
+
+type IntegrationContextFetchStatusListResponsePayload = {
+  ok: true;
+  statuses: IntegrationContextFetchStatusPayload[];
+};
+
+type IntegrationMemoryClearResponsePayload = {
+  ok: true;
+  provider_id: string;
+  connection_id: string;
+  cleared: boolean;
+  tree_ids: string[];
+  deleted_trees: number;
+  deleted_leaves: number;
+  deleted_summary_nodes: number;
+  deleted_tree_edges: number;
+  deleted_canonical_nodes: number;
+  deleted_canonical_edges: number;
+  deleted_relations: number;
+  deleted_embeddings: number;
+  deleted_files: number;
+};
+async function fetchIntegrationContext(
+  connectionId: string,
+): Promise<IntegrationContextFetchStartResponsePayload> {
+  const trimmed = typeof connectionId === "string" ? connectionId.trim() : "";
+  if (!trimmed) {
+    throw new Error("fetchIntegrationContext: connection_id required");
+  }
+  return requestRuntimeJson<IntegrationContextFetchStartResponsePayload>({
+    method: "POST",
+    path: "/api/v1/integrations/context-fetch",
+    payload: {
+      connection_id: trimmed,
+    },
+  });
+}
+
+async function listIntegrationContextFetchStatuses(
+  connectionIds: string[] = [],
+): Promise<IntegrationContextFetchStatusListResponsePayload> {
+  const normalized = connectionIds
+    .map((connectionId) =>
+      typeof connectionId === "string" ? connectionId.trim() : "",
+    )
+    .filter((connectionId) => connectionId.length > 0);
+  return requestRuntimeJson<IntegrationContextFetchStatusListResponsePayload>({
+    method: "GET",
+    path: "/api/v1/integrations/context-fetch",
+    params: normalized.length > 0
+      ? { connection_ids: normalized.join(",") }
+      : undefined,
+  });
+}
+
+async function clearIntegrationMemory(
+  connectionId: string,
+): Promise<IntegrationMemoryClearResponsePayload> {
+  const trimmed = typeof connectionId === "string" ? connectionId.trim() : "";
+  if (!trimmed) {
+    throw new Error("clearIntegrationMemory: connection_id required");
+  }
+  return requestRuntimeJson<IntegrationMemoryClearResponsePayload>({
+    method: "POST",
+    path: "/api/v1/integrations/memory-clear",
+    payload: {
+      connection_id: trimmed,
+    },
+  });
+}
+// Single entry point for "desktop directly calls a Composio action via
+// the new /api/composio/internal/tools/execute surface."
+//
+// The helper does the two steps every Composio action call shares:
+//   1. Resolve the user's connected_account_id for the requested
+//      provider (`providerSlug`), via the existing /composio/connections
+//      list — which already carries Better-Auth session via cookie.
+//   2. POST /api/composio/internal/tools/execute with the resolved
+//      connected_account_id, the action's `tool_slug`, and the
+//      action-specific `arguments` map.
+//
+// Cookie is attached automatically by composioFetch; Hono accepts the
+// session whether the caller sends Cookie or Authorization: Bearer
+// (the same `c.get("user")` pathway resolves both).
+//
+// Example — fetch the user's 5 most recent Gmail messages:
+//
+//   const data = await composioExecute({
+//     providerSlug: "gmail",
+//     toolSlug: "GMAIL_FETCH_EMAILS",
+//     arguments: { max_results: 5 },
+//   });
+//   // → { messages: [{ id, threadId, subject, sender, snippet, date, ... }], ... }
+//
+// To swap to another toolkit (Linear, GitHub, Notion, …) change three
+// fields only: providerSlug, toolSlug, arguments. Curated action slugs
+// live at GET /api/composio/internal/toolkits/<slug>/tools.
+async function composioExecute<TData = unknown>(params: {
+  providerSlug: string;
+  toolSlug: string;
+  arguments?: Record<string, unknown>;
+}): Promise<TData | null> {
+  const normalizedProvider = params.providerSlug.trim().toLowerCase();
+  if (!normalizedProvider) {
+    throw new Error("composioExecute: providerSlug is required");
+  }
+  if (!params.toolSlug.trim()) {
+    throw new Error("composioExecute: toolSlug is required");
+  }
+
+  const { connections } = await composioListConnections();
+  const connection = connections.find(
+    (entry) => entry.toolkitSlug.toLowerCase() === normalizedProvider,
+  );
+  if (!connection) {
+    throw new Error(
+      `No active ${normalizedProvider} connection — the user needs to connect ${normalizedProvider} first.`,
+    );
+  }
+
+  const result = await composioFetch<{
+    ok: boolean;
+    data: TData | null;
+    log_id: string | null;
+  }>("/api/composio/internal/tools/execute", "POST", {
+    tool_slug: params.toolSlug,
+    connected_account_id: connection.id,
+    arguments: params.arguments ?? {},
+  });
+
+  return result.data ?? null;
 }
 
 async function composioAccountStatus(
@@ -10422,6 +10908,60 @@ interface ComposioProxyResponse<TData = unknown> {
 }
 
 /**
+ * Thrown by `composioProxyFetch` when the upstream provider (GitHub, Google,
+ * etc.) responded with a non-2xx status. Hono's /composio/proxy returns 200
+ * carrying `{ data, status, headers }` for the upstream response, so the
+ * caller can't tell success from failure by HTTP status alone — without
+ * this check, a 401 "Bad credentials" body gets handed to the whoami
+ * extractor as if it were a normal user object, which is how we ended up
+ * with the misleading "raw shape may have shifted" log instead of the
+ * actually-useful "user needs to reconnect" signal.
+ */
+class ProviderHttpError extends Error {
+  constructor(
+    readonly providerId: string,
+    readonly upstreamStatus: number,
+    readonly bodyExcerpt: string,
+  ) {
+    super(
+      `Provider ${providerId} returned HTTP ${upstreamStatus}: ${bodyExcerpt}`,
+    );
+    this.name = "ProviderHttpError";
+  }
+}
+
+function isProviderAuthFailure(err: unknown): err is ProviderHttpError {
+  return (
+    err instanceof ProviderHttpError &&
+    (err.upstreamStatus === 401 || err.upstreamStatus === 403)
+  );
+}
+
+// Capitalize a provider slug for user-facing copy. The desktop has a
+// richer toolkitDisplayName in src/lib/toolkitDisplay.ts but it isn't
+// accessible from the main process; this covers the providers that show
+// up in proxy whoami today (curated Hero pool) with a generic fallback
+// for everything else.
+function composioToolkitDisplayName(slug: string | null | undefined): string {
+  const normalized = (slug ?? "").trim().toLowerCase();
+  const KNOWN: Record<string, string> = {
+    github: "GitHub",
+    gmail: "Gmail",
+    google: "Google",
+    googlesheets: "Google Sheets",
+    twitter: "Twitter / X",
+    linkedin: "LinkedIn",
+    reddit: "Reddit",
+    notion: "Notion",
+    slack: "Slack",
+    discord: "Discord",
+  };
+  if (KNOWN[normalized]) return KNOWN[normalized];
+  if (!normalized) return "the provider";
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+/**
  * Call a provider's own API as the connected account, via Composio's
  * proxy. Used for whoami fallbacks when Composio's generic
  * `/api/composio/account/{id}` endpoint doesn't carry provider-side
@@ -10433,6 +10973,10 @@ async function composioProxyFetch<TData>(
   endpoint: string,
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   body?: unknown,
+  // Passed through purely for ProviderHttpError context; not used in the
+  // request. Lets the caller see which provider the error came from when
+  // they don't have it on hand to attach themselves.
+  providerIdForErrors = "unknown",
 ): Promise<TData | null> {
   const wrapped = await composioFetch<ComposioProxyResponse<TData>>(
     "/api/composio/proxy",
@@ -10444,6 +10988,20 @@ async function composioProxyFetch<TData>(
       ...(body !== undefined ? { body } : {}),
     },
   );
+  if (wrapped.status >= 400) {
+    const excerpt = (() => {
+      try {
+        return JSON.stringify(wrapped.data).slice(0, 200);
+      } catch {
+        return String(wrapped.data).slice(0, 200);
+      }
+    })();
+    throw new ProviderHttpError(
+      providerIdForErrors,
+      wrapped.status,
+      excerpt,
+    );
+  }
   return wrapped.data ?? null;
 }
 
@@ -10538,6 +11096,18 @@ const PROVIDER_PROXY_WHOAMI: Record<string, ProxyWhoamiConfig> = {
       };
     },
   },
+  gmail: {
+    url: "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+    method: "GET",
+    extract: (raw) => {
+      const u = raw as Record<string, unknown> | null;
+      if (!u) return {};
+      return {
+        email: pickString(u.emailAddress),
+        displayName: pickString(u.emailAddress),
+      };
+    },
+  },
   // Slack's Web API uses POST for everything (the body can be empty). auth.test
   // returns { ok, user, user_id, team, team_id, url } — handle is `user`, team
   // becomes a useful display name suffix. No email or avatar from this endpoint
@@ -10559,6 +11129,114 @@ const PROVIDER_PROXY_WHOAMI: Record<string, ProxyWhoamiConfig> = {
       };
     },
   },
+
+  // Google's OIDC userinfo endpoint works for any Google OAuth token
+  // with the openid/email/profile scopes — covers Calendar + Drive +
+  // Tasks + Sheets connections from one shared shape.
+  googlecalendar: {
+    url: "https://www.googleapis.com/oauth2/v3/userinfo",
+    method: "GET",
+    extract: (raw) => {
+      const u = raw as Record<string, unknown> | null;
+      if (!u) return {};
+      return {
+        email: pickString(u.email),
+        displayName: pickString(u.name),
+        avatarUrl: pickString(u.picture),
+      };
+    },
+  },
+  googledrive: {
+    url: "https://www.googleapis.com/oauth2/v3/userinfo",
+    method: "GET",
+    extract: (raw) => {
+      const u = raw as Record<string, unknown> | null;
+      if (!u) return {};
+      return {
+        email: pickString(u.email),
+        displayName: pickString(u.name),
+        avatarUrl: pickString(u.picture),
+      };
+    },
+  },
+
+  // Notion's `users.me` returns `{ type: "bot", bot: { owner: { user: {...} } }, ... }`
+  // for integration tokens and `{ type: "person", person: { email } }` for
+  // OAuth-as-user. Try both shapes.
+  notion: {
+    url: "https://api.notion.com/v1/users/me",
+    method: "GET",
+    extract: (raw) => {
+      const u = raw as Record<string, unknown> | null;
+      if (!u) return {};
+      const person = (u.person ?? null) as Record<string, unknown> | null;
+      const bot = (u.bot ?? null) as Record<string, unknown> | null;
+      const botOwnerUser = (bot?.owner as Record<string, unknown> | undefined)
+        ?.user as Record<string, unknown> | undefined;
+      const botPerson = (botOwnerUser?.person ?? null) as
+        | Record<string, unknown>
+        | null;
+      return {
+        email: pickString(person?.email) ?? pickString(botPerson?.email),
+        displayName:
+          pickString(u.name) ?? pickString(botOwnerUser?.name),
+        avatarUrl: pickString(u.avatar_url),
+      };
+    },
+  },
+
+  // Linear is GraphQL-only. The viewer query is the canonical identity
+  // probe; Composio's proxy forwards arbitrary POST bodies.
+  linear: {
+    url: "https://api.linear.app/graphql",
+    method: "POST",
+    body: { query: "{ viewer { id name email displayName avatarUrl } }" },
+    extract: (raw) => {
+      const root = raw as { data?: { viewer?: Record<string, unknown> } } | null;
+      const v = root?.data?.viewer ?? null;
+      if (!v) return {};
+      return {
+        email: pickString(v.email),
+        displayName: pickString(v.displayName) ?? pickString(v.name),
+        avatarUrl: pickString(v.avatarUrl),
+      };
+    },
+  },
+
+  // Figma's REST API has a clean /v1/me.
+  figma: {
+    url: "https://api.figma.com/v1/me",
+    method: "GET",
+    extract: (raw) => {
+      const u = raw as Record<string, unknown> | null;
+      if (!u) return {};
+      return {
+        handle: pickString(u.handle),
+        email: pickString(u.email),
+        displayName: pickString(u.handle),
+        avatarUrl: pickString(u.img_url),
+      };
+    },
+  },
+
+  // HubSpot — no clean per-user /me endpoint for OAuth tokens. The
+  // closest is /oauth/v1/access-tokens/<token> but that needs the raw
+  // token (which Composio doesn't surface to us) and returns hub-level
+  // metadata, not user identity. Skip; row keeps the persisted label.
+
+  // Stripe — accounts are organisational, not per-user. /v1/account
+  // returns business_profile + email, but for the connected_account's
+  // shop owner, not a generic user. Skip for now; if users complain
+  // about "Stripe (Managed)" we wire it later.
+
+  // Shopify — every shop has its own *.myshopify.com subdomain.
+  // /admin/api/2024-01/shop.json works but the URL needs the shop slug,
+  // which is on the Composio connection metadata, not on a generic /me.
+  // Composio proxy's `endpoint` is an absolute URL — we'd need a
+  // per-connection URL builder. Skip until we have multi-shop demand.
+
+  // Mailchimp — same shape as Shopify. Every workspace has its own
+  // datacenter prefix (us1, us2, …) in the base URL. Skip until needed.
 };
 
 async function tryProxyWhoami(
@@ -10568,7 +11246,11 @@ async function tryProxyWhoami(
   const normalized = providerId.toLowerCase();
   const config = PROVIDER_PROXY_WHOAMI[normalized];
   if (!config) {
-    console.warn(
+    // Expected for any toolkit outside the curated Hero pool — the UI
+    // falls back to the persisted account_label ("Notion (Managed)"
+    // etc.). Drop to debug so this stops looking like a real warning
+    // every time the enrichment hook fires for a long-tail toolkit.
+    console.debug(
       `[integrations] no proxy whoami config for provider=${normalized}; skipping fallback`,
     );
     return {};
@@ -10579,6 +11261,7 @@ async function tryProxyWhoami(
       config.url,
       config.method,
       config.body,
+      normalized,
     );
     if (!data) {
       console.warn(
@@ -10600,9 +11283,23 @@ async function tryProxyWhoami(
     }
     return extracted;
   } catch (err) {
-    // Proxy call failed (Hono missing endpoint, provider 4xx, expired
-    // scope, etc.). Surface to stderr so dev can diagnose; caller still
-    // gets the unenriched status and the UI shows "no change".
+    // Upstream account deleted: re-throw so the IPC layer's existing
+    // tombstone catch fires. Hono's /account/:id is KV-cached for 5min,
+    // so a deleted ca can still look ACTIVE up there even while the
+    // proxy path 606s — without this re-throw, the metadata snapshot
+    // never learns the row is dead.
+    if (isComposioAccountMissingError(err)) {
+      throw err;
+    }
+    // Provider returned 401/403 — Composio's stored token doesn't work
+    // against the provider anymore (user revoked the app, token rotated
+    // externally, scope changed). Re-throw so the caller (Refresh button)
+    // can surface a specific "needs reconnect" message naming the
+    // provider, rather than the generic "shape shifted" copy that
+    // used to mask this case.
+    if (isProviderAuthFailure(err)) {
+      throw err;
+    }
     console.warn(
       `[integrations] proxy whoami failed for provider=${normalized}:`,
       err instanceof Error ? err.message : String(err),
@@ -10628,6 +11325,11 @@ async function composioAccountStatusEnriched(
   // Skip the proxy round-trip when the generic whoami already covered
   // the basics — this is the common case for GitHub / Gmail / Reddit.
   if (generic.handle || generic.email) return status;
+  // Skip proxy whoami unless Composio reports ACTIVE. INITIATED means
+  // OAuth is still in progress; EXPIRED means the token's dead. In
+  // either case the proxy call would 4xx and the row's identity stays
+  // null until the next legitimate state.
+  if ((status.status ?? "").toLowerCase() !== "active") return status;
   const proxy = await tryProxyWhoami(connectedAccountId, providerId);
   if (
     !proxy.handle &&
@@ -10858,11 +11560,47 @@ async function composioFinalize(payload: {
     }
   }
 
-  return runtimeClient.integrations.composioFinalize({
-    ...payload,
-    ...(resolvedLabel ? { account_label: resolvedLabel } : {}),
-    account_handle: enrichedHandle,
-    account_email: enrichedEmail,
+  return normalizeIntegrationConnectionPayload(
+    await runtimeClient.integrations.composioFinalize({
+      ...payload,
+      ...(resolvedLabel ? { account_label: resolvedLabel } : {}),
+      account_handle: enrichedHandle,
+      account_email: enrichedEmail,
+    }),
+  );
+}
+
+async function composioDeleteUpstream(
+  connectedAccountId: string,
+): Promise<{ deleted: boolean; missing: boolean }> {
+  const trimmed = typeof connectedAccountId === "string" ? connectedAccountId.trim() : "";
+  if (!trimmed) {
+    return { deleted: false, missing: false };
+  }
+  try {
+    await composioFetch<{ deleted?: boolean }>(
+      `/api/composio/connections/${encodeURIComponent(trimmed)}`,
+      "DELETE",
+    );
+    return { deleted: true, missing: false };
+  } catch (err) {
+    if (isComposioAccountMissingError(err)) {
+      return { deleted: false, missing: true };
+    }
+    // Composio's DELETE returns the upstream's body on non-2xx — 404 there
+    // surfaces as "Composio API error (404)" via composioFetch.
+    if (err instanceof Error && /\(404\)/.test(err.message)) {
+      return { deleted: false, missing: true };
+    }
+    throw err;
+  }
+}
+
+async function composioMcpEnsureRunning(workspaceId: string): Promise<unknown> {
+  return requestRuntimeJson<unknown>({
+    method: "POST",
+    path: "/api/v1/composio-mcp/ensure-running",
+    payload: { workspace_id: workspaceId },
   });
 }
 
@@ -10883,7 +11621,19 @@ interface ComposioRefreshResult {
   /** True iff the probe resolved a new handle or email and we wrote it back. */
   changed: boolean;
   /** Short reason code when `changed === false`, for the UI to surface. */
-  reason?: "no_external_id" | "account_missing" | "no_new_identity";
+  reason?:
+    | "no_external_id"
+    | "account_missing"
+    | "no_new_identity"
+    | "provider_credentials_rejected";
+  /** Provider display name (e.g. "GitHub") — set when the UI needs to name
+   *  the specific provider in a reconnect prompt. Currently set alongside
+   *  `provider_credentials_rejected` so the message can read "GitHub
+   *  credentials rejected" instead of a generic note. */
+  providerLabel?: string;
+  /** Upstream HTTP status the provider returned (only set with
+   *  `provider_credentials_rejected`, typically 401 or 403). */
+  providerStatus?: number;
 }
 
 async function composioRefreshConnection(
@@ -10914,6 +11664,19 @@ async function composioRefreshConnection(
       // current persisted identity (Phase 2 / Slice 2 will mark these
       // rows stale + prompt the user to reconnect).
       return { connection: target, changed: false, reason: "account_missing" };
+    }
+    if (isProviderAuthFailure(err)) {
+      // Composio still has the connection but its stored access token
+      // failed against the provider (401/403). Surface a typed signal so
+      // the UI can render "GitHub credentials rejected — please reconnect"
+      // instead of the misleading generic "raw shape may have shifted".
+      return {
+        connection: target,
+        changed: false,
+        reason: "provider_credentials_rejected",
+        providerLabel: composioToolkitDisplayName(target.provider_id),
+        providerStatus: err.upstreamStatus,
+      };
     }
     throw err;
   }
@@ -14111,6 +14874,19 @@ async function listOutputs(
   };
 }
 
+async function listOutputFolders(
+  workspaceId: string,
+): Promise<WorkspaceOutputFolderListResponsePayload> {
+  return requestWorkspaceRuntimeJson<WorkspaceOutputFolderListResponsePayload>(
+    workspaceId,
+    {
+      method: "GET",
+      path: "/api/v1/output-folders",
+      params: { workspace_id: workspaceId },
+    },
+  );
+}
+
 function normalizeWorkspaceSkillId(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -14470,6 +15246,17 @@ async function createLocalWorkspace(
     const workspaceOnboardPath = path.join(workspaceDir, "ONBOARD.md");
     const wantsEmptyOnboardingScaffold =
       payload.template_mode === "empty_onboarding";
+    const requestedWorkspaceOnboardingEngine =
+      templateMode === "empty" &&
+      payload.workspace_onboarding_mode === "start" &&
+      !wantsEmptyOnboardingScaffold &&
+      payload.workspace_onboarding_engine === "agentic"
+        ? "agentic"
+        : templateMode === "empty" &&
+            payload.workspace_onboarding_mode === "start" &&
+            !wantsEmptyOnboardingScaffold
+          ? "deterministic"
+          : null;
     if (templateMode === "empty") {
       await fs.mkdir(path.join(workspaceDir, "skills"), { recursive: true });
       await fs.writeFile(workspaceAgentsPath, "", "utf-8");
@@ -14541,7 +15328,16 @@ async function createLocalWorkspace(
     }
 
     let onboardingStatus = "NOT_REQUIRED";
+    let onboardingState: string | null = null;
     let onboardingSessionId: string | null = null;
+    const wantsDeterministicWorkspaceOnboarding =
+      requestedWorkspaceOnboardingEngine === "deterministic";
+    const wantsAgenticWorkspaceOnboarding =
+      requestedWorkspaceOnboardingEngine === "agentic";
+    const skipsWorkspaceOnboarding =
+      templateMode === "empty" &&
+      payload.workspace_onboarding_mode === "skip" &&
+      !wantsEmptyOnboardingScaffold;
     try {
       const onboardContent = await fs.readFile(
         path.join(workspaceDir, "ONBOARD.md"),
@@ -14555,6 +15351,15 @@ async function createLocalWorkspace(
       onboardingStatus = "NOT_REQUIRED";
       onboardingSessionId = null;
     }
+    if (wantsDeterministicWorkspaceOnboarding) {
+      onboardingStatus = "PENDING";
+      onboardingState = "deterministic_intro";
+      onboardingSessionId = null;
+    }
+    if (!onboardingSessionId && skipsWorkspaceOnboarding) {
+      onboardingStatus = "COMPLETED";
+      onboardingState = null;
+    }
 
     stageLog("activate_workspace.start", { workspaceId, onboardingStatus });
     let updated: Awaited<ReturnType<typeof runtimeClient.workspaces.update>>;
@@ -14562,7 +15367,15 @@ async function createLocalWorkspace(
       updated = await runtimeClient.workspaces.update(workspaceId, {
         status: "active",
         onboarding_status: onboardingStatus.toLowerCase(),
+        onboarding_state: onboardingState,
         onboarding_session_id: onboardingSessionId,
+        ...(skipsWorkspaceOnboarding
+          ? {
+              onboarding_completed_at: new Date().toISOString(),
+              onboarding_completion_summary: "Workspace onboarding skipped by user",
+              onboarding_requested_by: "workspace_user",
+            }
+          : {}),
         error_message: null,
       });
       stageLog("activate_workspace.ok", { workspaceId });
@@ -14687,43 +15500,30 @@ async function createLocalWorkspace(
           .catch(() => updated);
       }
     }
-    const runtimeConfigForHeartbeat = await readRuntimeConfigFile();
-    const runtimeHeartbeatToken = runtimeModelProxyApiKeyFromConfig(
-      runtimeConfigForHeartbeat,
-    );
-    const runtimeHeartbeatUserId = (
-      runtimeConfigForHeartbeat.user_id || ""
-    ).trim();
-    const requestedHeartbeatUserId = (payload.holaboss_user_id || "").trim();
-    const shouldEmitWorkspaceReadyHeartbeat =
-      Boolean(runtimeHeartbeatToken) &&
-      Boolean(requestedHeartbeatUserId) &&
-      requestedHeartbeatUserId !== LOCAL_OSS_TEMPLATE_USER_ID &&
-      runtimeHeartbeatUserId === requestedHeartbeatUserId;
-
-    if (shouldEmitWorkspaceReadyHeartbeat) {
+    if (wantsAgenticWorkspaceOnboarding) {
       try {
-        await emitWorkspaceReadyHeartbeat({
-          workspaceId,
-          holabossUserId: requestedHeartbeatUserId,
+        const onboardingLab = await requestWorkspaceRuntimeJson<{
+          lab?: { id?: string | null } | null;
+          source?: WorkspaceRecordPayload | null;
+          session?: { session_id?: string | null } | null;
+        }>(workspaceId, {
+          method: "POST",
+          path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/labs`,
+          payload: { purpose: "workspace_onboarding" },
         });
+        updated = onboardingLab.source
+          ? { workspace: onboardingLab.source }
+          : await runtimeClient.workspaces.get(workspaceId).catch(() => updated);
       } catch (error) {
-        throw new Error(
-          contextualWorkspaceCreateError(
-            "Workspace created locally, but the workspace-ready heartbeat was not confirmed",
-            error,
-          ),
-        );
+        updated = await runtimeClient.workspaces
+          .update(workspaceId, {
+            error_message: contextualWorkspaceCreateError(
+              "Workspace created, but workspace onboarding lab could not start",
+              error,
+            ),
+          })
+          .catch(() => updated);
       }
-    } else {
-      appendRuntimeEventLog({
-        category: "workspace",
-        event: "workspace.heartbeat.emit",
-        outcome: "skipped",
-        detail:
-          `workspace_id=${workspaceId} skipped=no_active_runtime_binding ` +
-          `requested_user_id=${requestedHeartbeatUserId || "missing"} runtime_user_id=${runtimeHeartbeatUserId || "missing"}`,
-      });
     }
     return withWorkspaceResponseLocation(updated);
   } catch (error) {
@@ -14847,6 +15647,21 @@ async function createWorkspace(
     : createLocalWorkspace(payload);
 }
 
+async function createWorkspaceLab(
+  workspaceId: string,
+  purpose: "workspace_onboarding" | "meeting_mode",
+): Promise<WorkspaceLabResponsePayload> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
+  return requestWorkspaceRuntimeJson<WorkspaceLabResponsePayload>(
+    safeWorkspaceId,
+    {
+      method: "POST",
+      path: `/api/v1/workspaces/${encodeURIComponent(safeWorkspaceId)}/labs`,
+      payload: { purpose },
+    },
+  );
+}
+
 async function deleteWorkspace(
   workspaceId: string,
   keepFiles?: boolean,
@@ -14876,6 +15691,7 @@ const desktopWorkspaceControlPlane = createLocalWorkspaceControlPlane({
   listWorkspaces,
   workspaceRegistry,
   createWorkspace,
+  createWorkspaceLab,
   deleteWorkspace,
   activateWorkspaceRecord,
   getWorkspaceLifecycle,
@@ -15243,6 +16059,230 @@ async function queueSessionInput(
   return response;
 }
 
+async function getOnboardingStatus(
+  workspaceId: string,
+): Promise<WorkspaceOnboardingStatusPayload> {
+  return requestWorkspaceRuntimeJson<WorkspaceOnboardingStatusPayload>(
+    workspaceId,
+    {
+      method: "GET",
+      path: "/api/v1/capabilities/runtime-tools/onboarding/status",
+      params: {
+        workspace_id: workspaceId,
+      },
+    },
+  );
+}
+
+async function continueDeterministicOnboarding(
+  workspaceId: string,
+): Promise<WorkspaceResponsePayload> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
+  const current = await runtimeClient.workspaces.get(safeWorkspaceId);
+  const onboardingSessionId =
+    current.workspace.onboarding_session_id?.trim() || "";
+  if (onboardingSessionId) {
+    throw new Error(
+      "Deterministic onboarding is only available for non-agentic onboarding workspaces.",
+    );
+  }
+  const status = (current.workspace.onboarding_status || "").trim().toLowerCase();
+  if (status === "completed" || status === "not_required") {
+    return withWorkspaceResponseLocation(current);
+  }
+  const currentState = (current.workspace.onboarding_state || "")
+    .trim()
+    .toLowerCase();
+  if (currentState === "deterministic_intro") {
+    return withWorkspaceResponseLocation(
+      await runtimeClient.workspaces.update(safeWorkspaceId, {
+        onboarding_status: "in_progress",
+        onboarding_state: "deterministic_context_fetching",
+        error_message: null,
+      }),
+    );
+  }
+  return withWorkspaceResponseLocation(
+    await runtimeClient.workspaces.update(safeWorkspaceId, {
+      onboarding_status: "completed",
+      onboarding_state: null,
+      onboarding_completed_at: new Date().toISOString(),
+      onboarding_completion_summary: "Deterministic onboarding completed",
+      onboarding_requested_by: "workspace_user",
+      error_message: null,
+    }),
+  );
+}
+
+async function skipWorkspaceOnboarding(
+  workspaceId: string,
+): Promise<WorkspaceResponsePayload> {
+  const safeWorkspaceId = assertSafeWorkspaceId(workspaceId);
+  const current = await runtimeClient.workspaces.get(safeWorkspaceId);
+  const currentWorkspace = current.workspace;
+  const status = (currentWorkspace.onboarding_status || "").trim().toLowerCase();
+  if (status === "completed" || status === "not_required") {
+    return withWorkspaceResponseLocation(current);
+  }
+
+  const workspaceRole = (currentWorkspace.workspace_role || "")
+    .trim()
+    .toLowerCase();
+  const sourceWorkspaceId =
+    workspaceRole === "draft_lab"
+      ? currentWorkspace.source_workspace_id?.trim() || safeWorkspaceId
+      : safeWorkspaceId;
+  let labWorkspaceId =
+    workspaceRole === "draft_lab" ? safeWorkspaceId : "";
+
+  if (!labWorkspaceId) {
+    try {
+      const onboardingStatus = await getOnboardingStatus(sourceWorkspaceId);
+      labWorkspaceId = onboardingStatus.lab_workspace_id?.trim() || "";
+    } catch {
+      labWorkspaceId = "";
+    }
+  }
+
+  if (labWorkspaceId) {
+    const abandoned = await requestWorkspaceRuntimeJson<WorkspaceLabResponsePayload>(
+      sourceWorkspaceId,
+      {
+        method: "POST",
+        path: `/api/v1/workspace-labs/${encodeURIComponent(labWorkspaceId)}/abandon`,
+        payload: {
+          summary: "Workspace onboarding skipped",
+        },
+      },
+    );
+    if (abandoned.source) {
+      return withWorkspaceResponseLocation({
+        workspace: abandoned.source,
+      });
+    }
+    return withWorkspaceResponseLocation(
+      await runtimeClient.workspaces.get(sourceWorkspaceId),
+    );
+  }
+
+  return withWorkspaceResponseLocation(
+    await runtimeClient.workspaces.update(sourceWorkspaceId, {
+      onboarding_status: "completed",
+      onboarding_state: currentWorkspace.onboarding_session_id?.trim()
+        ? "abandoned"
+        : null,
+      onboarding_session_id: null,
+      onboarding_completed_at: new Date().toISOString(),
+      onboarding_completion_summary: "Workspace onboarding skipped",
+      onboarding_requested_by: "workspace_user",
+      error_message: null,
+    }),
+  );
+}
+
+async function approveOnboardingAlignment(
+  workspaceId: string,
+): Promise<WorkspaceOnboardingStatusPayload> {
+  return requestWorkspaceRuntimeJson<WorkspaceOnboardingStatusPayload>(
+    workspaceId,
+    {
+      method: "POST",
+      path: "/api/v1/capabilities/runtime-tools/onboarding/alignment/approve",
+      payload: {
+        workspace_id: workspaceId,
+      },
+    },
+  );
+}
+
+async function answerOnboardingAlignmentQuestion(
+  workspaceId: string,
+  payload: {
+    model?: string | null;
+    thinkingValue?: string | null;
+    optionId?: string | null;
+    responseText?: string | null;
+    notes?: string | null;
+    answers?: Array<{
+      questionId?: string | null;
+      optionId?: string | null;
+      responseText?: string | null;
+      notes?: string | null;
+    }>;
+  },
+): Promise<WorkspaceOnboardingStatusPayload> {
+  return requestWorkspaceRuntimeJson<WorkspaceOnboardingStatusPayload>(
+    workspaceId,
+    {
+      method: "POST",
+      path: "/api/v1/capabilities/runtime-tools/onboarding/alignment-question/answer",
+      payload: {
+        workspace_id: workspaceId,
+        model: payload.model ?? undefined,
+        thinking_value: payload.thinkingValue ?? undefined,
+        option_id: payload.optionId ?? undefined,
+        response_text: payload.responseText ?? undefined,
+        notes: payload.notes ?? undefined,
+        answers: Array.isArray(payload.answers)
+          ? payload.answers.map((answer) => ({
+              question_id: answer.questionId ?? undefined,
+              option_id: answer.optionId ?? undefined,
+              response_text: answer.responseText ?? undefined,
+              notes: answer.notes ?? undefined,
+            }))
+          : undefined,
+      },
+    },
+  );
+}
+
+async function requestOnboardingAlignmentRevision(
+  workspaceId: string,
+): Promise<WorkspaceOnboardingStatusPayload> {
+  return requestWorkspaceRuntimeJson<WorkspaceOnboardingStatusPayload>(
+    workspaceId,
+    {
+      method: "POST",
+      path: "/api/v1/capabilities/runtime-tools/onboarding/alignment/revise",
+      payload: {
+        workspace_id: workspaceId,
+      },
+    },
+  );
+}
+
+async function requestOnboardingVerificationRevision(
+  workspaceId: string,
+): Promise<WorkspaceOnboardingStatusPayload> {
+  return requestWorkspaceRuntimeJson<WorkspaceOnboardingStatusPayload>(
+    workspaceId,
+    {
+      method: "POST",
+      path: "/api/v1/capabilities/runtime-tools/onboarding/verification/revise",
+      payload: {
+        workspace_id: workspaceId,
+      },
+    },
+  );
+}
+
+async function completeOnboarding(
+  workspaceId: string,
+  payload: { summary: string; requestedBy?: string | null },
+): Promise<WorkspaceOnboardingStatusPayload | WorkspaceLabResponsePayload> {
+  return requestWorkspaceRuntimeJson<
+    WorkspaceOnboardingStatusPayload | WorkspaceLabResponsePayload
+  >(workspaceId, {
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/onboarding/complete",
+    payload: {
+      workspace_id: workspaceId,
+      summary: payload.summary,
+      requested_by: payload.requestedBy ?? undefined,
+    },
+  });
+}
+
 async function pauseSessionRun(
   payload: HolabossPauseSessionRunPayload,
 ): Promise<PauseSessionRunResponsePayload> {
@@ -15289,6 +16329,18 @@ async function updateQueuedSessionInput(
         workspace_id: payload.workspace_id,
         text: payload.text,
       },
+    },
+  );
+}
+
+async function cancelQueuedSessionInput(
+  payload: HolabossCancelQueuedSessionInputPayload,
+): Promise<CancelQueuedSessionInputResponsePayload> {
+  return requestWorkspaceRuntimeJson<CancelQueuedSessionInputResponsePayload>(
+    payload.workspace_id,
+    {
+      method: "DELETE",
+      path: `/api/v1/agent-sessions/${encodeURIComponent(payload.session_id)}/inputs/${encodeURIComponent(payload.input_id)}?workspace_id=${encodeURIComponent(payload.workspace_id)}`,
     },
   );
 }
@@ -16479,6 +17531,14 @@ async function startEmbeddedRuntime() {
           PYTHONDONTWRITEBYTECODE: "1",
           HOLABOSS_AUTH_BASE_URL: AUTH_BASE_URL,
           HOLABOSS_AUTH_COOKIE: authCookieHeader() ?? "",
+          // Bearer-form of the same Better-Auth session, used by
+          // ComposioApiClient (runtime/api-server/src/composio-api-client.ts)
+          // to call /api/composio/internal/* without a cookie jar. Same
+          // session, transported differently. If empty (user not signed
+          // in yet), createComposioApiClientFromEnv() returns null and
+          // dependent features stay quietly disabled until the runtime
+          // is restarted after sign-in.
+          HOLABOSS_AUTH_BEARER_TOKEN: authBearerToken(),
         },
         stdio: "pipe",
         windowsHide: process.platform === "win32",
@@ -17630,6 +18690,14 @@ function toPreviewTableCellValue(value: unknown): string {
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? "" : value.toISOString();
   }
+  if (
+    typeof value === "object" &&
+    "text" in value &&
+    typeof (value as { text?: unknown }).text === "function"
+  ) {
+    const textValue = (value as { text: () => unknown }).text();
+    return typeof textValue === "string" ? textValue : String(textValue ?? "");
+  }
   return String(value);
 }
 
@@ -18190,25 +19258,129 @@ async function stripWorkbookVisualArtifactsForPreview(
   return Buffer.from(sanitizedBuffer);
 }
 
-function worksheetPreviewRows(worksheet: ExcelJS.Worksheet): {
+function workbookRangeRows(range: XlsxPopulateRange | undefined): unknown[][] {
+  if (!range) {
+    return [];
+  }
+
+  const matrix = range.value();
+  if (!Array.isArray(matrix)) {
+    return [[matrix]];
+  }
+
+  return matrix.map((row) => (Array.isArray(row) ? row : [row]));
+}
+
+function workbookOutputToBuffer(
+  output: Buffer | Uint8Array | ArrayBuffer,
+): Buffer {
+  if (Buffer.isBuffer(output)) {
+    return output;
+  }
+  if (output instanceof Uint8Array) {
+    return Buffer.from(output);
+  }
+  return Buffer.from(output);
+}
+
+function parseCsvRows(text: string): string[][] {
+  if (!text) {
+    return [];
+  }
+
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentCell = "";
+  let inQuotes = false;
+  let sawAnyCharacter = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    sawAnyCharacter = true;
+
+    if (inQuotes) {
+      if (char === '"') {
+        if (text[index + 1] === '"') {
+          currentCell += '"';
+          index += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        currentCell += char;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = true;
+      continue;
+    }
+    if (char === ",") {
+      currentRow.push(currentCell);
+      currentCell = "";
+      continue;
+    }
+    if (char === "\r" || char === "\n") {
+      currentRow.push(currentCell);
+      rows.push(currentRow);
+      currentRow = [];
+      currentCell = "";
+      if (char === "\r" && text[index + 1] === "\n") {
+        index += 1;
+      }
+      continue;
+    }
+
+    currentCell += char;
+  }
+
+  if (
+    sawAnyCharacter &&
+    (
+      currentCell.length > 0 ||
+      currentRow.length > 0 ||
+      (!text.endsWith("\n") && !text.endsWith("\r"))
+    )
+  ) {
+    currentRow.push(currentCell);
+    rows.push(currentRow);
+  }
+
+  return rows;
+}
+
+function serializeCsvCell(value: string): string {
+  return /[",\n\r]/.test(value)
+    ? `"${value.replace(/"/g, "\"\"")}"`
+    : value;
+}
+
+function stringifyCsvRows(rows: string[][]): string {
+  return rows
+    .map((row) => row.map((cell) => serializeCsvCell(cell)).join(","))
+    .join("\r\n");
+}
+
+function worksheetPreviewRows(worksheet: XlsxPopulateWorksheet): {
   rows: string[][];
   links: (string | null)[][];
 } {
   const rows: string[][] = [];
   const links: (string | null)[][] = [];
-  worksheet.eachRow({ includeEmpty: false }, (row) => {
-    const values: string[] = [];
-    const rowLinks: (string | null)[] = [];
-    row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
-      values[columnNumber - 1] = toPreviewTableCellValue(cell.text);
-      rowLinks[columnNumber - 1] = normalizePreviewTableLinkTarget(
-        typeof cell.hyperlink === "string" ? cell.hyperlink : cell.text,
-      );
+  const worksheetRows = workbookRangeRows(worksheet.usedRange());
+
+  worksheetRows.forEach((row, rowIndex) => {
+    const values = row.map((cell) => toPreviewTableCellValue(cell));
+    const rowLinks = values.map((value, columnIndex) => {
+      const hyperlink = worksheet.cell(rowIndex + 1, columnIndex + 1).hyperlink();
+      return normalizePreviewTableLinkTarget(hyperlink ?? value);
     });
     const trimmedValues = trimTrailingEmptyTableCells(values);
     rows.push(trimmedValues);
     links.push(trimTrailingEmptyTableLinkRow(rowLinks, trimmedValues.length));
   });
+
   return { rows, links };
 }
 
@@ -18382,63 +19554,48 @@ function sourceLinksFromTablePreviewSheet(
 }
 
 function applyPreviewSheetEditsToWorksheet(
-  worksheet: ExcelJS.Worksheet,
+  worksheet: XlsxPopulateWorksheet,
   sheet: FilePreviewTableSheetPayload,
 ) {
   const sourceRows = sourceRowsFromTablePreviewSheet(sheet);
   const sourceLinks = sourceLinksFromTablePreviewSheet(sheet);
   for (const [rowIndex, row] of sourceRows.entries()) {
-    const worksheetRow = worksheet.getRow(rowIndex + 1);
     for (const [columnIndex, value] of row.entries()) {
+      const cell = worksheet.cell(rowIndex + 1, columnIndex + 1);
       const hyperlink = sourceLinks[rowIndex]?.[columnIndex] ?? null;
-      worksheetRow.getCell(columnIndex + 1).value = hyperlink
-        ? { text: value, hyperlink }
-        : value;
+      cell.value(value);
+      if (hyperlink) {
+        cell.hyperlink(hyperlink);
+      } else {
+        worksheet.hyperlink(cell.address(), undefined);
+      }
     }
-    worksheetRow.commit();
   }
 }
 
 async function buildCsvTablePreviewBuffer(
   sheet: FilePreviewTableSheetPayload,
 ): Promise<Buffer> {
-  const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet(sheet.name || "Sheet 1");
   const sourceRows = sourceRowsFromTablePreviewSheet(sheet);
-  if (sourceRows.length > 0) {
-    worksheet.addRows(sourceRows);
-  }
-  const outputBuffer = await workbook.csv.writeBuffer({
-    sheetName: worksheet.name,
-    formatterOptions: {
-      delimiter: ",",
-      quote: '"',
-      escape: '"',
-      rowDelimiter: "\r\n",
-    },
-  });
-  return Buffer.from(outputBuffer as ArrayBuffer);
+  return Buffer.from(stringifyCsvRows(sourceRows), "utf-8");
 }
 
 async function buildWorkbookTablePreviewBuffer(
   buffer: Buffer,
   tableSheets: FilePreviewTableSheetPayload[],
 ): Promise<Buffer> {
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(
-    buffer as unknown as Parameters<ExcelJS.Workbook["xlsx"]["load"]>[0],
-  );
+  const workbook = await XlsxPopulate.fromDataAsync(buffer);
 
   for (const sheet of tableSheets) {
-    const worksheet = workbook.worksheets[sheet.index];
+    const worksheet = workbook.sheet(sheet.index);
     if (!worksheet) {
       continue;
     }
     applyPreviewSheetEditsToWorksheet(worksheet, sheet);
   }
 
-  const outputBuffer = await workbook.xlsx.writeBuffer();
-  return Buffer.from(outputBuffer as ArrayBuffer);
+  const outputBuffer = await workbook.outputAsync();
+  return workbookOutputToBuffer(outputBuffer);
 }
 
 async function writeCsvTablePreview(
@@ -18462,24 +19619,19 @@ async function writeWorkbookTablePreview(
 async function buildWorkbookPreviewSheets(
   buffer: Buffer,
 ): Promise<FilePreviewTableSheetPayload[]> {
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(
-    buffer as unknown as Parameters<ExcelJS.Workbook["xlsx"]["load"]>[0],
-  );
+  const workbook = await XlsxPopulate.fromDataAsync(buffer);
+  const worksheets = workbook.sheets();
 
-  const worksheets = workbook.worksheets.slice(0, MAX_TABLE_PREVIEW_SHEETS);
-  return worksheets.map((worksheet, sheetIndex) =>
-    {
-      const preview = worksheetPreviewRows(worksheet);
-      return tablePreviewSheetFromRows(
-        worksheet.name,
-        sheetIndex,
-        preview.rows,
-        preview.links,
-        workbook.worksheets.length,
-      );
-    },
-  );
+  return worksheets.slice(0, MAX_TABLE_PREVIEW_SHEETS).map((worksheet, sheetIndex) => {
+    const preview = worksheetPreviewRows(worksheet);
+    return tablePreviewSheetFromRows(
+      worksheet.name(),
+      sheetIndex,
+      preview.rows,
+      preview.links,
+      worksheets.length,
+    );
+  });
 }
 
 async function buildWorkbookPreviewSheetsWithFallback(
@@ -18510,30 +19662,16 @@ async function buildWorkbookPreviewSheetsWithFallback(
 async function buildCsvPreviewSheets(
   buffer: Buffer,
 ): Promise<FilePreviewTableSheetPayload[]> {
-  const workbook = new ExcelJS.Workbook();
-  const worksheet = await workbook.csv.read(
-    Readable.from([buffer.toString("utf8")]),
-    {
-      parserOptions: {
-        delimiter: ",",
-        quote: '"',
-        escape: '"',
-        trim: false,
-      },
-    },
+  const rows = parseCsvRows(buffer.toString("utf8").replace(/^\uFEFF/, ""));
+  const normalizedRows = rows.map((row) =>
+    trimTrailingEmptyTableCells(
+      row.map((cell) => toPreviewTableCellValue(cell)),
+    ),
   );
+  const links = normalizedRows.map((row) => row.map(() => null));
 
   return [
-    (() => {
-      const preview = worksheetPreviewRows(worksheet);
-      return tablePreviewSheetFromRows(
-        worksheet.name,
-        0,
-        preview.rows,
-        preview.links,
-        1,
-      );
-    })(),
+    tablePreviewSheetFromRows("Sheet 1", 0, normalizedRows, links, 1),
   ];
 }
 
@@ -21082,7 +22220,7 @@ function createAuthPopupHtml() {
         <div class="profileRow">
           <div id="avatar" class="avatar">H</div>
           <div class="identityWrap">
-            <div id="identityName" class="identityName">Holaboss account</div>
+            <div id="identityName" class="identityName">holaOS account</div>
             <div id="identity" class="identity">Loading session...</div>
           </div>
           <div id="badge" class="badge idle">Checking</div>
@@ -21263,7 +22401,7 @@ function createAuthPopupHtml() {
         const noticeText = state.authError || state.authMessage;
 
         els.avatar.textContent = sessionInitials(state.user);
-        els.identityName.textContent = isSignedIn ? (sessionDisplayName(state.user) || "Holaboss account") : "Holaboss account";
+        els.identityName.textContent = isSignedIn ? (sessionDisplayName(state.user) || "holaOS account") : "holaOS account";
         els.identity.textContent = isSignedIn ? (sessionEmail(state.user) || sessionUserId(state.user) || "Signed in") : "Not connected";
         els.badge.className = "badge " + badgeTone;
         els.badge.textContent = badgeLabel;
@@ -22315,6 +23453,14 @@ function showNativeDesktopNotification(
       silent: false,
     });
     let settled = false;
+    let usedFallback = false;
+    const closeNativeNotification = () => {
+      try {
+        notification.close();
+      } catch {
+        // Notification may already be closed; ignore.
+      }
+    };
     const settle = (value: boolean) => {
       if (settled) {
         return;
@@ -22330,6 +23476,9 @@ function showNativeDesktopNotification(
         settle(false);
         return;
       }
+      // Suppress the native notification so it can't appear alongside the AppleScript one.
+      usedFallback = true;
+      closeNativeNotification();
       logNativeDesktopNotificationEvent("dev_fallback_attempt", {
         title,
         body,
@@ -22355,6 +23504,17 @@ function showNativeDesktopNotification(
     }, 1500);
     notification.on("show", () => {
       clearTimeout(showTimeout);
+      if (usedFallback) {
+        // Native notification arrived after we already triggered the dev fallback —
+        // dismiss it so the user doesn't see two notifications for the same event.
+        logNativeDesktopNotificationEvent("late_show_suppressed", {
+          title,
+          body,
+          force: payload.force,
+        });
+        closeNativeNotification();
+        return;
+      }
       logNativeDesktopNotificationEvent("shown", {
         title,
         body,
@@ -22478,6 +23638,23 @@ function installMacApplicationMenu() {
       ],
     },
     {
+      label: "File",
+      submenu: [
+        {
+          label: "Close Tab",
+          accelerator: "CmdOrCtrl+W",
+          click: () => {
+            mainWindow?.webContents.send("app:closeActiveTab");
+          },
+        },
+        {
+          label: "Close Window",
+          accelerator: "CmdOrCtrl+Shift+W",
+          role: "close",
+        },
+      ],
+    },
+    {
       label: "Edit",
       submenu: [
         { label: "Undo", role: "undo" },
@@ -22546,7 +23723,7 @@ app.setName(
     : APP_DISPLAY_NAME,
 );
 if (!singleInstanceLock) {
-  app.quit();
+  app.exit(0);
 } else {
   if (process.defaultApp && process.argv.length >= 2) {
     app.setAsDefaultProtocolClient(
@@ -22694,6 +23871,10 @@ app.on("child-process-gone", (_event, details) => {
 });
 
 app.whenReady().then(async () => {
+  if (!singleInstanceLock) {
+    return;
+  }
+
   configureMacWebAuthnPlatformAuthenticator();
 
   if (process.platform === "darwin" && app.dock) {
@@ -23457,6 +24638,11 @@ app.whenReady().then(async () => {
       listOutputs(payload),
   );
   handleTrustedIpc(
+    "workspace:listOutputFolders",
+    ["main"],
+    async (_event, workspaceId: string) => listOutputFolders(workspaceId),
+  );
+  handleTrustedIpc(
     "workspace:listSkills",
     ["main"],
     async (_event, workspaceId: string) => listWorkspaceSkills(workspaceId),
@@ -23491,6 +24677,15 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, payload: HolabossCreateWorkspacePayload) =>
       desktopWorkspaceControlPlane.createWorkspace(payload),
+  );
+  handleTrustedIpc(
+    "workspace:createWorkspaceLab",
+    ["main"],
+    async (
+      _event,
+      workspaceId: string,
+      purpose: "workspace_onboarding" | "meeting_mode",
+    ) => desktopWorkspaceControlPlane.createWorkspaceLab(workspaceId, purpose),
   );
   handleTrustedIpc(
     "workspace:deleteWorkspace",
@@ -23587,28 +24782,16 @@ app.whenReady().then(async () => {
       archiveBackgroundTask(payload),
   );
   handleTrustedIpc(
+    "workspace:continueBackgroundTask",
+    ["main"],
+    async (_event, payload: ContinueBackgroundTaskPayload) =>
+      continueBackgroundTask(payload),
+  );
+  handleTrustedIpc(
     "workspace:acceptTaskProposal",
     ["main"],
     async (_event, payload: TaskProposalAcceptPayload) =>
       acceptTaskProposal(payload),
-  );
-  handleTrustedIpc(
-    "workspace:listMemoryUpdateProposals",
-    ["main"],
-    async (_event, payload: MemoryUpdateProposalListRequestPayload) =>
-      listMemoryUpdateProposals(payload),
-  );
-  handleTrustedIpc(
-    "workspace:acceptMemoryUpdateProposal",
-    ["main"],
-    async (_event, payload: MemoryUpdateProposalAcceptPayload) =>
-      acceptMemoryUpdateProposal(payload),
-  );
-  handleTrustedIpc(
-    "workspace:dismissMemoryUpdateProposal",
-    ["main"],
-    async (_event, workspaceId: string, proposalId: string) =>
-      dismissMemoryUpdateProposal(workspaceId, proposalId),
   );
   handleTrustedIpc(
     "workspace:updateTaskProposalState",
@@ -23668,6 +24851,69 @@ app.whenReady().then(async () => {
       queueSessionInput(payload),
   );
   handleTrustedIpc(
+    "workspace:getOnboardingStatus",
+    ["main"],
+    async (_event, workspaceId: string) => getOnboardingStatus(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:continueDeterministicOnboarding",
+    ["main"],
+    async (_event, workspaceId: string) =>
+      continueDeterministicOnboarding(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:skipWorkspaceOnboarding",
+    ["main"],
+    async (_event, workspaceId: string) =>
+      skipWorkspaceOnboarding(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:answerOnboardingAlignmentQuestion",
+    ["main"],
+    async (
+      _event,
+      workspaceId: string,
+      payload: {
+        optionId?: string | null;
+        responseText?: string | null;
+        notes?: string | null;
+        answers?: Array<{
+          questionId?: string | null;
+          optionId?: string | null;
+          responseText?: string | null;
+          notes?: string | null;
+        }>;
+      },
+    ) => answerOnboardingAlignmentQuestion(workspaceId, payload),
+  );
+  handleTrustedIpc(
+    "workspace:approveOnboardingAlignment",
+    ["main"],
+    async (_event, workspaceId: string) =>
+      approveOnboardingAlignment(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:requestOnboardingAlignmentRevision",
+    ["main"],
+    async (_event, workspaceId: string) =>
+      requestOnboardingAlignmentRevision(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:requestOnboardingVerificationRevision",
+    ["main"],
+    async (_event, workspaceId: string) =>
+      requestOnboardingVerificationRevision(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:completeOnboarding",
+    ["main"],
+    async (
+      _event,
+      workspaceId: string,
+      payload: { summary: string; requestedBy?: string | null },
+    ) => completeOnboarding(workspaceId, payload),
+  );
+  handleTrustedIpc(
     "workspace:pauseSessionRun",
     ["main"],
     async (_event, payload: HolabossPauseSessionRunPayload) =>
@@ -23678,6 +24924,12 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, payload: HolabossUpdateQueuedSessionInputPayload) =>
       updateQueuedSessionInput(payload),
+  );
+  handleTrustedIpc(
+    "workspace:cancelQueuedSessionInput",
+    ["main"],
+    async (_event, payload: HolabossCancelQueuedSessionInputPayload) =>
+      cancelQueuedSessionInput(payload),
   );
   handleTrustedIpc(
     "workspace:openSessionOutputStream",
@@ -23714,6 +24966,22 @@ app.whenReady().then(async () => {
     async (_event, workspaceId: string) => listIntegrationBindings(workspaceId),
   );
   handleTrustedIpc(
+    "workspace:getWorkspaceDefaultAccount",
+    ["main"],
+    async (_event, workspaceId: string, providerId: string) =>
+      getWorkspaceDefaultAccount(workspaceId, providerId),
+  );
+  handleTrustedIpc(
+    "workspace:setWorkspaceDefaultAccount",
+    ["main"],
+    async (
+      _event,
+      workspaceId: string,
+      providerId: string,
+      connectionId: string,
+    ) => setWorkspaceDefaultAccount(workspaceId, providerId, connectionId),
+  );
+  handleTrustedIpc(
     "workspace:upsertIntegrationBinding",
     ["main"],
     async (
@@ -23737,6 +25005,62 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, bindingId: string, workspaceId: string) =>
       deleteIntegrationBinding(bindingId, workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:listConnectionWorkspaceUsage",
+    ["main"],
+    async () => listConnectionWorkspaceUsage(),
+  );
+  handleTrustedIpc(
+    "workspace:listIntegrationStoreCatalog",
+    ["main"],
+    async () => listIntegrationStoreCatalog(),
+  );
+  handleTrustedIpc(
+    "workspace:listAllWorkspaceIntegrationOverrides",
+    ["main"],
+    async () => listAllWorkspaceIntegrationOverrides(),
+  );
+  handleTrustedIpc(
+    "workspace:listWorkspaceIntegrations",
+    ["main"],
+    async (_event, workspaceId: string) => listWorkspaceIntegrations(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:listMemoryBrowserTree",
+    ["main"],
+    async (_event, workspaceId: string) => listMemoryBrowserTree(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:readMemoryBrowserFile",
+    ["main"],
+    async (_event, workspaceId: string, targetPath: string) =>
+      readMemoryBrowserFile(workspaceId, targetPath),
+  );
+  handleTrustedIpc(
+    "workspace:listMemoryBrowserGraph",
+    ["main"],
+    async (
+      _event,
+      workspaceId: string,
+      params: { forest: MemoryBrowserGraphForest; treeId?: string | null },
+    ) => listMemoryBrowserGraph(workspaceId, params),
+  );
+  handleTrustedIpc(
+    "workspace:setWorkspaceIntegrationOverride",
+    ["main"],
+    async (
+      _event,
+      workspaceId: string,
+      toolkitSlug: string,
+      payload: { state: "disabled" | "pinned"; pinned_connection_id?: string | null },
+    ) => setWorkspaceIntegrationOverride(workspaceId, toolkitSlug, payload),
+  );
+  handleTrustedIpc(
+    "workspace:clearWorkspaceIntegrationOverride",
+    ["main"],
+    async (_event, workspaceId: string, toolkitSlug: string) =>
+      clearWorkspaceIntegrationOverride(workspaceId, toolkitSlug),
   );
   handleTrustedIpc(
     "workspace:restartApp",
@@ -23800,6 +25124,61 @@ app.whenReady().then(async () => {
   handleTrustedIpc("workspace:composioListConnections", ["main"], async () =>
     composioListConnections(),
   );
+  // Unified entry point for any curated Composio action from the
+  // desktop. Resolves the user's connection for `providerSlug`, then
+  // POSTs /api/composio/internal/tools/execute with `toolSlug` and the
+  // action-specific `arguments`. Invoke from the renderer dev console:
+  //
+  //   await window.electronAPI.workspace.composioExecute({
+  //     providerSlug: "gmail",
+  //     toolSlug: "GMAIL_FETCH_EMAILS",
+  //     arguments: { max_results: 5 },
+  //   })
+  handleTrustedIpc(
+    "workspace:composioExecute",
+    ["main"],
+    async (
+      _event,
+      params: {
+        providerSlug: string;
+        toolSlug: string;
+        arguments?: Record<string, unknown>;
+      },
+    ) => composioExecute(params),
+  );
+  // Temporary diagnostic — runtime end-to-end probe through the new
+  // ComposioApiClient. Button in IntegrationsPane fires this; remove
+  // alongside the runtime endpoint once a real consumer lands.
+  handleTrustedIpc(
+    "workspace:debugComposioRuntimeTest",
+    ["main"],
+    async (
+      _event,
+      params?: {
+        providerSlug?: string;
+        toolSlug?: string;
+        arguments?: Record<string, unknown>;
+      },
+    ) => debugComposioRuntimeTest(params ?? {}),
+  );
+  handleTrustedIpc(
+    "workspace:fetchIntegrationContext",
+    ["main"],
+    async (_event, connectionId: string) => fetchIntegrationContext(connectionId),
+  );
+  handleTrustedIpc(
+    "workspace:listIntegrationContextFetchStatuses",
+    ["main"],
+    async (_event, connectionIds?: string[]) =>
+      listIntegrationContextFetchStatuses(
+        Array.isArray(connectionIds) ? connectionIds : [],
+      ),
+  );
+  handleTrustedIpc(
+    "workspace:clearIntegrationMemory",
+    ["main"],
+    async (_event, connectionId: string) => clearIntegrationMemory(connectionId),
+  );
   handleTrustedIpc(
     "workspace:composioConnect",
     ["main"],
@@ -23845,6 +25224,17 @@ app.whenReady().then(async () => {
         account_label?: string;
       },
     ) => composioFinalize(payload),
+  );
+  handleTrustedIpc(
+    "workspace:composioDeleteUpstream",
+    ["main"],
+    async (_event, connectedAccountId: string) =>
+      composioDeleteUpstream(connectedAccountId),
+  );
+  handleTrustedIpc(
+    "workspace:composioMcpEnsureRunning",
+    ["main"],
+    async (_event, workspaceId: string) => composioMcpEnsureRunning(workspaceId),
   );
   handleTrustedIpc(
     "workspace:composioRefreshConnection",
@@ -24092,6 +25482,73 @@ app.whenReady().then(async () => {
     "diagnostics:revealBundle",
     ["main"],
     async (_event, targetPath: string) => revealDiagnosticsBundle(targetPath),
+  );
+  handleTrustedIpc(
+    "tabs:showContextMenu",
+    ["main"],
+    async (
+      event,
+      opts: {
+        canCloseLeft: boolean;
+        canCloseRight: boolean;
+        canCloseOthers: boolean;
+        hasDeleteFile: boolean;
+      },
+    ): Promise<
+      | "close"
+      | "closeOthers"
+      | "closeToLeft"
+      | "closeToRight"
+      | "deleteFile"
+      | null
+    > => {
+      type Action =
+        | "close"
+        | "closeOthers"
+        | "closeToLeft"
+        | "closeToRight"
+        | "deleteFile";
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (!win) return null;
+      return new Promise<Action | null>((resolve) => {
+        let settled = false;
+        const finish = (action: Action | null) => {
+          if (settled) return;
+          settled = true;
+          resolve(action);
+        };
+        const template: MenuItemConstructorOptions[] = [
+          {
+            label: "Close tab",
+            accelerator: "CmdOrCtrl+W",
+            click: () => finish("close"),
+          },
+          {
+            label: "Close others",
+            enabled: opts.canCloseOthers,
+            click: () => finish("closeOthers"),
+          },
+          {
+            label: "Close tabs to the left",
+            enabled: opts.canCloseLeft,
+            click: () => finish("closeToLeft"),
+          },
+          {
+            label: "Close tabs to the right",
+            enabled: opts.canCloseRight,
+            click: () => finish("closeToRight"),
+          },
+        ];
+        if (opts.hasDeleteFile) {
+          template.push(
+            { type: "separator" },
+            { label: "Delete file…", click: () => finish("deleteFile") },
+          );
+        }
+        const menu = Menu.buildFromTemplate(template);
+        menu.popup({ window: win, callback: () => finish(null) });
+      });
+    },
   );
   installBrowserPaneIpcHandlers({
     ipcMain,

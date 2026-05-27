@@ -1,10 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
+import type { RuntimeStateStore } from "@holaboss/runtime-state-store";
+import { rebuildAllIntegrationTrees } from "./integration-memory.js";
+import { rebuildAllInteractionTrees } from "./interaction-memory.js";
 import {
   globalMemoryDirForWorkspaceRoot,
   migrateLegacyWorkspaceMemoryIfNeeded,
   workspaceMemoryDir,
 } from "./workspace-bundle-paths.js";
+import { visibleIntegrationTreesForWorkspace } from "./workspace-integration-visibility.js";
 
 const MEMORY_BACKEND_ENV = "MEMORY_BACKEND";
 const MEMORY_ROOT_DIR_ENV = "MEMORY_ROOT_DIR";
@@ -19,7 +23,6 @@ export interface MemoryServiceLike {
   upsert(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
   status(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
   sync(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
-  capture(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
 export class MemoryServiceError extends Error {
@@ -374,60 +377,21 @@ function statusPayload(params: {
   return payload;
 }
 
-function capturePayload(params: {
-  workspaceDir: string;
-  workspaceId: string;
-  workspaceMemoryRootDir: string;
-  globalMemoryRootDir: string;
-  migratedWorkspaceMemory?: boolean;
-}): Record<string, unknown> {
-  const status = statusPayload(params);
-  const files: Record<string, string> = {};
-  let totalChars = 0;
-  for (const filePath of workspaceMemoryFiles(params.workspaceMemoryRootDir)) {
-    const relativePath = path.posix.join(
-      workspaceScopePrefix(params.workspaceId).replace(/\/$/, ""),
-      relativePosixPath(params.workspaceMemoryRootDir, filePath),
-    );
-    try {
-      const text = fs.readFileSync(filePath, "utf8");
-      files[relativePath] = text;
-      totalChars += text.length;
-    } catch {
-      // Ignore unreadable files in bundle capture.
-    }
-  }
-  for (const filePath of globalMemoryFiles(params.globalMemoryRootDir)) {
-    const relativePath = relativePosixPath(params.globalMemoryRootDir, filePath);
-    try {
-      const text = fs.readFileSync(filePath, "utf8");
-      files[relativePath] = text;
-      totalChars += text.length;
-    } catch {
-      // Ignore unreadable files in bundle capture.
-    }
-  }
-  return {
-    status,
-    files,
-    file_paths: Object.keys(files),
-    total_files: Object.keys(files).length,
-    total_chars: totalChars
-  };
-}
-
 export interface FilesystemMemoryServiceOptions {
   workspaceRoot: string;
   resolveWorkspaceDir?: ((workspaceId: string) => string) | null;
+  store?: RuntimeStateStore | null;
 }
 
 export class FilesystemMemoryService implements MemoryServiceLike {
   readonly #workspaceRoot: string;
   readonly #resolveWorkspaceDir: ((workspaceId: string) => string) | null;
+  readonly #store: RuntimeStateStore | null;
 
   constructor(options: FilesystemMemoryServiceOptions) {
     this.#workspaceRoot = options.workspaceRoot;
     this.#resolveWorkspaceDir = options.resolveWorkspaceDir ?? null;
+    this.#store = options.store ?? null;
   }
 
   async search(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -505,13 +469,7 @@ export class FilesystemMemoryService implements MemoryServiceLike {
 
     return {
       results: results.slice(0, Math.max(1, maxResults)),
-      status: statusPayload({
-        workspaceDir: roots.workspaceDir,
-        workspaceId,
-        workspaceMemoryRootDir: roots.workspaceMemoryRootDir,
-        globalMemoryRootDir: roots.globalMemoryRootDir,
-        migratedWorkspaceMemory: roots.migratedWorkspaceMemory,
-      })
+      status: await this.status({ workspace_id: workspaceId })
     };
   }
 
@@ -601,13 +559,128 @@ export class FilesystemMemoryService implements MemoryServiceLike {
       workspaceId,
       resolveWorkspaceDir: this.#resolveWorkspaceDir,
     });
-    return statusPayload({
+    const status = statusPayload({
       workspaceDir: roots.workspaceDir,
       workspaceId,
       workspaceMemoryRootDir: roots.workspaceMemoryRootDir,
       globalMemoryRootDir: roots.globalMemoryRootDir,
       migratedWorkspaceMemory: roots.migratedWorkspaceMemory,
     });
+    if (this.#store) {
+      const store = this.#store;
+      const entities = store.listInteractionEntities({
+        workspaceId,
+        status: "active",
+        includeSystem: true,
+        limit: 10_000,
+        offset: 0,
+      });
+      const leaves = store.listInteractionLeaves({
+        workspaceId,
+        status: "active",
+        limit: 10_000,
+        offset: 0,
+      });
+      const interactionSemanticNodes = entities.flatMap((entity) =>
+        store.listSemanticMemoryNodes({
+          category: "interaction",
+          workspaceId,
+          treeId: entity.entityId,
+          status: "active",
+          limit: 10_000,
+          offset: 0,
+          }),
+      );
+      const interactionSemanticEdges = entities.reduce(
+        (count, entity) =>
+          count + store.listSemanticMemoryNodes({
+            category: "interaction",
+            workspaceId,
+            treeId: entity.entityId,
+            nodeClass: "semantic",
+            status: "active",
+            limit: 10_000,
+            offset: 0,
+          }).reduce(
+            (subtotal, node) =>
+              subtotal + store.listSemanticMemoryChildren({
+                category: "interaction",
+                workspaceId,
+                treeId: entity.entityId,
+                parentNodeId: node.nodeId,
+              }).length,
+            0,
+          ),
+        0,
+      );
+      const integrationTrees = visibleIntegrationTreesForWorkspace({
+        store,
+        workspaceId,
+      });
+      const integrationLeaves = integrationTrees.flatMap((tree) =>
+        store.listIntegrationLeaves({
+          treeId: tree.treeId,
+          status: "active",
+          limit: 10_000,
+          offset: 0,
+        }),
+      );
+      const integrationSemanticNodes = integrationTrees.flatMap((tree) =>
+        store.listSemanticMemoryNodes({
+          category: "integration",
+          treeId: tree.treeId,
+          status: "active",
+          limit: 10_000,
+          offset: 0,
+        }),
+      );
+      const integrationSemanticEdges = integrationTrees.reduce(
+        (count, tree) =>
+          count + store.listSemanticMemoryNodes({
+            category: "integration",
+            treeId: tree.treeId,
+            nodeClass: "semantic",
+            status: "active",
+            limit: 10_000,
+            offset: 0,
+          })
+            .reduce(
+              (subtotal, node) =>
+                subtotal + store.listSemanticMemoryChildren({
+                  category: "integration",
+                  treeId: tree.treeId,
+                  parentNodeId: node.nodeId,
+                }).length,
+              0,
+            ),
+        0,
+      );
+      const integrationSemanticRelations = integrationTrees.reduce(
+        (count, tree) =>
+          count + store.listSemanticMemoryRelations({
+            category: "integration",
+            treeId: tree.treeId,
+            limit: 10_000,
+          }).length,
+        0,
+      );
+      status.provider = "interaction_tree";
+      status.custom = {
+        ...(status.custom as Record<string, unknown>),
+        interaction_entities: entities.length,
+        interaction_leaves: leaves.length,
+        interaction_semantic_nodes: interactionSemanticNodes.length,
+        interaction_semantic_internal_nodes: interactionSemanticNodes.filter((node) => node.nodeClass === "semantic").length,
+        interaction_semantic_edges: interactionSemanticEdges,
+        integration_trees: integrationTrees.length,
+        integration_leaves: integrationLeaves.length,
+        integration_semantic_nodes: integrationSemanticNodes.length,
+        integration_semantic_internal_nodes: integrationSemanticNodes.filter((node) => node.nodeClass === "semantic").length,
+        integration_semantic_edges: integrationSemanticEdges,
+        integration_semantic_relations: integrationSemanticRelations,
+      };
+    }
+    return status;
   }
 
   async sync(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -617,31 +690,26 @@ export class FilesystemMemoryService implements MemoryServiceLike {
       workspaceId,
       resolveWorkspaceDir: this.#resolveWorkspaceDir,
     });
+    let rebuilt: Record<string, unknown> | null = null;
+    if (this.#store) {
+      const store = this.#store;
+      const interaction = await rebuildAllInteractionTrees({
+        store,
+        workspaceId,
+      });
+      const integration = await rebuildAllIntegrationTrees({
+        store,
+        workspaceId,
+      });
+      rebuilt = {
+        interaction,
+        integration,
+      };
+    }
     return {
       success: true,
-      status: statusPayload({
-        workspaceDir: roots.workspaceDir,
-        workspaceId,
-        workspaceMemoryRootDir: roots.workspaceMemoryRootDir,
-        globalMemoryRootDir: roots.globalMemoryRootDir,
-        migratedWorkspaceMemory: roots.migratedWorkspaceMemory,
-      })
+      rebuilt,
+      status: await this.status({ workspace_id: workspaceId })
     };
-  }
-
-  async capture(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const workspaceId = requiredString(payload.workspace_id, "workspace_id");
-    const roots = resolveMemoryRoots({
-      workspaceRoot: this.#workspaceRoot,
-      workspaceId,
-      resolveWorkspaceDir: this.#resolveWorkspaceDir,
-    });
-    return capturePayload({
-      workspaceDir: roots.workspaceDir,
-      workspaceId,
-      workspaceMemoryRootDir: roots.workspaceMemoryRootDir,
-      globalMemoryRootDir: roots.globalMemoryRootDir,
-      migratedWorkspaceMemory: roots.migratedWorkspaceMemory,
-    });
   }
 }

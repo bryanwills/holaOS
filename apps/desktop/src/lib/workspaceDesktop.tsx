@@ -13,8 +13,10 @@ import {
 import { trackUmamiEvent } from "@/lib/analytics/umami";
 import { getMarketplaceAppSdkClient } from "@/lib/app-sdk-client";
 import { type AuthSession, useDesktopAuthSession } from "@/lib/auth/authClient";
+import { loadWorkspaceOnboardingPreference } from "@/features/workspace-onboarding/preferences";
 import { hydrateInstalledWorkspaceApps, type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
+import { toolkitDisplayName } from "@/lib/toolkitDisplay";
 
 /**
  * Each app self-declares its integration provider in `app.runtime.yaml`,
@@ -44,6 +46,25 @@ export interface ComposioToolkitMetadata {
   categories: string[];
 }
 
+const COMPOSIO_PROVIDER_TOOLKIT_ALIASES: Record<string, string> = {
+  x: "twitter",
+};
+
+export function composioToolkitSlugForProvider(providerId: string): string {
+  const normalized = providerId.trim().toLowerCase();
+  return COMPOSIO_PROVIDER_TOOLKIT_ALIASES[normalized] ?? normalized;
+}
+
+export function composioToolkitMatchesProvider(
+  toolkitSlug: string,
+  providerId: string,
+): boolean {
+  return (
+    toolkitSlug.trim().toLowerCase() ===
+    composioToolkitSlugForProvider(providerId)
+  );
+}
+
 /**
  * Resolves the display name + logo for an app by combining the catalog
  * entry's `provider_id` (self-declared in app.runtime.yaml) with the
@@ -54,12 +75,69 @@ export function resolveAppDisplay(
   providerId: string | null | undefined,
   toolkitsByProvider: Record<string, ComposioToolkitMetadata>,
 ): { name: string | null; logo: string | null } {
-  const slug = providerId?.trim().toLowerCase();
+  const slug = providerId
+    ? composioToolkitSlugForProvider(providerId)
+    : "";
   const toolkit = slug ? toolkitsByProvider[slug] : undefined;
   return {
     name: toolkit?.name?.trim() || null,
     logo: toolkit?.logo ?? null,
   };
+}
+
+export class IntegrationConnectCancelled extends Error {
+  constructor() {
+    super("Integration connect cancelled by user");
+    this.name = "IntegrationConnectCancelled";
+  }
+}
+
+export const COMPOSIO_POLL_INTERVAL_MS = 3000;
+export const COMPOSIO_POLL_MAX_TICKS = 100;
+export const COMPOSIO_POLL_TIMEOUT_MS =
+  COMPOSIO_POLL_INTERVAL_MS * COMPOSIO_POLL_MAX_TICKS;
+
+// Progressive poll cadence — OAuth typically completes 5-30s after
+// open, so the first few polls hit at high density to catch fast
+// completions, then back off to the steady 3s baseline. Total tick
+// count still respects COMPOSIO_POLL_MAX_TICKS.
+const COMPOSIO_POLL_INTERVAL_PROGRESSION_MS = [800, 1200, 1800, 2400] as const;
+function composioPollIntervalForTick(tick: number): number {
+  return (
+    COMPOSIO_POLL_INTERVAL_PROGRESSION_MS[tick] ?? COMPOSIO_POLL_INTERVAL_MS
+  );
+}
+
+/** Sleep for `ms` OR until the desktop window regains focus — whichever
+ *  comes first. Used by the OAuth poll loop so the moment the user
+ *  switches back from the browser after authorizing, we poll immediately
+ *  instead of waiting up to one full interval for the next tick. */
+function sleepUntilFocusOrTimeout(
+  ms: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const onAbort = () => finish();
+    const onFocus = () => finish();
+    const timer = setTimeout(() => finish(), ms);
+    function finish() {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      window.removeEventListener("focus", onFocus);
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }
+    window.addEventListener("focus", onFocus, { once: true });
+    if (signal) {
+      if (signal.aborted) {
+        finish();
+        return;
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  });
 }
 
 const ONBOARDING_ACTIVE_STATUSES = new Set(["pending", "awaiting_confirmation", "in_progress"]);
@@ -71,7 +149,8 @@ const CLOUD_WORKSPACE_READY_TIMEOUT_MS = 10 * 60 * 1_000;
 const PENDING_CLOUD_WORKSPACE_RECORD_TTL_MS = 2 * 60 * 1_000;
 type TemplateSourceMode = "local" | "marketplace" | "empty" | "empty_onboarding";
 type WorkspaceCreateLocation = WorkspaceLocationPayload;
-export type FirstWorkspaceStep = "welcome" | "name" | "folder";
+export type FirstWorkspaceStep = "name" | "folder";
+export type WorkspaceOnboardingEngine = "deterministic" | "agentic";
 type LifecycleStepState = "pending" | "current" | "done" | "error";
 type WorkspaceListLoadSource = "auto" | "live" | "cached";
 type WorkspaceBrowserBootstrapMode = "fresh" | "copy_workspace" | "import_browser";
@@ -189,11 +268,14 @@ interface WorkspaceDesktopContextValue {
     message: string;
   } | null;
   onboardingModeActive: boolean;
+  onboardingEngine: WorkspaceOnboardingEngine | null;
   sessionModeLabel: string;
   sessionTargetId: string;
   refreshWorkspaceData: () => Promise<void>;
   chooseTemplateFolder: () => Promise<void>;
-  createWorkspace: () => Promise<void>;
+  createWorkspace: (options?: { workspaceOnboardingMode?: "start" | "skip" }) => Promise<void>;
+  continueDeterministicOnboarding: () => Promise<void>;
+  skipWorkspaceOnboarding: () => Promise<void>;
   deleteWorkspace: (workspaceId: string) => Promise<void>;
   updateWorkspaceAppearance: (
     workspaceId: string,
@@ -318,15 +400,17 @@ function normalizedOnboardingStatus(workspace: WorkspaceRecordPayload | null): s
   return (workspace?.onboarding_status || "").trim().toLowerCase();
 }
 
-function isOnboardingMode(workspace: WorkspaceRecordPayload | null): boolean {
+function onboardingEngineForWorkspace(
+  workspace: WorkspaceRecordPayload | null,
+): WorkspaceOnboardingEngine | null {
   if (!workspace) {
-    return false;
+    return null;
+  }
+  if (!ONBOARDING_ACTIVE_STATUSES.has(normalizedOnboardingStatus(workspace))) {
+    return null;
   }
   const onboardingSessionId = (workspace.onboarding_session_id || "").trim();
-  if (!onboardingSessionId) {
-    return false;
-  }
-  return ONBOARDING_ACTIVE_STATUSES.has(normalizedOnboardingStatus(workspace));
+  return onboardingSessionId ? "agentic" : "deterministic";
 }
 
 export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) {
@@ -389,7 +473,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   // Cancel button can abort it. Other callers (e.g. chat pane's connect
   // card) get their own signal — no shared mutable state to clobber.
   const appInstallConnectControllerRef = useRef<AbortController | null>(null);
-  const [firstWorkspaceStep, setFirstWorkspaceStep] = useState<FirstWorkspaceStep>("welcome");
+  const [firstWorkspaceStep, setFirstWorkspaceStep] = useState<FirstWorkspaceStep>("name");
   // Composio toolkit metadata (name + logo + categories) keyed by toolkit
   // slug. Single source of truth for app display name + icon across the
   // shell — both the marketplace gallery and the workspace sidebar look
@@ -413,6 +497,10 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const selectedMarketplaceTemplate = useMemo(
     () => marketplaceTemplates.find((template) => template.name === selectedMarketplaceTemplateName) ?? null,
     [marketplaceTemplates, selectedMarketplaceTemplateName]
+  );
+  const onboardingEngine = useMemo(
+    () => onboardingEngineForWorkspace(selectedWorkspace),
+    [selectedWorkspace],
   );
 
   useEffect(() => {
@@ -487,9 +575,9 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     };
   }, []);
 
-  const onboardingModeActive = useMemo(() => isOnboardingMode(selectedWorkspace), [selectedWorkspace]);
-  const sessionModeLabel = onboardingModeActive ? "onboarding" : "session";
-  const sessionTargetId = onboardingModeActive
+  const onboardingModeActive = onboardingEngine !== null;
+  const sessionModeLabel = onboardingEngine === "agentic" ? "onboarding" : "session";
+  const sessionTargetId = onboardingEngine === "agentic"
     ? (selectedWorkspace?.onboarding_session_id || "").trim()
     : "";
   const runtimeReadyForWorkspaceData = runtimeStatus?.status === "running";
@@ -589,8 +677,11 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     setWorkspaceLifecycleWorkspaceId(lifecycle.workspace.id);
     setWorkspaceAppsReadyState(noAppsRequireStartup || lifecycle.ready);
     setWorkspaceBlockingReasonState(noAppsRequireStartup ? "" : (lifecycle.phase_detail || lifecycle.reason || "").trim());
+    upsertWorkspaceRecord(lifecycle.workspace);
+  }
+
+  function upsertWorkspaceRecord(nextWorkspace: WorkspaceRecordPayload) {
     setWorkspaces((current) => {
-      const nextWorkspace = lifecycle.workspace;
       const existingIndex = current.findIndex((workspace) => workspace.id === nextWorkspace.id);
       if (existingIndex === -1) {
         return [nextWorkspace, ...current];
@@ -946,7 +1037,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     }
   }
 
-  async function createWorkspace() {
+  async function createWorkspace(options: { workspaceOnboardingMode?: "start" | "skip" } = {}) {
     setIsCreatingWorkspace(true);
     setWorkspaceCreatePhase("creating_workspace");
     setWorkspaceErrorMessage("");
@@ -996,6 +1087,11 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
           ...(customWorkspacePath ? { workspace_path: customWorkspacePath } : {})
         });
       } else if (templateSourceMode === "empty" || templateSourceMode === "empty_onboarding") {
+        const requestedOnboardingMode = options.workspaceOnboardingMode;
+        const requestedOnboardingEngine =
+          templateSourceMode === "empty" && requestedOnboardingMode === "start"
+            ? loadWorkspaceOnboardingPreference()
+            : null;
         response = await window.electronAPI.workspace.createWorkspace({
           holaboss_user_id: isCloudCreate
             ? resolvedUserId
@@ -1004,6 +1100,14 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
           harness: selectedCreateHarness,
           name: trimmedWorkspaceName,
           template_mode: templateSourceMode === "empty_onboarding" ? "empty_onboarding" : "empty",
+          ...(templateSourceMode === "empty" && requestedOnboardingMode
+            ? { workspace_onboarding_mode: requestedOnboardingMode }
+            : {}),
+          ...(requestedOnboardingEngine
+            ? {
+                workspace_onboarding_engine: requestedOnboardingEngine,
+              }
+            : {}),
           ...(customWorkspacePath ? { workspace_path: customWorkspacePath } : {})
         });
       } else {
@@ -1096,6 +1200,42 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     } finally {
       setIsCreatingWorkspace(false);
       setWorkspaceCreatePhase("creating_workspace");
+    }
+  }
+
+  async function continueDeterministicOnboarding() {
+    if (!selectedWorkspaceId) {
+      throw new Error("Select a workspace first.");
+    }
+    setWorkspaceErrorMessage("");
+    try {
+      const response =
+        await window.electronAPI.workspace.continueDeterministicOnboarding(
+          selectedWorkspaceId,
+        );
+      upsertWorkspaceRecord(response.workspace);
+      await loadWorkspaceData({ preserveSelection: true, allowEmpty: true });
+    } catch (error) {
+      setWorkspaceErrorMessage(normalizeErrorMessage(error));
+      throw error;
+    }
+  }
+
+  async function skipWorkspaceOnboarding() {
+    if (!selectedWorkspaceId) {
+      throw new Error("Select a workspace first.");
+    }
+    setWorkspaceErrorMessage("");
+    try {
+      const response =
+        await window.electronAPI.workspace.skipWorkspaceOnboarding(
+          selectedWorkspaceId,
+        );
+      upsertWorkspaceRecord(response.workspace);
+      await loadWorkspaceData({ preserveSelection: true, allowEmpty: true });
+    } catch (error) {
+      setWorkspaceErrorMessage(normalizeErrorMessage(error));
+      throw error;
     }
   }
 
@@ -1316,13 +1456,6 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     setPendingAppInstall(null);
   }
 
-  class IntegrationConnectCancelled extends Error {
-    constructor() {
-      super("Integration connect cancelled by user");
-      this.name = "IntegrationConnectCancelled";
-    }
-  }
-
   async function connectIntegrationProvider({
     provider,
     accountLabel,
@@ -1341,29 +1474,25 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       }
     };
 
-    const COMPOSIO_POLL_INTERVAL_MS = 3000;
-    const COMPOSIO_POLL_MAX_TICKS = 100;
     const MAX_CONSECUTIVE_ERRORS = 20;
 
-    const runtimeConfig = await window.electronAPI.runtime.getConfig();
+    // Parallelize the two independent pre-OAuth round-trips. Before this
+    // was serial — getConfig → snapshot → composioConnect — adding ~300-800ms
+    // of latency before the browser even opens. The snapshot only needs
+    // to complete before we start polling, not before composioConnect.
+    const toolkitSlug = composioToolkitSlugForProvider(provider);
+    const [runtimeConfig, beforeSnapshot] = await Promise.all([
+      window.electronAPI.runtime.getConfig(),
+      window.electronAPI.workspace
+        .composioListConnections()
+        .catch(() => ({ connections: [] as Array<{ id: string }> })),
+    ]);
     const userId = runtimeConfig.userId ?? (resolvedUserId || "local");
-
-    // Snapshot existing connection ids before initiating — see
-    // IntegrationsPane comment: poll the list and look for a new id,
-    // since the id from /link isn't reliably queryable.
-    let beforeIds = new Set<string>();
-    try {
-      const before =
-        await window.electronAPI.workspace.composioListConnections();
-      beforeIds = new Set(before.connections.map((c) => c.id));
-    } catch {
-      // tolerate snapshot failure
-    }
+    const beforeIds = new Set(beforeSnapshot.connections.map((c) => c.id));
 
     throwIfAborted();
-
     const link = await window.electronAPI.workspace.composioConnect({
-      provider,
+      provider: toolkitSlug,
       owner_user_id: userId,
       ...(whoami ? { whoami } : {}),
     });
@@ -1372,28 +1501,41 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
 
     await window.electronAPI.ui.openExternalUrl(link.redirect_url);
 
+    // Once we've found the new connection id, skip the full list call on
+    // subsequent ticks — we only need to poll its status. Halves per-tick
+    // round-trip cost during the INITIATED → ACTIVE window where Composio
+    // can take a few seconds to flip after the user clicks Allow.
+    let knownNewConnectionId: string | null = null;
     let consecutiveErrors = 0;
     for (let tick = 0; tick < COMPOSIO_POLL_MAX_TICKS; tick++) {
-      await new Promise((r) => setTimeout(r, COMPOSIO_POLL_INTERVAL_MS));
-      throwIfAborted();
-      let current;
-      try {
-        current =
-          await window.electronAPI.workspace.composioListConnections();
-        consecutiveErrors = 0;
-      } catch (pollError) {
-        consecutiveErrors += 1;
-        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-          throw pollError;
-        }
-        continue;
-      }
-      const newConnection = current.connections.find(
-        (c) =>
-          !beforeIds.has(c.id) &&
-          c.toolkitSlug.toLowerCase() === provider.toLowerCase(),
+      await sleepUntilFocusOrTimeout(
+        composioPollIntervalForTick(tick),
+        signal,
       );
-      if (newConnection) {
+      throwIfAborted();
+      if (knownNewConnectionId === null) {
+        let current;
+        try {
+          current =
+            await window.electronAPI.workspace.composioListConnections();
+          consecutiveErrors = 0;
+        } catch (pollError) {
+          consecutiveErrors += 1;
+          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+            throw pollError;
+          }
+          continue;
+        }
+        const found = current.connections.find(
+          (c) =>
+            !beforeIds.has(c.id) &&
+            composioToolkitMatchesProvider(c.toolkitSlug, provider),
+        );
+        if (found) {
+          knownNewConnectionId = found.id;
+        }
+      }
+      if (knownNewConnectionId) {
         // Composio creates the row at /connect time in INITIATED state —
         // its mere presence in the list is NOT proof that OAuth completed.
         // Read the account's real status before finalizing.
@@ -1401,7 +1543,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
         try {
           accountStatus =
             await window.electronAPI.workspace.composioAccountStatus(
-              newConnection.id,
+              knownNewConnectionId,
               provider,
             );
         } catch {
@@ -1410,14 +1552,20 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
         throwIfAborted();
         const status = (accountStatus.status ?? "").toUpperCase();
         if (status === "ACTIVE") {
-          await window.electronAPI.workspace.composioFinalize({
-            connected_account_id: newConnection.id,
+          // Composio's connected_account_id (ca_xxx) is NOT the runtime's
+          // connection_id. composioFinalize writes a runtime row whose
+          // connection_id is a fresh randomUUID; that's the id callers need
+          // to pass to upsertIntegrationBinding. Returning ca_xxx here led
+          // to "integration connection ca_xxx not found" 404s the moment
+          // anyone tried to bind the result.
+          const finalized = await window.electronAPI.workspace.composioFinalize({
+            connected_account_id: knownNewConnectionId,
             provider,
             owner_user_id: userId,
-            account_label: accountLabel ?? `${provider} (Managed)`,
+            account_label: accountLabel ?? toolkitDisplayName(provider),
           });
           throwIfAborted();
-          return { connectionId: newConnection.id };
+          return { connectionId: finalized.connection_id };
         }
         if (
           status === "FAILED" ||
@@ -2045,11 +2193,14 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       lifecycleSteps,
       setupStatus,
       onboardingModeActive,
+      onboardingEngine,
       sessionModeLabel,
       sessionTargetId,
       refreshWorkspaceData,
       chooseTemplateFolder,
       createWorkspace,
+      continueDeterministicOnboarding,
+      skipWorkspaceOnboarding,
       deleteWorkspace,
       updateWorkspaceAppearance,
       removeInstalledApp,
@@ -2114,6 +2265,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       lifecycleSteps,
       setupStatus,
       onboardingModeActive,
+      onboardingEngine,
       sessionModeLabel,
       sessionTargetId,
       workspaceAppsReady,
@@ -2126,6 +2278,8 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       chooseWorkspaceRelocationFolder,
       activateWorkspace,
       createWorkspace,
+      continueDeterministicOnboarding,
+      skipWorkspaceOnboarding,
       deleteWorkspace,
       updateWorkspaceAppearance,
       removeInstalledApp,

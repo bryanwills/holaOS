@@ -2,6 +2,7 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   ChevronDown,
   Globe,
+  Image as ImageIcon,
   Loader2,
   Package,
   PanelLeftClose,
@@ -10,21 +11,17 @@ import {
   X,
 } from "lucide-react";
 import { FileTypeIcon } from "@/lib/fileIcon";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
+  SuspendingPopover as Popover,
+} from "./overlay-presence";
 import { useWorkspaceBrowser } from "@/components/panes/useWorkspaceBrowser";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import { cn } from "@/lib/utils";
-import {
-  TabContextMenu,
-  type TabContextMenuTarget,
-} from "./TabContextMenu";
 import {
   activeInternalTabIdAtom,
   internalTabsAtom,
@@ -43,9 +40,6 @@ export function TopChrome() {
     activeInternalTabIdAtom,
   );
   const removeRecentFileByPath = useSetAtom(removeRecentFileByPathAtom);
-  const [menuTarget, setMenuTarget] = useState<TabContextMenuTarget | null>(
-    null,
-  );
 
   const handleSelectBrowserTab = (id: string) => {
     setActiveInternalTabId(null);
@@ -79,61 +73,78 @@ export function TopChrome() {
     });
   };
 
+  useEffect(() => {
+    return window.electronAPI.app.onCloseActiveTab(() => {
+      if (activeInternalTabId) {
+        handleCloseInternalTab(activeInternalTabId);
+        return;
+      }
+      const activeId = browserState.activeTabId;
+      if (activeId) {
+        void window.electronAPI.browser.closeTab(activeId);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeInternalTabId, browserState.activeTabId]);
+
   const openContextMenu =
     (list: "browser" | "internal", tabId: string) =>
     (e: React.MouseEvent) => {
       e.preventDefault();
-      setMenuTarget({ list, tabId, x: e.clientX, y: e.clientY });
-    };
+      const browserIds = browserState.tabs.map((t) => t.id);
+      const internalIds = internalTabs.map((t) => t.id);
+      const allIds = [...browserIds, ...internalIds];
+      const targetGlobalIdx = allIds.indexOf(tabId);
+      if (targetGlobalIdx === -1) return;
+      const idsLeft = allIds.slice(0, targetGlobalIdx);
+      const idsRight = allIds.slice(targetGlobalIdx + 1);
+      const idsOthers = [...idsLeft, ...idsRight];
+      const targetInternal =
+        list === "internal"
+          ? internalTabs.find((t) => t.id === tabId) ?? null
+          : null;
+      const deletableFile =
+        targetInternal && targetInternal.kind === "file" ? targetInternal : null;
 
-  const buildContextActions = () => {
-    if (!menuTarget) return null;
-    const browserTabs = browserState.tabs;
-    const browserIds = browserTabs.map((t) => t.id);
-    const internalIds = internalTabs.map((t) => t.id);
-    const allIds = [...browserIds, ...internalIds];
-    const targetGlobalIdx = allIds.indexOf(menuTarget.tabId);
-    if (targetGlobalIdx === -1) return null;
-    const idsLeft = allIds.slice(0, targetGlobalIdx);
-    const idsRight = allIds.slice(targetGlobalIdx + 1);
-    const idsOthers = [...idsLeft, ...idsRight];
-
-    const closeMany = (ids: string[]) => {
-      const internalSet = new Set(internalIds);
-      const browserToClose = ids.filter((id) => !internalSet.has(id));
-      const internalToClose = ids.filter((id) => internalSet.has(id));
-      for (const id of browserToClose) {
-        void window.electronAPI.browser.closeTab(id);
-      }
-      if (internalToClose.length > 0) {
-        setInternalTabs((prev) =>
-          prev.filter((t) => !internalToClose.includes(t.id)),
-        );
-        if (
-          activeInternalTabId &&
-          internalToClose.includes(activeInternalTabId)
-        ) {
-          setActiveInternalTabId(null);
+      const closeMany = (ids: string[]) => {
+        const internalSet = new Set(internalIds);
+        const browserToClose = ids.filter((id) => !internalSet.has(id));
+        const internalToClose = ids.filter((id) => internalSet.has(id));
+        for (const id of browserToClose) {
+          void window.electronAPI.browser.closeTab(id);
         }
-      }
-    };
+        if (internalToClose.length > 0) {
+          setInternalTabs((prev) =>
+            prev.filter((t) => !internalToClose.includes(t.id)),
+          );
+          if (
+            activeInternalTabId &&
+            internalToClose.includes(activeInternalTabId)
+          ) {
+            setActiveInternalTabId(null);
+          }
+        }
+      };
 
-    const targetInternal =
-      menuTarget.list === "internal"
-        ? internalTabs.find((t) => t.id === menuTarget.tabId) ?? null
-        : null;
-
-    return {
-      onClose: () => {
-        if (menuTarget.list === "browser") handleCloseBrowserTab(menuTarget.tabId);
-        else handleCloseInternalTab(menuTarget.tabId);
-      },
-      onCloseOthers: () => closeMany(idsOthers),
-      onCloseToLeft: () => closeMany(idsLeft),
-      onCloseToRight: () => closeMany(idsRight),
-      onDeleteFile: targetInternal
-        ? () => {
-            const tab = targetInternal;
+      void window.electronAPI.tabs
+        .showContextMenu({
+          canCloseLeft: idsLeft.length > 0,
+          canCloseRight: idsRight.length > 0,
+          canCloseOthers: idsOthers.length > 0,
+          hasDeleteFile: deletableFile !== null,
+        })
+        .then((action) => {
+          if (!action) return;
+          if (action === "close") {
+            if (list === "browser") handleCloseBrowserTab(tabId);
+            else handleCloseInternalTab(tabId);
+            return;
+          }
+          if (action === "closeOthers") return closeMany(idsOthers);
+          if (action === "closeToLeft") return closeMany(idsLeft);
+          if (action === "closeToRight") return closeMany(idsRight);
+          if (action === "deleteFile" && deletableFile) {
+            const tab = deletableFile;
             if (
               !window.confirm(
                 `Delete '${tab.label}'? This moves the file to the trash and can't be undone from here.`,
@@ -145,20 +156,17 @@ export function TopChrome() {
               .deletePath(tab.filePath, selectedWorkspaceId ?? null)
               .then(() => {
                 handleCloseInternalTab(tab.id);
-                removeRecentFileByPath(tab.filePath);
+                removeRecentFileByPath({
+                  filePath: tab.filePath,
+                  workspaceId: selectedWorkspaceId ?? null,
+                });
               })
               .catch(() => {
-                // surfaced via OS notification when applicable; nothing
-                // useful to render inline.
+                // surfaced via OS notification when applicable
               });
           }
-        : undefined,
-      canCloseLeft: idsLeft.length > 0,
-      canCloseRight: idsRight.length > 0,
-      canCloseOthers: idsOthers.length > 0,
+        });
     };
-  };
-  const ctxActions = buildContextActions();
 
   const agentTabCount = browserState.tabCounts.agent;
 
@@ -206,7 +214,7 @@ export function TopChrome() {
           key={tab.id}
           id={tab.id}
           label={tab.label}
-          filePath={tab.filePath}
+          filePath={tab.kind === "file" ? tab.filePath : null}
           active={tab.id === activeInternalTabId}
           onSelect={handleSelectInternalTab}
           onClose={handleCloseInternalTab}
@@ -219,20 +227,10 @@ export function TopChrome() {
         size="icon-sm"
         aria-label="New tab"
         onClick={() => openNewTab(true)}
-        className="window-no-drag ml-1 text-foreground/60"
+        className="window-no-drag ml-1 text-foreground/55 hover:text-foreground"
       >
-        <Plus className="size-3.5" />
+        <Plus className="size-3.5" strokeWidth={1.75} />
       </Button>
-      {menuTarget && ctxActions ? (
-        <TabContextMenu
-          target={menuTarget}
-          actions={ctxActions}
-          canCloseLeft={ctxActions.canCloseLeft}
-          canCloseRight={ctxActions.canCloseRight}
-          canCloseOthers={ctxActions.canCloseOthers}
-          onDismiss={() => setMenuTarget(null)}
-        />
-      ) : null}
     </header>
   );
 }
@@ -248,7 +246,7 @@ function InternalTabChip({
 }: {
   id: string;
   label: string;
-  filePath: string;
+  filePath: string | null;
   active?: boolean;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
@@ -275,7 +273,11 @@ function InternalTabChip({
       )}
     >
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
-        <FileTypeIcon filePath={filePath} size={14} className="shrink-0" />
+        {filePath ? (
+          <FileTypeIcon filePath={filePath} size={14} className="shrink-0" />
+        ) : (
+          <ImageIcon className="size-3.5 shrink-0 text-foreground/60" />
+        )}
         <span className="flex-1 truncate">{label}</span>
       </div>
       <div

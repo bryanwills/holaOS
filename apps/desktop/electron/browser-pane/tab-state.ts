@@ -1075,11 +1075,14 @@ export function createBrowserPaneTabState(
 
   function browserPagePayload(tab: BrowserTabRecord): Record<string, unknown> {
     const wc = tab.view.webContents;
+    // Live truth, not event-cached: subresources (HMR ws, long-polling) can
+    // keep `did-stop-loading` from firing and leave the cache stuck at true.
+    const loading = !wc.isDestroyed() && wc.isLoadingMainFrame();
     return {
       tabId: tab.state.id,
       url: wc.getURL() || tab.state.url,
       title: wc.getTitle() || tab.state.title,
-      loading: tab.state.loading,
+      loading,
       initialized: tab.state.initialized,
       canGoBack: wc.navigationHistory.canGoBack(),
       canGoForward: wc.navigationHistory.canGoForward(),
@@ -1780,16 +1783,27 @@ export function createBrowserPaneTabState(
           return { action: "deny" };
         }
         if (deps.shouldAllowBrowserPopupWindow(normalizedUrl, frameName, features)) {
+          // OAuth popups (Google sign-in, etc.) must NOT be fullscreenable.
+          // On macOS, a fullscreen-capable child of a fullscreen parent will
+          // open into the parent's fullscreen space with its chrome hidden,
+          // leaving the user no way to close the popup without exiting the
+          // parent's fullscreen entirely. Once that happens, the parent often
+          // can't re-enter fullscreen until the popup is fully torn down.
+          const mainWindow = deps.getMainWindow();
+          const parentIsFullscreen =
+            process.platform === "darwin" &&
+            Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFullScreen());
           return {
             action: "allow",
             overrideBrowserWindowOptions: {
-              parent: deps.getMainWindow() ?? undefined,
+              parent: parentIsFullscreen ? undefined : (mainWindow ?? undefined),
               autoHideMenuBar: true,
               backgroundColor: "#050907",
               width: 520,
               height: 760,
               minWidth: 420,
               minHeight: 620,
+              fullscreenable: false,
               webPreferences: {
                 session: workspace.session,
                 preload: path.join(deps.preloadDir, "browserPopupPreload.cjs"),

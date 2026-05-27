@@ -1,5 +1,5 @@
 import { type ReactNode, memo, useMemo, useState } from "react";
-import { AlertTriangle } from "lucide-react";
+import { CircleAlert } from "lucide-react";
 import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 import { chatMessageTimeLabel } from "../helpers";
@@ -9,12 +9,15 @@ import type {
   ChatMessage,
 } from "../types";
 import { AssistantTurnActionsMenu } from "./ActionsMenu";
-import { AssistantTurnMemoryProposals } from "./MemoryProposals";
 import { AssistantTurnOutputs } from "./Outputs";
 import {
   AssistantTurnIntegrationConnects,
   type AssistantTurnPendingIntegration,
 } from "./IntegrationConnectCard";
+import {
+  AssistantTurnIntegrationProposals,
+  type AssistantTurnProposedIntegration,
+} from "./IntegrationProposalCard";
 import { TraceStepGroup } from "./TraceStepGroup";
 import { LiveStatusLine } from "./status";
 
@@ -49,12 +52,9 @@ export const AssistantTurn = memo(AssistantTurnComponent, (prev, next) =>
   prev.tone === next.tone &&
   prev.segments === next.segments &&
   prev.executionItems === next.executionItems &&
-  prev.memoryProposals === next.memoryProposals &&
   prev.outputs === next.outputs &&
   prev.pendingIntegrations === next.pendingIntegrations &&
-  prev.memoryProposalAction === next.memoryProposalAction &&
-  prev.editingMemoryProposalId === next.editingMemoryProposalId &&
-  prev.memoryProposalDrafts === next.memoryProposalDrafts &&
+  prev.proposedIntegrations === next.proposedIntegrations &&
   prev.collapsedTraceByStepId === next.collapsedTraceByStepId &&
   prev.live === next.live &&
   prev.status === next.status &&
@@ -71,17 +71,11 @@ function AssistantTurnComponent({
   tone = "default",
   segments,
   executionItems,
-  memoryProposals,
   outputs,
   pendingIntegrations = [],
+  proposedIntegrations = [],
   onAfterIntegrationBind,
-  memoryProposalAction,
-  editingMemoryProposalId,
-  memoryProposalDrafts,
-  onEditMemoryProposal,
-  onMemoryProposalDraftChange,
-  onAcceptMemoryProposal,
-  onDismissMemoryProposal,
+  onAfterIntegrationProposalConnected,
   onOpenOutput,
   onOpenAllArtifacts,
   collapsedTraceByStepId,
@@ -104,22 +98,11 @@ function AssistantTurnComponent({
   tone?: ChatMessage["tone"];
   segments: ChatAssistantSegment[];
   executionItems: ChatExecutionTimelineItem[];
-  memoryProposals: MemoryUpdateProposalRecordPayload[];
   outputs: WorkspaceOutputRecordPayload[];
   pendingIntegrations?: AssistantTurnPendingIntegration[];
+  proposedIntegrations?: AssistantTurnProposedIntegration[];
   onAfterIntegrationBind?: () => void;
-  memoryProposalAction: {
-    proposalId: string;
-    action: "accept" | "dismiss";
-  } | null;
-  editingMemoryProposalId: string | null;
-  memoryProposalDrafts: Record<string, string>;
-  onEditMemoryProposal: (proposalId: string) => void;
-  onMemoryProposalDraftChange: (proposalId: string, value: string) => void;
-  onAcceptMemoryProposal: (proposal: MemoryUpdateProposalRecordPayload) => void;
-  onDismissMemoryProposal: (
-    proposal: MemoryUpdateProposalRecordPayload,
-  ) => void;
+  onAfterIntegrationProposalConnected?: (toolkitSlug: string) => void;
   onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
   onOpenAllArtifacts: (outputs: WorkspaceOutputRecordPayload[]) => void;
   collapsedTraceByStepId: Record<string, boolean>;
@@ -266,12 +249,15 @@ function AssistantTurnComponent({
           ) : segment.tone === "error" ? (
             <div
               key={`output-${index}`}
-              className="theme-chat-system-bubble mt-2 first:mt-0 rounded-xl border px-3 py-2.5 text-xs text-foreground"
+              className="mt-2 first:mt-0 rounded-xl border border-destructive/30 bg-destructive/[0.04] px-3 py-2.5"
             >
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
+              <div className="flex items-start gap-2.5">
+                <CircleAlert
+                  className="mt-0.5 size-3.5 shrink-0 text-destructive"
+                  strokeWidth={2}
+                />
                 <SimpleMarkdown
-                  className="chat-markdown max-w-full text-foreground"
+                  className="chat-markdown max-w-full text-foreground leading-relaxed"
                   onLinkClick={onLinkClick}
                   onLocalLinkClick={onLocalLinkClick}
                 >
@@ -308,19 +294,6 @@ function AssistantTurnComponent({
           <div className="mt-2 flex justify-start">{footerAccessory}</div>
         ) : null}
 
-        {memoryProposals.length > 0 ? (
-          <AssistantTurnMemoryProposals
-            proposals={memoryProposals}
-            proposalAction={memoryProposalAction}
-            editingProposalId={editingMemoryProposalId}
-            drafts={memoryProposalDrafts}
-            onEditProposal={onEditMemoryProposal}
-            onDraftChange={onMemoryProposalDraftChange}
-            onAcceptProposal={onAcceptMemoryProposal}
-            onDismissProposal={onDismissMemoryProposal}
-          />
-        ) : null}
-
         {outputs.length > 0 ? (
           <AssistantTurnOutputs
             outputs={outputs}
@@ -333,6 +306,14 @@ function AssistantTurnComponent({
           <AssistantTurnIntegrationConnects
             pendingIntegrations={pendingIntegrations}
             onAfterBind={onAfterIntegrationBind}
+          />
+        ) : null}
+
+        {proposedIntegrations.length > 0 ? (
+          <AssistantTurnIntegrationProposals
+            onAfterConnect={onAfterIntegrationProposalConnected}
+            proposals={proposedIntegrations}
+            workspaceId={workspaceId}
           />
         ) : null}
       </article>

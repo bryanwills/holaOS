@@ -65,6 +65,50 @@ test("workspace registry round trip uses hidden identity file", () => {
   store.close();
 });
 
+test("workspace labs are hidden from normal workspace listing", () => {
+  const root = makeTempDir("hb-state-store-lab-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const source = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Source",
+    harness: "pi",
+    status: "active"
+  });
+  const lab = store.createWorkspace({
+    workspaceId: "lab-1",
+    name: "Source Lab",
+    harness: "pi",
+    status: "active",
+    workspaceRole: "draft_lab",
+    sourceWorkspaceId: source.id,
+    labPurpose: "workspace_onboarding",
+    labStatus: "active"
+  });
+
+  assert.deepEqual(
+    store.listWorkspaces().map((record) => record.id),
+    [source.id]
+  );
+  assert.deepEqual(
+    store.listWorkspaceLabs({ sourceWorkspaceId: source.id }).map((record) => record.id),
+    [lab.id]
+  );
+  assert.equal(store.getActiveWorkspaceLab(source.id)?.id, lab.id);
+
+  store.updateWorkspace(lab.id, { status: "archived", labStatus: "merged" });
+  assert.equal(store.getActiveWorkspaceLab(source.id), null);
+  assert.deepEqual(
+    store.listWorkspaceLabs({ sourceWorkspaceId: source.id, activeOnly: true }),
+    []
+  );
+
+  store.close();
+});
+
 test("control-plane metadata lives in control-plane.db while runtime.db keeps the mirrored workspace registry", () => {
   const root = makeTempDir("hb-state-store-");
   const dbPath = path.join(root, "runtime.db");
@@ -2444,7 +2488,7 @@ test("state store lists expired claimed inputs", () => {
   store.close();
 });
 
-test("session messages preserve ascending order and include metadata placeholder", () => {
+test("session messages preserve ascending order and round trip metadata", () => {
   const root = makeTempDir("hb-state-store-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
@@ -2456,6 +2500,18 @@ test("session messages preserve ascending order and include metadata placeholder
     sessionId: "session-main",
     role: "user",
     text: "hello",
+    metadata: {
+      attachments: [
+        {
+          id: "attachment-1",
+          kind: "file",
+          name: "report.html",
+          mime_type: "text/html",
+          size_bytes: 123,
+          workspace_path: ".holaboss/input-attachments/report.html",
+        },
+      ],
+    },
     messageId: "m-1",
     createdAt: "2026-01-01T00:00:00+00:00"
   });
@@ -2464,6 +2520,7 @@ test("session messages preserve ascending order and include metadata placeholder
     sessionId: "session-main",
     role: "assistant",
     text: "hi",
+    metadata: { source: "test" },
     messageId: "m-2",
     createdAt: "2026-01-01T00:00:01+00:00"
   });
@@ -2474,14 +2531,25 @@ test("session messages preserve ascending order and include metadata placeholder
       role: "user",
       text: "hello",
       createdAt: "2026-01-01T00:00:00+00:00",
-      metadata: {}
+      metadata: {
+        attachments: [
+          {
+            id: "attachment-1",
+            kind: "file",
+            name: "report.html",
+            mime_type: "text/html",
+            size_bytes: 123,
+            workspace_path: ".holaboss/input-attachments/report.html",
+          },
+        ],
+      }
     },
     {
       id: "m-2",
       role: "assistant",
       text: "hi",
       createdAt: "2026-01-01T00:00:01+00:00",
-      metadata: {}
+      metadata: { source: "test" }
     }
   ]);
   assert.equal(
@@ -2505,7 +2573,18 @@ test("session messages preserve ascending order and include metadata placeholder
         role: "user",
         text: "hello",
         createdAt: "2026-01-01T00:00:00+00:00",
-        metadata: {}
+        metadata: {
+          attachments: [
+            {
+              id: "attachment-1",
+              kind: "file",
+              name: "report.html",
+              mime_type: "text/html",
+              size_bytes: 123,
+              workspace_path: ".holaboss/input-attachments/report.html",
+            },
+          ],
+        }
       }
     ]
   );
@@ -2523,7 +2602,18 @@ test("session messages preserve ascending order and include metadata placeholder
         role: "user",
         text: "hello",
         createdAt: "2026-01-01T00:00:00+00:00",
-        metadata: {}
+        metadata: {
+          attachments: [
+            {
+              id: "attachment-1",
+              kind: "file",
+              name: "report.html",
+              mime_type: "text/html",
+              size_bytes: 123,
+              workspace_path: ".holaboss/input-attachments/report.html",
+            },
+          ],
+        }
       }
     ],
   );
@@ -4343,4 +4433,224 @@ test("migrateRevertIntegrationConnectionsWorkspace is a no-op on a fresh DB", ()
   );
   assert.equal(cols.includes("workspace_id"), false);
   peek.close();
+});
+
+test("semantic memory substrate round trips for interaction and integration categories", () => {
+  const root = makeTempDir("hb-state-store-semantic-memory-");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceRoot = path.join(root, "workspace");
+
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Acme",
+    harness: "pi",
+    status: "active",
+  });
+
+  store.replaceSemanticMemoryTree({
+    category: "interaction",
+    workspaceId: "workspace-1",
+    treeId: "interaction:deploy-procedure",
+    nodes: [
+      {
+        nodeId: "interaction-root",
+        nodeClass: "semantic",
+        nodeKind: "workflow",
+        path: "memory/interaction/deploy-procedure/content.md",
+        title: "Deploy procedure",
+        summary: "Deployment workflow memory.",
+        bodySha256: "sha-root",
+        childCount: 2,
+        metadata: { owner: "ops" },
+      },
+      {
+        nodeId: "interaction-steps",
+        nodeClass: "semantic",
+        nodeKind: "section",
+        path: "memory/interaction/deploy-procedure/steps/content.md",
+        title: "Steps",
+        summary: "Ordered deployment steps.",
+        bodySha256: "sha-steps",
+        childCount: 1,
+        isMaterialized: true,
+        metadata: { partition: "recent" },
+      },
+      {
+        nodeId: "interaction-leaf-1",
+        nodeClass: "leaf",
+        nodeKind: "leaf",
+        sourceLeafId: "leaf-deploy-1",
+        path: "memory/interaction/deploy-procedure/steps/step-1.md",
+        title: "Run database migration",
+        summary: "Apply the production migration before restarting workers.",
+        bodySha256: "sha-leaf-1",
+        observedAt: "2026-05-24T10:00:00.000Z",
+        metadata: { source: "interaction_leaf" },
+      },
+    ],
+    edges: [
+      { parentNodeId: "interaction-root", childNodeId: "interaction-steps", position: 1 },
+      { parentNodeId: "interaction-steps", childNodeId: "interaction-leaf-1", position: 1 },
+    ],
+  });
+  store.replaceSemanticMemoryRelations({
+    category: "interaction",
+    workspaceId: "workspace-1",
+    treeId: "interaction:deploy-procedure",
+    relations: [
+      {
+        fromNodeId: "interaction-root",
+        toNodeId: "interaction-leaf-1",
+        relationType: "references",
+        metadata: { note: "workflow root references the critical step" },
+      },
+    ],
+  });
+
+  store.replaceSemanticMemoryTree({
+    category: "integration",
+    treeId: "integration:github:conn-1",
+    nodes: [
+      {
+        nodeId: "integration-root",
+        nodeClass: "semantic",
+        nodeKind: "repo",
+        path: "memory/integration/github/holaboss-ai-holaOS/content.md",
+        title: "holaboss-ai/holaOS",
+        summary: "Repository memory.",
+        bodySha256: "sha-integration-root",
+        childCount: 2,
+        metadata: { provider: "github" },
+      },
+      {
+        nodeId: "integration-issues",
+        nodeClass: "semantic",
+        nodeKind: "facet",
+        path: "memory/integration/github/holaboss-ai-holaOS/issues/content.md",
+        title: "Issues",
+        summary: "Open issue snapshots.",
+        bodySha256: "sha-integration-issues",
+        childCount: 1,
+      },
+      {
+        nodeId: "integration-leaf-1",
+        nodeClass: "leaf",
+        nodeKind: "leaf",
+        sourceLeafId: "issue-101",
+        path: "memory/integration/github/holaboss-ai-holaOS/issues/101.md",
+        title: "Issue #101",
+        summary: "Fix memory browser layout mismatch.",
+        bodySha256: "sha-integration-leaf-1",
+        observedAt: "2026-05-24T10:30:00.000Z",
+        metadata: { source: "integration_leaf" },
+      },
+    ],
+    edges: [
+      { parentNodeId: "integration-root", childNodeId: "integration-issues", position: 1 },
+      { parentNodeId: "integration-issues", childNodeId: "integration-leaf-1", position: 1 },
+    ],
+  });
+  store.replaceSemanticMemoryRelations({
+    category: "integration",
+    treeId: "integration:github:conn-1",
+    relations: [
+      {
+        fromNodeId: "integration-root",
+        toNodeId: "integration-issues",
+        relationType: "tracks",
+        metadata: { provider: "github" },
+      },
+    ],
+  });
+
+  const interactionRoot = store.getSemanticMemoryNode({
+    category: "interaction",
+    workspaceId: "workspace-1",
+    treeId: "interaction:deploy-procedure",
+    nodeId: "interaction-root",
+  });
+  assert.ok(interactionRoot);
+  assert.equal(interactionRoot.workspaceId, "workspace-1");
+  assert.equal(interactionRoot.nodeClass, "semantic");
+  assert.equal(interactionRoot.nodeKind, "workflow");
+  assert.equal(interactionRoot.childCount, 2);
+
+  const interactionStepChildren = store.listSemanticMemoryChildren({
+    category: "interaction",
+    workspaceId: "workspace-1",
+    treeId: "interaction:deploy-procedure",
+    parentNodeId: "interaction-steps",
+  });
+  assert.deepEqual(
+    interactionStepChildren.map((edge) => edge.childNodeId),
+    ["interaction-leaf-1"],
+  );
+  const interactionRelations = store.listSemanticMemoryRelations({
+    category: "interaction",
+    workspaceId: "workspace-1",
+    treeId: "interaction:deploy-procedure",
+    fromNodeId: "interaction-root",
+  });
+  assert.deepEqual(
+    interactionRelations.map((relation) => ({
+      toNodeId: relation.toNodeId,
+      relationType: relation.relationType,
+    })),
+    [{ toNodeId: "interaction-leaf-1", relationType: "references" }],
+  );
+
+  const integrationLeaf = store.getSemanticMemoryNodeByPath({
+    category: "integration",
+    path: "memory/integration/github/holaboss-ai-holaOS/issues/101.md",
+  });
+  assert.ok(integrationLeaf);
+  assert.equal(integrationLeaf.workspaceId, null);
+  assert.equal(integrationLeaf.sourceLeafId, "issue-101");
+
+  const integrationSemanticNodes = store.listSemanticMemoryNodes({
+    category: "integration",
+    treeId: "integration:github:conn-1",
+    nodeClass: "semantic",
+  });
+  assert.deepEqual(
+    integrationSemanticNodes.map((node) => node.nodeId),
+    ["integration-root", "integration-issues"],
+  );
+
+  store.close();
+
+  const reopened = new RuntimeStateStore({ dbPath, workspaceRoot });
+  const reopenedInteractionLeaf = reopened.getSemanticMemoryNode({
+    category: "interaction",
+    workspaceId: "workspace-1",
+    treeId: "interaction:deploy-procedure",
+    nodeId: "interaction-leaf-1",
+  });
+  assert.ok(reopenedInteractionLeaf);
+  assert.equal(reopenedInteractionLeaf.sourceLeafId, "leaf-deploy-1");
+
+  const reopenedIntegrationChildren = reopened.listSemanticMemoryChildren({
+    category: "integration",
+    treeId: "integration:github:conn-1",
+    parentNodeId: "integration-root",
+  });
+  assert.deepEqual(
+    reopenedIntegrationChildren.map((edge) => edge.childNodeId),
+    ["integration-issues"],
+  );
+  const reopenedIntegrationRelations = reopened.listSemanticMemoryRelations({
+    category: "integration",
+    treeId: "integration:github:conn-1",
+    fromNodeId: "integration-root",
+  });
+  assert.deepEqual(
+    reopenedIntegrationRelations.map((relation) => ({
+      toNodeId: relation.toNodeId,
+      relationType: relation.relationType,
+      provider: relation.metadata.provider,
+    })),
+    [{ toNodeId: "integration-issues", relationType: "tracks", provider: "github" }],
+  );
+  reopened.close();
 });

@@ -112,7 +112,11 @@ export interface WorkspaceRecord {
   harness: string | null;
   errorMessage: string | null;
   onboardingStatus: string;
+  onboardingState: string | null;
   onboardingSessionId: string | null;
+  onboardingAlignmentQuestion: string | null;
+  onboardingAlignmentReport: string | null;
+  onboardingVerificationReport: string | null;
   onboardingCompletedAt: string | null;
   onboardingCompletionSummary: string | null;
   onboardingRequestedAt: string | null;
@@ -122,6 +126,10 @@ export interface WorkspaceRecord {
   deletedAtUtc: string | null;
   icon: string | null;
   iconColor: string | null;
+  workspaceRole: string;
+  sourceWorkspaceId: string | null;
+  labPurpose: string | null;
+  labStatus: string | null;
 }
 
 export interface AgentSessionRecord {
@@ -174,6 +182,10 @@ export interface IntegrationConnectionRecord {
    */
   accountHandle: string | null;
   accountEmail: string | null;
+  contextCronAutoFetchEnabled: boolean;
+  lastContextFetchAttemptedAt: string | null;
+  lastContextFetchCompletedAt: string | null;
+  lastContextFetchStatus: string | null;
   authMode: string;
   grantedScopes: string[];
   status: string;
@@ -190,6 +202,17 @@ export interface IntegrationBindingRecord {
   integrationKey: string;
   connectionId: string;
   isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type WorkspaceIntegrationOverrideState = "disabled" | "pinned";
+
+export interface WorkspaceIntegrationOverrideRecord {
+  workspaceId: string;
+  toolkitSlug: string;
+  state: WorkspaceIntegrationOverrideState;
+  pinnedConnectionId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -476,6 +499,174 @@ export interface MemoryVectorSearchResult {
   memoryType: string;
 }
 
+export type InteractionEntityType =
+  | "project"
+  | "workflow"
+  | "preference"
+  | "identity"
+  | "person"
+  | "customer"
+  | "system"
+  | "misc";
+export type InteractionEntityStatus = "active" | "archived";
+export type InteractionLeafStatus = "active" | "superseded" | "archived";
+export type InteractionTreeChildKind = "leaf" | "summary";
+export type IntegrationTreeStatus = "active" | "archived";
+export type IntegrationLeafStatus = "active" | "superseded" | "archived";
+export type MemoryNodeKind = "tree" | "entity" | "branch" | "summary" | "leaf";
+export type MemoryNodeStatus = "active" | "superseded" | "retired" | "archived";
+export type SemanticMemoryCategory = "interaction" | "integration";
+export type SemanticMemoryNodeClass = "semantic" | "leaf";
+
+export interface InteractionEntityRecord {
+  workspaceId: string;
+  entityId: string;
+  entityType: InteractionEntityType;
+  canonicalName: string;
+  slug: string;
+  summary: string | null;
+  aliases: string[];
+  isSystem: boolean;
+  status: InteractionEntityStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InteractionLeafRecord {
+  workspaceId: string;
+  leafId: string;
+  entityId: string;
+  subjectKey: string;
+  path: string;
+  title: string;
+  summary: string;
+  fingerprint: string;
+  bodySha256: string;
+  tags: string[];
+  secondaryEntityIds: string[];
+  sourceType: string | null;
+  sourceEventId: string | null;
+  sourceMessageId: string | null;
+  sourceTurnInputId: string | null;
+  admissionConfidence: number | null;
+  entityConfidence: number | null;
+  observedAt: string | null;
+  supersedesLeafId: string | null;
+  supersededAt: string | null;
+  status: InteractionLeafStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InteractionNodeEmbeddingRecord {
+  workspaceId: string;
+  nodeKind: InteractionTreeChildKind;
+  nodeId: string;
+  entityId: string;
+  embeddingModel: string;
+  contentFingerprint: string;
+  dimensions: number;
+  vector: number[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IntegrationTreeRecord {
+  treeId: string;
+  provider: string;
+  ownerUserId: string;
+  accountKey: string;
+  accountLabel: string;
+  slug: string;
+  summary: string | null;
+  status: IntegrationTreeStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IntegrationLeafRecord {
+  leafId: string;
+  treeId: string;
+  subjectKey: string;
+  entityKey: string | null;
+  entityLabel: string | null;
+  branchKey: string | null;
+  branchLabel: string | null;
+  path: string;
+  title: string;
+  summary: string;
+  fingerprint: string;
+  bodySha256: string;
+  tags: string[];
+  sourceType: string | null;
+  sourceEventId: string | null;
+  sourceMessageId: string | null;
+  externalObjectId: string | null;
+  externalObjectType: string | null;
+  admissionConfidence: number | null;
+  observedAt: string | null;
+  supersedesLeafId: string | null;
+  supersededAt: string | null;
+  status: IntegrationLeafStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IntegrationNodeEmbeddingRecord {
+  nodeKind: InteractionTreeChildKind;
+  nodeId: string;
+  treeId: string;
+  embeddingModel: string;
+  contentFingerprint: string;
+  dimensions: number;
+  vector: number[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SemanticMemoryNodeRecord {
+  workspaceId: string | null;
+  category: SemanticMemoryCategory;
+  treeId: string;
+  nodeId: string;
+  nodeClass: SemanticMemoryNodeClass;
+  nodeKind: string;
+  sourceLeafId: string | null;
+  path: string;
+  title: string;
+  summary: string;
+  bodySha256: string;
+  childCount: number;
+  observedAt: string | null;
+  status: MemoryNodeStatus;
+  isMaterialized: boolean;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SemanticMemoryContainmentEdgeRecord {
+  workspaceId: string | null;
+  category: SemanticMemoryCategory;
+  treeId: string;
+  parentNodeId: string;
+  childNodeId: string;
+  position: number;
+  createdAt: string;
+}
+
+export interface SemanticMemoryRelationRecord {
+  workspaceId: string | null;
+  category: SemanticMemoryCategory;
+  treeId: string;
+  fromNodeId: string;
+  toNodeId: string;
+  relationType: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface OutputFolderRecord {
   id: string;
   workspaceId: string;
@@ -688,8 +879,16 @@ export interface CreateWorkspaceParams {
   harness: string;
   status?: string;
   onboardingStatus?: string;
+  onboardingState?: string | null;
   onboardingSessionId?: string | null;
+  onboardingAlignmentQuestion?: string | null;
+  onboardingAlignmentReport?: string | null;
+  onboardingVerificationReport?: string | null;
   errorMessage?: string | null;
+  workspaceRole?: string;
+  sourceWorkspaceId?: string | null;
+  labPurpose?: string | null;
+  labStatus?: string | null;
   /**
    * Optional absolute path to use as the workspace's on-disk directory.
    * When omitted, the workspace is placed under the runtime's managed
@@ -722,13 +921,21 @@ type WorkspaceUpdateFields = Partial<{
   errorMessage: string | null;
   deletedAtUtc: string | null;
   onboardingStatus: string | null;
+  onboardingState: string | null;
   onboardingSessionId: string | null;
+  onboardingAlignmentQuestion: string | null;
+  onboardingAlignmentReport: string | null;
+  onboardingVerificationReport: string | null;
   onboardingCompletedAt: string | null;
   onboardingCompletionSummary: string | null;
   onboardingRequestedAt: string | null;
   onboardingRequestedBy: string | null;
   icon: string | null;
   iconColor: string | null;
+  workspaceRole: string | null;
+  sourceWorkspaceId: string | null;
+  labPurpose: string | null;
+  labStatus: string | null;
 }>;
 
 type AgentSessionUpdateFields = Partial<{
@@ -873,7 +1080,11 @@ type WorkspaceRow = {
   harness: string | null;
   error_message: string | null;
   onboarding_status: string;
+  onboarding_state: string | null;
   onboarding_session_id: string | null;
+  onboarding_alignment_question: string | null;
+  onboarding_alignment_report: string | null;
+  onboarding_verification_report: string | null;
   onboarding_completed_at: string | null;
   onboarding_completion_summary: string | null;
   onboarding_requested_at: string | null;
@@ -883,6 +1094,10 @@ type WorkspaceRow = {
   deleted_at_utc: string | null;
   icon: string | null;
   icon_color: string | null;
+  workspace_role: string | null;
+  source_workspace_id: string | null;
+  lab_purpose: string | null;
+  lab_status: string | null;
 };
 
 const TASK_PROPOSAL_SOURCES = new Set<TaskProposalSource>(["proactive", "evolve"]);
@@ -1280,19 +1495,49 @@ export class RuntimeStateStore {
     const rows = this.controlPlaneDb()
       .prepare<[], WorkspaceRow>(`
         SELECT id, workspace_path, name, status, harness, error_message,
-               onboarding_status, onboarding_session_id, onboarding_completed_at,
+               onboarding_status, onboarding_state, onboarding_session_id,
+               onboarding_alignment_question, onboarding_alignment_report, onboarding_verification_report, onboarding_completed_at,
                onboarding_completion_summary, onboarding_requested_at, onboarding_requested_by,
-               created_at, updated_at, deleted_at_utc, icon, icon_color
+               created_at, updated_at, deleted_at_utc, icon, icon_color,
+               workspace_role, source_workspace_id, lab_purpose, lab_status
         FROM workspaces
         ORDER BY updated_at DESC, created_at DESC, id DESC
       `)
       .all();
 
     const items = rows.map((row) => this.rowToWorkspace(row));
-    if (options.includeDeleted) {
-      return items;
-    }
-    return items.filter((record) => !record.deletedAtUtc);
+    return items.filter(
+      (record) =>
+        (options.includeDeleted || !record.deletedAtUtc) &&
+        record.workspaceRole !== "draft_lab",
+    );
+  }
+
+  listWorkspaceLabs(params: { sourceWorkspaceId: string; activeOnly?: boolean }): WorkspaceRecord[] {
+    this.ensureWorkspaceMetadataReady();
+    const rows = this.controlPlaneDb()
+      .prepare<[string], WorkspaceRow>(`
+        SELECT id, workspace_path, name, status, harness, error_message,
+               onboarding_status, onboarding_state, onboarding_session_id,
+               onboarding_alignment_question, onboarding_alignment_report, onboarding_verification_report, onboarding_completed_at,
+               onboarding_completion_summary, onboarding_requested_at, onboarding_requested_by,
+               created_at, updated_at, deleted_at_utc, icon, icon_color,
+               workspace_role, source_workspace_id, lab_purpose, lab_status
+        FROM workspaces
+        WHERE workspace_role = 'draft_lab'
+          AND source_workspace_id = ?
+          AND deleted_at_utc IS NULL
+        ORDER BY updated_at DESC, created_at DESC, id DESC
+      `)
+      .all(params.sourceWorkspaceId);
+    const labs = rows.map((row) => this.rowToWorkspace(row));
+    return params.activeOnly
+      ? labs.filter((lab) => lab.labStatus === "active" && lab.status === "active")
+      : labs;
+  }
+
+  getActiveWorkspaceLab(sourceWorkspaceId: string): WorkspaceRecord | null {
+    return this.listWorkspaceLabs({ sourceWorkspaceId, activeOnly: true })[0] ?? null;
   }
 
   getWorkspace(workspaceId: string, options: { includeDeleted?: boolean } = {}): WorkspaceRecord | null {
@@ -1300,9 +1545,11 @@ export class RuntimeStateStore {
     const row = this.controlPlaneDb()
       .prepare<[string], WorkspaceRow>(`
         SELECT id, workspace_path, name, status, harness, error_message,
-               onboarding_status, onboarding_session_id, onboarding_completed_at,
+               onboarding_status, onboarding_state, onboarding_session_id,
+               onboarding_alignment_question, onboarding_alignment_report, onboarding_verification_report, onboarding_completed_at,
                onboarding_completion_summary, onboarding_requested_at, onboarding_requested_by,
-               created_at, updated_at, deleted_at_utc, icon, icon_color
+               created_at, updated_at, deleted_at_utc, icon, icon_color,
+               workspace_role, source_workspace_id, lab_purpose, lab_status
         FROM workspaces
         WHERE id = ?
         LIMIT 1
@@ -1340,7 +1587,11 @@ export class RuntimeStateStore {
       harness: params.harness,
       errorMessage: params.errorMessage ?? null,
       onboardingStatus: params.onboardingStatus ?? "not_required",
+      onboardingState: params.onboardingState ?? null,
       onboardingSessionId: params.onboardingSessionId ?? null,
+      onboardingAlignmentQuestion: params.onboardingAlignmentQuestion ?? null,
+      onboardingAlignmentReport: params.onboardingAlignmentReport ?? null,
+      onboardingVerificationReport: params.onboardingVerificationReport ?? null,
       onboardingCompletedAt: null,
       onboardingCompletionSummary: null,
       onboardingRequestedAt: null,
@@ -1349,7 +1600,11 @@ export class RuntimeStateStore {
       updatedAt: now,
       deletedAtUtc: null,
       icon: null,
-      iconColor: null
+      iconColor: null,
+      workspaceRole: params.workspaceRole ?? "source",
+      sourceWorkspaceId: params.sourceWorkspaceId ?? null,
+      labPurpose: params.labPurpose ?? null,
+      labStatus: params.labStatus ?? null
     };
 
     const workspacePath = this.resolveCreateWorkspacePath(params.workspacePath, workspaceId);
@@ -1565,8 +1820,20 @@ export class RuntimeStateStore {
         case "onboardingStatus":
           next.onboardingStatus = value as string;
           break;
+        case "onboardingState":
+          next.onboardingState = value as string | null;
+          break;
         case "onboardingSessionId":
           next.onboardingSessionId = value as string | null;
+          break;
+        case "onboardingAlignmentQuestion":
+          next.onboardingAlignmentQuestion = value as string | null;
+          break;
+        case "onboardingAlignmentReport":
+          next.onboardingAlignmentReport = value as string | null;
+          break;
+        case "onboardingVerificationReport":
+          next.onboardingVerificationReport = value as string | null;
           break;
         case "onboardingCompletedAt":
           next.onboardingCompletedAt = value as string | null;
@@ -1585,6 +1852,18 @@ export class RuntimeStateStore {
           break;
         case "iconColor":
           next.iconColor = value as string | null;
+          break;
+        case "workspaceRole":
+          next.workspaceRole = (value as string | null) || "source";
+          break;
+        case "sourceWorkspaceId":
+          next.sourceWorkspaceId = value as string | null;
+          break;
+        case "labPurpose":
+          next.labPurpose = value as string | null;
+          break;
+        case "labStatus":
+          next.labStatus = value as string | null;
           break;
         default:
           throw new Error(`unsupported workspace update field: ${typedKey}`);
@@ -3249,6 +3528,10 @@ export class RuntimeStateStore {
     accountExternalId?: string | null;
     accountHandle?: string | null;
     accountEmail?: string | null;
+    contextCronAutoFetchEnabled?: boolean;
+    lastContextFetchAttemptedAt?: string | null;
+    lastContextFetchCompletedAt?: string | null;
+    lastContextFetchStatus?: string | null;
     authMode: string;
     grantedScopes: string[];
     status: string;
@@ -3260,8 +3543,10 @@ export class RuntimeStateStore {
         INSERT INTO integration_connections (
             connection_id, provider_id, owner_user_id, account_label, account_external_id,
             account_handle, account_email,
+            context_cron_auto_fetch_enabled, last_context_fetch_attempted_at,
+            last_context_fetch_completed_at, last_context_fetch_status,
             auth_mode, granted_scopes, status, secret_ref, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(connection_id) DO UPDATE SET
             provider_id = excluded.provider_id,
             owner_user_id = excluded.owner_user_id,
@@ -3269,6 +3554,10 @@ export class RuntimeStateStore {
             account_external_id = excluded.account_external_id,
             account_handle = excluded.account_handle,
             account_email = excluded.account_email,
+            context_cron_auto_fetch_enabled = excluded.context_cron_auto_fetch_enabled,
+            last_context_fetch_attempted_at = excluded.last_context_fetch_attempted_at,
+            last_context_fetch_completed_at = excluded.last_context_fetch_completed_at,
+            last_context_fetch_status = excluded.last_context_fetch_status,
             auth_mode = excluded.auth_mode,
             granted_scopes = excluded.granted_scopes,
             status = excluded.status,
@@ -3283,6 +3572,14 @@ export class RuntimeStateStore {
         params.accountExternalId ?? null,
         normalizeIdentityValue(params.accountHandle),
         normalizeIdentityValue(params.accountEmail),
+        params.contextCronAutoFetchEnabled === undefined
+          ? 1
+          : params.contextCronAutoFetchEnabled
+            ? 1
+            : 0,
+        params.lastContextFetchAttemptedAt ?? null,
+        params.lastContextFetchCompletedAt ?? null,
+        params.lastContextFetchStatus ?? null,
         params.authMode,
         JSON.stringify(params.grantedScopes ?? []),
         params.status,
@@ -3488,6 +3785,94 @@ export class RuntimeStateStore {
   deleteIntegrationBinding(bindingId: string): boolean {
     const result = this.controlPlaneDb().prepare("DELETE FROM integration_bindings WHERE binding_id = ?").run(bindingId);
     return result.changes > 0;
+  }
+
+  listWorkspaceIntegrationOverrides(params: { workspaceId: string }): WorkspaceIntegrationOverrideRecord[] {
+    const rows = this.controlPlaneDb()
+      .prepare<[string], Record<string, unknown>>(
+        "SELECT * FROM workspace_integration_overrides WHERE workspace_id = ? ORDER BY toolkit_slug ASC",
+      )
+      .all(params.workspaceId);
+    return rows.map((row) => this.workspaceIntegrationOverrideRowToRecord(row));
+  }
+
+  listAllWorkspaceIntegrationOverrides(): WorkspaceIntegrationOverrideRecord[] {
+    const rows = this.controlPlaneDb()
+      .prepare<[], Record<string, unknown>>(
+        "SELECT * FROM workspace_integration_overrides ORDER BY workspace_id, toolkit_slug ASC",
+      )
+      .all();
+    return rows.map((row) => this.workspaceIntegrationOverrideRowToRecord(row));
+  }
+
+  getWorkspaceIntegrationOverride(params: {
+    workspaceId: string;
+    toolkitSlug: string;
+  }): WorkspaceIntegrationOverrideRecord | null {
+    const row = this.controlPlaneDb()
+      .prepare<[string, string], Record<string, unknown>>(
+        "SELECT * FROM workspace_integration_overrides WHERE workspace_id = ? AND toolkit_slug = ? LIMIT 1",
+      )
+      .get(params.workspaceId, params.toolkitSlug);
+    return row ? this.workspaceIntegrationOverrideRowToRecord(row) : null;
+  }
+
+  upsertWorkspaceIntegrationOverride(params: {
+    workspaceId: string;
+    toolkitSlug: string;
+    state: WorkspaceIntegrationOverrideState;
+    pinnedConnectionId?: string | null;
+  }): WorkspaceIntegrationOverrideRecord {
+    const now = utcNowIso();
+    const pinnedConnectionId =
+      params.state === "pinned" ? (params.pinnedConnectionId ?? null) : null;
+    this.controlPlaneDb()
+      .prepare(
+        `INSERT INTO workspace_integration_overrides (workspace_id, toolkit_slug, state, pinned_connection_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (workspace_id, toolkit_slug) DO UPDATE SET
+           state = excluded.state,
+           pinned_connection_id = excluded.pinned_connection_id,
+           updated_at = excluded.updated_at`,
+      )
+      .run(params.workspaceId, params.toolkitSlug, params.state, pinnedConnectionId, now, now);
+    const record = this.getWorkspaceIntegrationOverride({
+      workspaceId: params.workspaceId,
+      toolkitSlug: params.toolkitSlug,
+    });
+    if (!record) {
+      throw new Error("workspace_integration_overrides upsert returned no row");
+    }
+    return record;
+  }
+
+  deleteWorkspaceIntegrationOverride(params: {
+    workspaceId: string;
+    toolkitSlug: string;
+  }): boolean {
+    const result = this.controlPlaneDb()
+      .prepare(
+        "DELETE FROM workspace_integration_overrides WHERE workspace_id = ? AND toolkit_slug = ?",
+      )
+      .run(params.workspaceId, params.toolkitSlug);
+    return result.changes > 0;
+  }
+
+  private workspaceIntegrationOverrideRowToRecord(
+    row: Record<string, unknown>,
+  ): WorkspaceIntegrationOverrideRecord {
+    const state = row.state as string;
+    return {
+      workspaceId: String(row.workspace_id ?? ""),
+      toolkitSlug: String(row.toolkit_slug ?? ""),
+      state: state === "pinned" ? "pinned" : "disabled",
+      pinnedConnectionId:
+        typeof row.pinned_connection_id === "string" && row.pinned_connection_id.length > 0
+          ? row.pinned_connection_id
+          : null,
+      createdAt: String(row.created_at ?? ""),
+      updatedAt: String(row.updated_at ?? ""),
+    };
   }
 
   upsertOAuthAppConfig(params: {
@@ -3751,6 +4136,28 @@ export class RuntimeStateStore {
       workspaceId: params.workspaceId,
       inputId: params.inputId,
     });
+  }
+
+  // Returns every QUEUED input across visible workspace runtime dbs whose
+  // available_at is still in the future — i.e. inputs that were deferred
+  // by a gate (waiting on user OAuth, throttle, etc.). Used by the
+  // integration-proposal gate's wake-up sweep to find rows that can now
+  // be re-promoted to available.
+  listDeferredQueuedInputs(): SessionInputRecord[] {
+    const nowIso = new Date().toISOString();
+    const rows = this.listReadableWorkspaceRuntimeDbs().flatMap(({ db }) => {
+      return db
+        .prepare<[string], Record<string, unknown>>(`
+          SELECT *
+          FROM agent_session_inputs
+          WHERE status = 'QUEUED'
+            AND datetime(available_at) > datetime(?)
+        `)
+        .all(nowIso);
+    });
+    return rows
+      .map((row) => this.rowToInput(row))
+      .filter((record): record is SessionInputRecord => record !== null);
   }
 
   claimInputs(params: {
@@ -4361,14 +4768,15 @@ export class RuntimeStateStore {
     sessionId: string;
     role: string;
     text: string;
+    metadata?: Record<string, unknown> | null;
     messageId?: string;
     createdAt?: string;
   }): void {
     this.workspaceRuntimeDb(params.workspaceId)
       .prepare(`
         INSERT OR REPLACE INTO session_messages (
-            id, workspace_id, session_id, role, text, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
+            id, workspace_id, session_id, role, text, metadata, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         params.messageId ?? randomUUID(),
@@ -4376,6 +4784,7 @@ export class RuntimeStateStore {
         params.sessionId,
         params.role,
         params.text,
+        JSON.stringify(params.metadata ?? {}),
         params.createdAt ?? utcNowIso()
       );
   }
@@ -4408,7 +4817,7 @@ export class RuntimeStateStore {
     order?: "asc" | "desc";
   }): SessionMessageRecord[] {
     let query = `
-      SELECT id, role, text, created_at
+      SELECT id, role, text, metadata, created_at
       FROM session_messages
       WHERE workspace_id = ? AND session_id = ?
     `;
@@ -4424,14 +4833,14 @@ export class RuntimeStateStore {
       values.push(params.limit ?? -1, params.offset ?? 0);
     }
     const rows = this.workspaceRuntimeDb(params.workspaceId)
-      .prepare<typeof values, { id: string; role: string; text: string; created_at: string }>(query)
+      .prepare<typeof values, { id: string; role: string; text: string; metadata: string; created_at: string }>(query)
       .all(...values);
     return rows.map((row) => ({
       id: row.id,
       role: row.role,
       text: row.text,
       createdAt: row.created_at,
-      metadata: {}
+      metadata: this.parseJsonDict(row.metadata)
     }));
   }
 
@@ -4974,6 +5383,7 @@ export class RuntimeStateStore {
     sessionId: string;
     inputId?: string;
     status?: string;
+    order?: "asc" | "desc";
     limit?: number;
     offset?: number;
   }): TurnResultRecord[] {
@@ -4992,13 +5402,43 @@ export class RuntimeStateStore {
       query += " AND status = ?";
       values.push(params.status);
     }
+    const order = params.order === "asc" ? "ASC" : "DESC";
     query += `
-      ORDER BY datetime(COALESCE(completed_at, started_at)) DESC, created_at DESC, input_id DESC
+      ORDER BY datetime(COALESCE(completed_at, started_at)) ${order}, created_at ${order}, input_id ${order}
       LIMIT ? OFFSET ?
     `;
     values.push(params.limit ?? 100, params.offset ?? 0);
     const rows = this.workspaceRuntimeDb(params.workspaceId).prepare(query).all(...values) as Array<Record<string, unknown>>;
     return rows.map((row) => this.rowToTurnResult(row));
+  }
+
+  getWorkspaceRuntimeMetadata(params: {
+    workspaceId: string;
+    key: string;
+  }): string | null {
+    const row = this.workspaceRuntimeDb(params.workspaceId)
+      .prepare<[string], { value?: string }>("SELECT value FROM workspace_runtime_metadata WHERE key = ? LIMIT 1")
+      .get(params.key);
+    return typeof row?.value === "string" ? row.value : null;
+  }
+
+  setWorkspaceRuntimeMetadata(params: {
+    workspaceId: string;
+    key: string;
+    value: string;
+    updatedAt?: string;
+  }): void {
+    this.workspaceRuntimeDb(params.workspaceId)
+      .prepare(
+        `
+          INSERT INTO workspace_runtime_metadata (key, value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = excluded.updated_at
+        `,
+      )
+      .run(params.key, params.value, params.updatedAt ?? utcNowIso());
   }
 
   getRuntimeUserProfile(params: { profileId?: string } = {}): RuntimeUserProfileRecord | null {
@@ -5323,6 +5763,1589 @@ export class RuntimeStateStore {
     });
     counts.sort((left, right) => left.workspaceId.localeCompare(right.workspaceId));
     return counts;
+  }
+
+  upsertInteractionEntity(params: {
+    workspaceId: string;
+    entityId: string;
+    entityType: InteractionEntityType;
+    canonicalName: string;
+    slug: string;
+    summary?: string | null;
+    aliases?: string[] | null;
+    isSystem?: boolean;
+    status?: InteractionEntityStatus;
+    createdAt?: string;
+    updatedAt?: string;
+  }): InteractionEntityRecord {
+    const existing = this.getInteractionEntity({
+      workspaceId: params.workspaceId,
+      entityId: params.entityId,
+    });
+    const now = params.updatedAt ?? utcNowIso();
+    const createdAt = existing?.createdAt ?? params.createdAt ?? now;
+    this.workspaceRuntimeDb(params.workspaceId)
+      .prepare(`
+        INSERT INTO interaction_entities (
+          workspace_id,
+          entity_id,
+          entity_type,
+          canonical_name,
+          slug,
+          summary,
+          aliases,
+          is_system,
+          status,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(workspace_id, entity_id) DO UPDATE SET
+          entity_type = excluded.entity_type,
+          canonical_name = excluded.canonical_name,
+          slug = excluded.slug,
+          summary = excluded.summary,
+          aliases = excluded.aliases,
+          is_system = excluded.is_system,
+          status = excluded.status,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        params.workspaceId,
+        params.entityId,
+        params.entityType,
+        params.canonicalName,
+        params.slug,
+        params.summary ?? null,
+        JSON.stringify(params.aliases ?? []),
+        params.isSystem ? 1 : 0,
+        params.status ?? "active",
+        createdAt,
+        now,
+      );
+    const record = this.getInteractionEntity({
+      workspaceId: params.workspaceId,
+      entityId: params.entityId,
+    });
+    if (!record) {
+      throw new Error("interaction entity row not found after upsert");
+    }
+    return record;
+  }
+
+  getInteractionEntity(params: {
+    workspaceId: string;
+    entityId: string;
+  }): InteractionEntityRecord | null {
+    const row = this.workspaceRuntimeDb(params.workspaceId)
+      .prepare<[string, string], Record<string, unknown>>(
+        "SELECT * FROM interaction_entities WHERE workspace_id = ? AND entity_id = ? LIMIT 1",
+      )
+      .get(params.workspaceId, params.entityId);
+    return row ? this.rowToInteractionEntity(row) : null;
+  }
+
+  getInteractionEntityBySlug(params: {
+    workspaceId: string;
+    slug: string;
+  }): InteractionEntityRecord | null {
+    const row = this.workspaceRuntimeDb(params.workspaceId)
+      .prepare<[string, string], Record<string, unknown>>(
+        "SELECT * FROM interaction_entities WHERE workspace_id = ? AND slug = ? LIMIT 1",
+      )
+      .get(params.workspaceId, params.slug);
+    return row ? this.rowToInteractionEntity(row) : null;
+  }
+
+  listInteractionEntities(params: {
+    workspaceId: string;
+    status?: InteractionEntityStatus | null;
+    includeSystem?: boolean;
+    limit?: number;
+    offset?: number;
+  }): InteractionEntityRecord[] {
+    let query = `
+      SELECT *
+      FROM interaction_entities
+      WHERE workspace_id = ?
+    `;
+    const values: Array<string | number> = [params.workspaceId];
+    if (params.status !== undefined) {
+      if (params.status === null) {
+        query += " AND status IS NULL";
+      } else {
+        query += " AND status = ?";
+        values.push(params.status);
+      }
+    }
+    if (!(params.includeSystem ?? true)) {
+      query += " AND is_system = 0";
+    }
+    query += `
+      ORDER BY updated_at DESC, created_at DESC, canonical_name COLLATE NOCASE ASC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 200, params.offset ?? 0);
+    const rows = this.workspaceRuntimeDb(params.workspaceId).prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToInteractionEntity(row));
+  }
+
+  upsertInteractionLeaf(params: {
+    workspaceId: string;
+    leafId: string;
+    entityId: string;
+    subjectKey: string;
+    path: string;
+    title: string;
+    summary: string;
+    fingerprint: string;
+    bodySha256: string;
+    tags?: string[] | null;
+    secondaryEntityIds?: string[] | null;
+    sourceType?: string | null;
+    sourceEventId?: string | null;
+    sourceMessageId?: string | null;
+    sourceTurnInputId?: string | null;
+    admissionConfidence?: number | null;
+    entityConfidence?: number | null;
+    observedAt?: string | null;
+    supersedesLeafId?: string | null;
+    supersededAt?: string | null;
+    status?: InteractionLeafStatus;
+    createdAt?: string;
+    updatedAt?: string;
+  }): InteractionLeafRecord {
+    const existing = this.getInteractionLeaf({
+      workspaceId: params.workspaceId,
+      leafId: params.leafId,
+    });
+    const now = params.updatedAt ?? utcNowIso();
+    const createdAt = existing?.createdAt ?? params.createdAt ?? now;
+    this.workspaceRuntimeDb(params.workspaceId)
+      .prepare(`
+        INSERT INTO interaction_leaves (
+          workspace_id,
+          leaf_id,
+          entity_id,
+          subject_key,
+          path,
+          title,
+          summary,
+          fingerprint,
+          body_sha256,
+          tags,
+          secondary_entity_ids,
+          source_type,
+          source_event_id,
+          source_message_id,
+          source_turn_input_id,
+          admission_confidence,
+          entity_confidence,
+          observed_at,
+          supersedes_leaf_id,
+          superseded_at,
+          status,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(workspace_id, leaf_id) DO UPDATE SET
+          entity_id = excluded.entity_id,
+          subject_key = excluded.subject_key,
+          path = excluded.path,
+          title = excluded.title,
+          summary = excluded.summary,
+          fingerprint = excluded.fingerprint,
+          body_sha256 = excluded.body_sha256,
+          tags = excluded.tags,
+          secondary_entity_ids = excluded.secondary_entity_ids,
+          source_type = excluded.source_type,
+          source_event_id = excluded.source_event_id,
+          source_message_id = excluded.source_message_id,
+          source_turn_input_id = excluded.source_turn_input_id,
+          admission_confidence = excluded.admission_confidence,
+          entity_confidence = excluded.entity_confidence,
+          observed_at = excluded.observed_at,
+          supersedes_leaf_id = excluded.supersedes_leaf_id,
+          superseded_at = excluded.superseded_at,
+          status = excluded.status,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        params.workspaceId,
+        params.leafId,
+        params.entityId,
+        params.subjectKey,
+        params.path,
+        params.title,
+        params.summary,
+        params.fingerprint,
+        params.bodySha256,
+        JSON.stringify(params.tags ?? []),
+        JSON.stringify(params.secondaryEntityIds ?? []),
+        params.sourceType ?? null,
+        params.sourceEventId ?? null,
+        params.sourceMessageId ?? null,
+        params.sourceTurnInputId ?? null,
+        params.admissionConfidence ?? null,
+        params.entityConfidence ?? null,
+        params.observedAt ?? null,
+        params.supersedesLeafId ?? null,
+        params.supersededAt ?? null,
+        params.status ?? "active",
+        createdAt,
+        now,
+      );
+    const record = this.getInteractionLeaf({
+      workspaceId: params.workspaceId,
+      leafId: params.leafId,
+    });
+    if (!record) {
+      throw new Error("interaction leaf row not found after upsert");
+    }
+    return record;
+  }
+
+  getInteractionLeaf(params: {
+    workspaceId: string;
+    leafId: string;
+  }): InteractionLeafRecord | null {
+    const row = this.workspaceRuntimeDb(params.workspaceId)
+      .prepare<[string, string], Record<string, unknown>>(
+        "SELECT * FROM interaction_leaves WHERE workspace_id = ? AND leaf_id = ? LIMIT 1",
+      )
+      .get(params.workspaceId, params.leafId);
+    return row ? this.rowToInteractionLeaf(row) : null;
+  }
+
+  getInteractionLeafByPath(params: {
+    workspaceId: string;
+    path: string;
+  }): InteractionLeafRecord | null {
+    const row = this.workspaceRuntimeDb(params.workspaceId)
+      .prepare<[string, string], Record<string, unknown>>(
+        "SELECT * FROM interaction_leaves WHERE workspace_id = ? AND path = ? LIMIT 1",
+      )
+      .get(params.workspaceId, params.path);
+    return row ? this.rowToInteractionLeaf(row) : null;
+  }
+
+  getInteractionLeafByFingerprint(params: {
+    workspaceId: string;
+    entityId: string;
+    fingerprint: string;
+  }): InteractionLeafRecord | null {
+    const row = this.workspaceRuntimeDb(params.workspaceId)
+      .prepare<[string, string, string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM interaction_leaves
+          WHERE workspace_id = ?
+            AND entity_id = ?
+            AND fingerprint = ?
+          ORDER BY updated_at DESC, created_at DESC
+          LIMIT 1
+        `,
+      )
+      .get(params.workspaceId, params.entityId, params.fingerprint);
+    return row ? this.rowToInteractionLeaf(row) : null;
+  }
+
+  getLatestActiveInteractionLeafBySubject(params: {
+    workspaceId: string;
+    entityId: string;
+    subjectKey: string;
+  }): InteractionLeafRecord | null {
+    const row = this.workspaceRuntimeDb(params.workspaceId)
+      .prepare<[string, string, string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM interaction_leaves
+          WHERE workspace_id = ?
+            AND entity_id = ?
+            AND subject_key = ?
+            AND status = 'active'
+          ORDER BY observed_at DESC, updated_at DESC, created_at DESC
+          LIMIT 1
+        `,
+      )
+      .get(params.workspaceId, params.entityId, params.subjectKey);
+    return row ? this.rowToInteractionLeaf(row) : null;
+  }
+
+  listInteractionLeaves(params: {
+    workspaceId: string;
+    entityId?: string | null;
+    status?: InteractionLeafStatus | null;
+    limit?: number;
+    offset?: number;
+  }): InteractionLeafRecord[] {
+    let query = `
+      SELECT *
+      FROM interaction_leaves
+      WHERE workspace_id = ?
+    `;
+    const values: Array<string | number> = [params.workspaceId];
+    if (params.entityId !== undefined) {
+      if (params.entityId === null) {
+        query += " AND entity_id IS NULL";
+      } else {
+        query += " AND entity_id = ?";
+        values.push(params.entityId);
+      }
+    }
+    if (params.status !== undefined) {
+      if (params.status === null) {
+        query += " AND status IS NULL";
+      } else {
+        query += " AND status = ?";
+        values.push(params.status);
+      }
+    }
+    query += `
+      ORDER BY COALESCE(observed_at, updated_at) DESC, created_at DESC, leaf_id ASC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 200, params.offset ?? 0);
+    const rows = this.workspaceRuntimeDb(params.workspaceId).prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToInteractionLeaf(row));
+  }
+
+  updateInteractionLeafStatus(params: {
+    workspaceId: string;
+    leafId: string;
+    status: InteractionLeafStatus;
+    supersededAt?: string | null;
+    updatedAt?: string;
+  }): InteractionLeafRecord | null {
+    const now = params.updatedAt ?? utcNowIso();
+    this.workspaceRuntimeDb(params.workspaceId)
+      .prepare(`
+        UPDATE interaction_leaves
+        SET status = ?,
+            superseded_at = ?,
+            updated_at = ?
+        WHERE workspace_id = ? AND leaf_id = ?
+      `)
+      .run(
+        params.status,
+        params.supersededAt ?? null,
+        now,
+        params.workspaceId,
+        params.leafId,
+      );
+    return this.getInteractionLeaf({
+      workspaceId: params.workspaceId,
+      leafId: params.leafId,
+    });
+  }
+
+  upsertInteractionNodeEmbedding(params: {
+    workspaceId: string;
+    nodeKind: InteractionTreeChildKind;
+    nodeId: string;
+    entityId: string;
+    embeddingModel: string;
+    contentFingerprint: string;
+    dimensions: number;
+    vector: number[];
+    createdAt?: string;
+    updatedAt?: string;
+  }): InteractionNodeEmbeddingRecord {
+    const existing = this.getInteractionNodeEmbedding({
+      workspaceId: params.workspaceId,
+      nodeKind: params.nodeKind,
+      nodeId: params.nodeId,
+      embeddingModel: params.embeddingModel,
+    });
+    const now = params.updatedAt ?? utcNowIso();
+    const createdAt = existing?.createdAt ?? params.createdAt ?? now;
+    this.workspaceRuntimeDb(params.workspaceId)
+      .prepare(`
+        INSERT INTO interaction_node_embeddings (
+          workspace_id,
+          node_kind,
+          node_id,
+          entity_id,
+          embedding_model,
+          content_fingerprint,
+          dimensions,
+          vector_json,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(workspace_id, node_kind, node_id, embedding_model) DO UPDATE SET
+          entity_id = excluded.entity_id,
+          content_fingerprint = excluded.content_fingerprint,
+          dimensions = excluded.dimensions,
+          vector_json = excluded.vector_json,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        params.workspaceId,
+        params.nodeKind,
+        params.nodeId,
+        params.entityId,
+        params.embeddingModel,
+        params.contentFingerprint,
+        params.dimensions,
+        JSON.stringify(params.vector),
+        createdAt,
+        now,
+      );
+    const record = this.getInteractionNodeEmbedding({
+      workspaceId: params.workspaceId,
+      nodeKind: params.nodeKind,
+      nodeId: params.nodeId,
+      embeddingModel: params.embeddingModel,
+    });
+    if (!record) {
+      throw new Error("interaction embedding row not found after upsert");
+    }
+    return record;
+  }
+
+  getInteractionNodeEmbedding(params: {
+    workspaceId: string;
+    nodeKind: InteractionTreeChildKind;
+    nodeId: string;
+    embeddingModel: string;
+  }): InteractionNodeEmbeddingRecord | null {
+    const row = this.workspaceRuntimeDb(params.workspaceId)
+      .prepare<[string, string, string, string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM interaction_node_embeddings
+          WHERE workspace_id = ?
+            AND node_kind = ?
+            AND node_id = ?
+            AND embedding_model = ?
+          LIMIT 1
+        `,
+      )
+      .get(params.workspaceId, params.nodeKind, params.nodeId, params.embeddingModel);
+    return row ? this.rowToInteractionNodeEmbedding(row) : null;
+  }
+
+  listInteractionNodeEmbeddings(params: {
+    workspaceId: string;
+    entityId?: string | null;
+    embeddingModel?: string | null;
+  }): InteractionNodeEmbeddingRecord[] {
+    let query = `
+      SELECT *
+      FROM interaction_node_embeddings
+      WHERE workspace_id = ?
+    `;
+    const values: Array<string | number> = [params.workspaceId];
+    if (params.entityId !== undefined) {
+      if (params.entityId === null) {
+        query += " AND entity_id IS NULL";
+      } else {
+        query += " AND entity_id = ?";
+        values.push(params.entityId);
+      }
+    }
+    if (params.embeddingModel !== undefined) {
+      if (params.embeddingModel === null) {
+        query += " AND embedding_model IS NULL";
+      } else {
+        query += " AND embedding_model = ?";
+        values.push(params.embeddingModel);
+      }
+    }
+    query += " ORDER BY updated_at DESC, created_at DESC, node_id ASC";
+    const rows = this.workspaceRuntimeDb(params.workspaceId).prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToInteractionNodeEmbedding(row));
+  }
+
+  upsertIntegrationTree(params: {
+    treeId: string;
+    provider: string;
+    ownerUserId: string;
+    accountKey: string;
+    accountLabel: string;
+    slug: string;
+    summary?: string | null;
+    status?: IntegrationTreeStatus;
+    createdAt?: string;
+    updatedAt?: string;
+  }): IntegrationTreeRecord {
+    const existing = this.getIntegrationTree({ treeId: params.treeId });
+    const now = params.updatedAt ?? utcNowIso();
+    const createdAt = existing?.createdAt ?? params.createdAt ?? now;
+    this.controlPlaneDb()
+      .prepare(`
+        INSERT INTO integration_trees (
+          tree_id,
+          provider,
+          owner_user_id,
+          account_key,
+          account_label,
+          slug,
+          summary,
+          status,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(tree_id) DO UPDATE SET
+          provider = excluded.provider,
+          owner_user_id = excluded.owner_user_id,
+          account_key = excluded.account_key,
+          account_label = excluded.account_label,
+          slug = excluded.slug,
+          summary = excluded.summary,
+          status = excluded.status,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        params.treeId,
+        params.provider,
+        params.ownerUserId,
+        params.accountKey,
+        params.accountLabel,
+        params.slug,
+        params.summary ?? null,
+        params.status ?? "active",
+        createdAt,
+        now,
+      );
+    const record = this.getIntegrationTree({ treeId: params.treeId });
+    if (!record) {
+      throw new Error("integration tree row not found after upsert");
+    }
+    return record;
+  }
+
+  getIntegrationTree(params: {
+    treeId: string;
+  }): IntegrationTreeRecord | null {
+    const row = this.controlPlaneDb()
+      .prepare<[string], Record<string, unknown>>(
+        "SELECT * FROM integration_trees WHERE tree_id = ? LIMIT 1",
+      )
+      .get(params.treeId);
+    return row ? this.rowToIntegrationTree(row) : null;
+  }
+
+  getIntegrationTreeBySlug(params: {
+    slug: string;
+  }): IntegrationTreeRecord | null {
+    const row = this.controlPlaneDb()
+      .prepare<[string], Record<string, unknown>>(
+        "SELECT * FROM integration_trees WHERE slug = ? LIMIT 1",
+      )
+      .get(params.slug);
+    return row ? this.rowToIntegrationTree(row) : null;
+  }
+
+  getIntegrationTreeByAccountIdentity(params: {
+    provider: string;
+    ownerUserId: string;
+    accountKey: string;
+  }): IntegrationTreeRecord | null {
+    const row = this.controlPlaneDb()
+      .prepare<[string, string, string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM integration_trees
+          WHERE provider = ?
+            AND owner_user_id = ?
+            AND account_key = ?
+          LIMIT 1
+        `,
+      )
+      .get(params.provider, params.ownerUserId, params.accountKey);
+    return row ? this.rowToIntegrationTree(row) : null;
+  }
+
+  listIntegrationTrees(params: {
+    status?: IntegrationTreeStatus | null;
+    provider?: string | null;
+    ownerUserId?: string | null;
+    limit?: number;
+    offset?: number;
+  } = {}): IntegrationTreeRecord[] {
+    let query = `
+      SELECT *
+      FROM integration_trees
+      WHERE 1 = 1
+    `;
+    const values: Array<string | number> = [];
+    if (params.status !== undefined) {
+      if (params.status === null) {
+        query += " AND status IS NULL";
+      } else {
+        query += " AND status = ?";
+        values.push(params.status);
+      }
+    }
+    if (params.provider !== undefined) {
+      if (params.provider === null) {
+        query += " AND provider IS NULL";
+      } else {
+        query += " AND provider = ?";
+        values.push(params.provider);
+      }
+    }
+    if (params.ownerUserId !== undefined) {
+      if (params.ownerUserId === null) {
+        query += " AND owner_user_id IS NULL";
+      } else {
+        query += " AND owner_user_id = ?";
+        values.push(params.ownerUserId);
+      }
+    }
+    query += `
+      ORDER BY updated_at DESC, created_at DESC, account_label COLLATE NOCASE ASC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 200, params.offset ?? 0);
+    const rows = this.controlPlaneDb().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToIntegrationTree(row));
+  }
+
+  upsertIntegrationLeaf(params: {
+    leafId: string;
+    treeId: string;
+    subjectKey: string;
+    entityKey?: string | null;
+    entityLabel?: string | null;
+    branchKey?: string | null;
+    branchLabel?: string | null;
+    path: string;
+    title: string;
+    summary: string;
+    fingerprint: string;
+    bodySha256: string;
+    tags?: string[] | null;
+    sourceType?: string | null;
+    sourceEventId?: string | null;
+    sourceMessageId?: string | null;
+    externalObjectId?: string | null;
+    externalObjectType?: string | null;
+    admissionConfidence?: number | null;
+    observedAt?: string | null;
+    supersedesLeafId?: string | null;
+    supersededAt?: string | null;
+    status?: IntegrationLeafStatus;
+    createdAt?: string;
+    updatedAt?: string;
+  }): IntegrationLeafRecord {
+    const existing = this.getIntegrationLeaf({ leafId: params.leafId });
+    const now = params.updatedAt ?? utcNowIso();
+    const createdAt = existing?.createdAt ?? params.createdAt ?? now;
+    this.controlPlaneDb()
+      .prepare(`
+        INSERT INTO integration_leaves (
+          leaf_id,
+          tree_id,
+          subject_key,
+          entity_key,
+          entity_label,
+          branch_key,
+          branch_label,
+          path,
+          title,
+          summary,
+          fingerprint,
+          body_sha256,
+          tags,
+          source_type,
+          source_event_id,
+          source_message_id,
+          external_object_id,
+          external_object_type,
+          admission_confidence,
+          observed_at,
+          supersedes_leaf_id,
+          superseded_at,
+          status,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(leaf_id) DO UPDATE SET
+          tree_id = excluded.tree_id,
+          subject_key = excluded.subject_key,
+          entity_key = excluded.entity_key,
+          entity_label = excluded.entity_label,
+          branch_key = excluded.branch_key,
+          branch_label = excluded.branch_label,
+          path = excluded.path,
+          title = excluded.title,
+          summary = excluded.summary,
+          fingerprint = excluded.fingerprint,
+          body_sha256 = excluded.body_sha256,
+          tags = excluded.tags,
+          source_type = excluded.source_type,
+          source_event_id = excluded.source_event_id,
+          source_message_id = excluded.source_message_id,
+          external_object_id = excluded.external_object_id,
+          external_object_type = excluded.external_object_type,
+          admission_confidence = excluded.admission_confidence,
+          observed_at = excluded.observed_at,
+          supersedes_leaf_id = excluded.supersedes_leaf_id,
+          superseded_at = excluded.superseded_at,
+          status = excluded.status,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        params.leafId,
+        params.treeId,
+        params.subjectKey,
+        params.entityKey ?? null,
+        params.entityLabel ?? null,
+        params.branchKey ?? null,
+        params.branchLabel ?? null,
+        params.path,
+        params.title,
+        params.summary,
+        params.fingerprint,
+        params.bodySha256,
+        JSON.stringify(params.tags ?? []),
+        params.sourceType ?? null,
+        params.sourceEventId ?? null,
+        params.sourceMessageId ?? null,
+        params.externalObjectId ?? null,
+        params.externalObjectType ?? null,
+        params.admissionConfidence ?? null,
+        params.observedAt ?? null,
+        params.supersedesLeafId ?? null,
+        params.supersededAt ?? null,
+        params.status ?? "active",
+        createdAt,
+        now,
+      );
+    const record = this.getIntegrationLeaf({ leafId: params.leafId });
+    if (!record) {
+      throw new Error("integration leaf row not found after upsert");
+    }
+    return record;
+  }
+
+  getIntegrationLeaf(params: {
+    leafId: string;
+  }): IntegrationLeafRecord | null {
+    const row = this.controlPlaneDb()
+      .prepare<[string], Record<string, unknown>>(
+        "SELECT * FROM integration_leaves WHERE leaf_id = ? LIMIT 1",
+      )
+      .get(params.leafId);
+    return row ? this.rowToIntegrationLeaf(row) : null;
+  }
+
+  getIntegrationLeafByPath(params: {
+    path: string;
+  }): IntegrationLeafRecord | null {
+    const row = this.controlPlaneDb()
+      .prepare<[string], Record<string, unknown>>(
+        "SELECT * FROM integration_leaves WHERE path = ? LIMIT 1",
+      )
+      .get(params.path);
+    return row ? this.rowToIntegrationLeaf(row) : null;
+  }
+
+  getIntegrationLeafByFingerprint(params: {
+    treeId: string;
+    fingerprint: string;
+  }): IntegrationLeafRecord | null {
+    const row = this.controlPlaneDb()
+      .prepare<[string, string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM integration_leaves
+          WHERE tree_id = ?
+            AND fingerprint = ?
+          ORDER BY updated_at DESC, created_at DESC
+          LIMIT 1
+        `,
+      )
+      .get(params.treeId, params.fingerprint);
+    return row ? this.rowToIntegrationLeaf(row) : null;
+  }
+
+  getLatestActiveIntegrationLeafBySubject(params: {
+    treeId: string;
+    subjectKey: string;
+  }): IntegrationLeafRecord | null {
+    const row = this.controlPlaneDb()
+      .prepare<[string, string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM integration_leaves
+          WHERE tree_id = ?
+            AND subject_key = ?
+            AND status = 'active'
+          ORDER BY observed_at DESC, updated_at DESC, created_at DESC
+          LIMIT 1
+        `,
+      )
+      .get(params.treeId, params.subjectKey);
+    return row ? this.rowToIntegrationLeaf(row) : null;
+  }
+
+  listIntegrationLeaves(params: {
+    treeId?: string | null;
+    status?: IntegrationLeafStatus | null;
+    limit?: number;
+    offset?: number;
+  } = {}): IntegrationLeafRecord[] {
+    let query = `
+      SELECT *
+      FROM integration_leaves
+      WHERE 1 = 1
+    `;
+    const values: Array<string | number> = [];
+    if (params.treeId !== undefined) {
+      if (params.treeId === null) {
+        query += " AND tree_id IS NULL";
+      } else {
+        query += " AND tree_id = ?";
+        values.push(params.treeId);
+      }
+    }
+    if (params.status !== undefined) {
+      if (params.status === null) {
+        query += " AND status IS NULL";
+      } else {
+        query += " AND status = ?";
+        values.push(params.status);
+      }
+    }
+    query += `
+      ORDER BY COALESCE(observed_at, updated_at) DESC, created_at DESC, leaf_id ASC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 200, params.offset ?? 0);
+    const rows = this.controlPlaneDb().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToIntegrationLeaf(row));
+  }
+
+  updateIntegrationLeafStatus(params: {
+    leafId: string;
+    status: IntegrationLeafStatus;
+    supersededAt?: string | null;
+    updatedAt?: string;
+  }): IntegrationLeafRecord | null {
+    const now = params.updatedAt ?? utcNowIso();
+    this.controlPlaneDb()
+      .prepare(`
+        UPDATE integration_leaves
+        SET status = ?,
+            superseded_at = ?,
+            updated_at = ?
+        WHERE leaf_id = ?
+      `)
+      .run(
+        params.status,
+        params.supersededAt ?? null,
+        now,
+        params.leafId,
+      );
+    return this.getIntegrationLeaf({ leafId: params.leafId });
+  }
+
+  replaceSemanticMemoryTree(params: {
+    category: SemanticMemoryCategory;
+    workspaceId?: string | null;
+    treeId: string;
+    nodes: Array<{
+      nodeId: string;
+      nodeClass: SemanticMemoryNodeClass;
+      nodeKind: string;
+      sourceLeafId?: string | null;
+      path: string;
+      title: string;
+      summary: string;
+      bodySha256: string;
+      childCount?: number;
+      observedAt?: string | null;
+      status?: MemoryNodeStatus;
+      isMaterialized?: boolean;
+      metadata?: Record<string, unknown> | null;
+      createdAt?: string;
+      updatedAt?: string;
+    }>;
+    edges: Array<{
+      parentNodeId: string;
+      childNodeId: string;
+      position: number;
+      createdAt?: string;
+    }>;
+  }): SemanticMemoryNodeRecord[] {
+    const scope = this.resolveSemanticMemoryScope(params.category, params.workspaceId ?? null);
+    const replace = scope.db.transaction(() => {
+      const now = utcNowIso();
+      if (scope.workspaceId !== null) {
+        scope.db.prepare(`
+          DELETE FROM semantic_memory_edges
+          WHERE workspace_id = ? AND category = ? AND tree_id = ?
+        `).run(scope.workspaceId, params.category, params.treeId);
+        scope.db.prepare(`
+          DELETE FROM semantic_memory_nodes
+          WHERE workspace_id = ? AND category = ? AND tree_id = ?
+        `).run(scope.workspaceId, params.category, params.treeId);
+
+        const insertNode = scope.db.prepare(`
+          INSERT INTO semantic_memory_nodes (
+            workspace_id,
+            category,
+            tree_id,
+            node_id,
+            node_class,
+            node_kind,
+            source_leaf_id,
+            path,
+            title,
+            summary,
+            body_sha256,
+            child_count,
+            observed_at,
+            status,
+            is_materialized,
+            metadata,
+            created_at,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const node of params.nodes) {
+          insertNode.run(
+            scope.workspaceId,
+            params.category,
+            params.treeId,
+            node.nodeId,
+            node.nodeClass,
+            node.nodeKind,
+            node.sourceLeafId ?? null,
+            node.path,
+            node.title,
+            node.summary,
+            node.bodySha256,
+            node.childCount ?? 0,
+            node.observedAt ?? null,
+            node.status ?? "active",
+            node.isMaterialized ? 1 : 0,
+            JSON.stringify(node.metadata ?? {}),
+            node.createdAt ?? now,
+            node.updatedAt ?? now,
+          );
+        }
+
+        const insertEdge = scope.db.prepare(`
+          INSERT INTO semantic_memory_edges (
+            workspace_id,
+            category,
+            tree_id,
+            parent_node_id,
+            child_node_id,
+            position,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const edge of params.edges) {
+          insertEdge.run(
+            scope.workspaceId,
+            params.category,
+            params.treeId,
+            edge.parentNodeId,
+            edge.childNodeId,
+            edge.position,
+            edge.createdAt ?? now,
+          );
+        }
+        return;
+      }
+
+      scope.db.prepare(`
+        DELETE FROM semantic_memory_edges
+        WHERE category = ? AND tree_id = ?
+      `).run(params.category, params.treeId);
+      scope.db.prepare(`
+        DELETE FROM semantic_memory_nodes
+        WHERE category = ? AND tree_id = ?
+      `).run(params.category, params.treeId);
+
+      const insertNode = scope.db.prepare(`
+        INSERT INTO semantic_memory_nodes (
+          category,
+          tree_id,
+          node_id,
+          node_class,
+          node_kind,
+          source_leaf_id,
+          path,
+          title,
+          summary,
+          body_sha256,
+          child_count,
+          observed_at,
+          status,
+          is_materialized,
+          metadata,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const node of params.nodes) {
+        insertNode.run(
+          params.category,
+          params.treeId,
+          node.nodeId,
+          node.nodeClass,
+          node.nodeKind,
+          node.sourceLeafId ?? null,
+          node.path,
+          node.title,
+          node.summary,
+          node.bodySha256,
+          node.childCount ?? 0,
+          node.observedAt ?? null,
+          node.status ?? "active",
+          node.isMaterialized ? 1 : 0,
+          JSON.stringify(node.metadata ?? {}),
+          node.createdAt ?? now,
+          node.updatedAt ?? now,
+        );
+      }
+
+      const insertEdge = scope.db.prepare(`
+        INSERT INTO semantic_memory_edges (
+          category,
+          tree_id,
+          parent_node_id,
+          child_node_id,
+          position,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      for (const edge of params.edges) {
+        insertEdge.run(
+          params.category,
+          params.treeId,
+          edge.parentNodeId,
+          edge.childNodeId,
+          edge.position,
+          edge.createdAt ?? now,
+        );
+      }
+    });
+    replace();
+    return this.listSemanticMemoryNodes({
+      category: params.category,
+      workspaceId: scope.workspaceId,
+      treeId: params.treeId,
+      status: "active",
+      limit: Math.max(200, params.nodes.length + 10),
+    });
+  }
+
+  getSemanticMemoryNode(params: {
+    category: SemanticMemoryCategory;
+    workspaceId?: string | null;
+    treeId: string;
+    nodeId: string;
+  }): SemanticMemoryNodeRecord | null {
+    const scope = this.resolveSemanticMemoryScope(params.category, params.workspaceId ?? null);
+    if (scope.workspaceId !== null) {
+      const row = scope.db
+        .prepare<[string, string, string, string], Record<string, unknown>>(
+          `
+            SELECT *
+            FROM semantic_memory_nodes
+            WHERE workspace_id = ? AND category = ? AND tree_id = ? AND node_id = ?
+            LIMIT 1
+          `,
+        )
+        .get(scope.workspaceId, params.category, params.treeId, params.nodeId);
+      return row ? this.rowToSemanticMemoryNode(row) : null;
+    }
+    const row = scope.db
+      .prepare<[string, string, string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM semantic_memory_nodes
+          WHERE category = ? AND tree_id = ? AND node_id = ?
+          LIMIT 1
+        `,
+      )
+      .get(params.category, params.treeId, params.nodeId);
+    return row ? this.rowToSemanticMemoryNode(row) : null;
+  }
+
+  getSemanticMemoryNodeByPath(params: {
+    category: SemanticMemoryCategory;
+    workspaceId?: string | null;
+    path: string;
+  }): SemanticMemoryNodeRecord | null {
+    const scope = this.resolveSemanticMemoryScope(params.category, params.workspaceId ?? null);
+    if (scope.workspaceId !== null) {
+      const row = scope.db
+        .prepare<[string, string, string], Record<string, unknown>>(
+          `
+            SELECT *
+            FROM semantic_memory_nodes
+            WHERE workspace_id = ? AND category = ? AND path = ?
+            LIMIT 1
+          `,
+        )
+        .get(scope.workspaceId, params.category, params.path);
+      return row ? this.rowToSemanticMemoryNode(row) : null;
+    }
+    const row = scope.db
+      .prepare<[string, string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM semantic_memory_nodes
+          WHERE category = ? AND path = ?
+          LIMIT 1
+        `,
+      )
+      .get(params.category, params.path);
+    return row ? this.rowToSemanticMemoryNode(row) : null;
+  }
+
+  listSemanticMemoryNodes(params: {
+    category: SemanticMemoryCategory;
+    workspaceId?: string | null;
+    treeId?: string | null;
+    nodeClass?: SemanticMemoryNodeClass | null;
+    nodeKind?: string | null;
+    status?: MemoryNodeStatus | null;
+    limit?: number;
+    offset?: number;
+  }): SemanticMemoryNodeRecord[] {
+    const scope = this.resolveSemanticMemoryScope(params.category, params.workspaceId ?? null);
+    let query = `
+      SELECT *
+      FROM semantic_memory_nodes
+      WHERE category = ?
+    `;
+    const values: Array<string | number> = [params.category];
+    if (scope.workspaceId !== null) {
+      query += " AND workspace_id = ?";
+      values.push(scope.workspaceId);
+    }
+    if (params.treeId !== undefined) {
+      if (params.treeId === null) {
+        query += " AND tree_id IS NULL";
+      } else {
+        query += " AND tree_id = ?";
+        values.push(params.treeId);
+      }
+    }
+    if (params.nodeClass !== undefined) {
+      if (params.nodeClass === null) {
+        query += " AND node_class IS NULL";
+      } else {
+        query += " AND node_class = ?";
+        values.push(params.nodeClass);
+      }
+    }
+    if (params.nodeKind !== undefined) {
+      if (params.nodeKind === null) {
+        query += " AND node_kind IS NULL";
+      } else {
+        query += " AND node_kind = ?";
+        values.push(params.nodeKind);
+      }
+    }
+    if (params.status !== undefined) {
+      if (params.status === null) {
+        query += " AND status IS NULL";
+      } else {
+        query += " AND status = ?";
+        values.push(params.status);
+      }
+    }
+    query += `
+      ORDER BY path ASC, updated_at DESC, node_id ASC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 500, params.offset ?? 0);
+    const rows = scope.db.prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToSemanticMemoryNode(row));
+  }
+
+  listSemanticMemoryChildren(params: {
+    category: SemanticMemoryCategory;
+    workspaceId?: string | null;
+    treeId: string;
+    parentNodeId: string;
+  }): SemanticMemoryContainmentEdgeRecord[] {
+    const scope = this.resolveSemanticMemoryScope(params.category, params.workspaceId ?? null);
+    if (scope.workspaceId !== null) {
+      const rows = scope.db
+        .prepare<[string, string, string, string], Record<string, unknown>>(
+          `
+            SELECT *
+            FROM semantic_memory_edges
+            WHERE workspace_id = ? AND category = ? AND tree_id = ? AND parent_node_id = ?
+            ORDER BY position ASC, child_node_id ASC
+          `,
+        )
+        .all(scope.workspaceId, params.category, params.treeId, params.parentNodeId) as Array<Record<string, unknown>>;
+      return rows.map((row) => this.rowToSemanticMemoryContainmentEdge(row));
+    }
+    const rows = scope.db
+      .prepare<[string, string, string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM semantic_memory_edges
+          WHERE category = ? AND tree_id = ? AND parent_node_id = ?
+          ORDER BY position ASC, child_node_id ASC
+        `,
+      )
+      .all(params.category, params.treeId, params.parentNodeId) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToSemanticMemoryContainmentEdge(row));
+  }
+
+  replaceSemanticMemoryRelations(params: {
+    category: SemanticMemoryCategory;
+    workspaceId?: string | null;
+    treeId: string;
+    relations: Array<{
+      fromNodeId: string;
+      toNodeId: string;
+      relationType: string;
+      metadata?: Record<string, unknown> | null;
+      createdAt?: string;
+      updatedAt?: string;
+    }>;
+  }): SemanticMemoryRelationRecord[] {
+    const scope = this.resolveSemanticMemoryScope(params.category, params.workspaceId ?? null);
+    const replace = scope.db.transaction(() => {
+      const now = utcNowIso();
+      if (scope.workspaceId !== null) {
+        scope.db.prepare(`
+          DELETE FROM semantic_memory_relations
+          WHERE workspace_id = ? AND category = ? AND tree_id = ?
+        `).run(scope.workspaceId, params.category, params.treeId);
+
+        const insertRelation = scope.db.prepare(`
+          INSERT INTO semantic_memory_relations (
+            workspace_id,
+            category,
+            tree_id,
+            from_node_id,
+            to_node_id,
+            relation_type,
+            metadata,
+            created_at,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const relation of params.relations) {
+          insertRelation.run(
+            scope.workspaceId,
+            params.category,
+            params.treeId,
+            relation.fromNodeId,
+            relation.toNodeId,
+            relation.relationType,
+            JSON.stringify(relation.metadata ?? {}),
+            relation.createdAt ?? now,
+            relation.updatedAt ?? now,
+          );
+        }
+        return;
+      }
+
+      scope.db.prepare(`
+        DELETE FROM semantic_memory_relations
+        WHERE category = ? AND tree_id = ?
+      `).run(params.category, params.treeId);
+
+      const insertRelation = scope.db.prepare(`
+        INSERT INTO semantic_memory_relations (
+          category,
+          tree_id,
+          from_node_id,
+          to_node_id,
+          relation_type,
+          metadata,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const relation of params.relations) {
+        insertRelation.run(
+          params.category,
+          params.treeId,
+          relation.fromNodeId,
+          relation.toNodeId,
+          relation.relationType,
+          JSON.stringify(relation.metadata ?? {}),
+          relation.createdAt ?? now,
+          relation.updatedAt ?? now,
+        );
+      }
+    });
+    replace();
+    return this.listSemanticMemoryRelations({
+      category: params.category,
+      workspaceId: scope.workspaceId,
+      treeId: params.treeId,
+      limit: Math.max(200, params.relations.length + 10),
+    });
+  }
+
+  listSemanticMemoryRelations(params: {
+    category: SemanticMemoryCategory;
+    workspaceId?: string | null;
+    treeId?: string | null;
+    fromNodeId?: string | null;
+    relationType?: string | null;
+    limit?: number;
+    offset?: number;
+  }): SemanticMemoryRelationRecord[] {
+    const scope = this.resolveSemanticMemoryScope(params.category, params.workspaceId ?? null);
+    let query = `
+      SELECT *
+      FROM semantic_memory_relations
+      WHERE category = ?
+    `;
+    const values: Array<string | number> = [params.category];
+    if (scope.workspaceId !== null) {
+      query += " AND workspace_id = ?";
+      values.push(scope.workspaceId);
+    }
+    if (params.treeId !== undefined) {
+      if (params.treeId === null) {
+        query += " AND tree_id IS NULL";
+      } else {
+        query += " AND tree_id = ?";
+        values.push(params.treeId);
+      }
+    }
+    if (params.fromNodeId !== undefined) {
+      if (params.fromNodeId === null) {
+        query += " AND from_node_id IS NULL";
+      } else {
+        query += " AND from_node_id = ?";
+        values.push(params.fromNodeId);
+      }
+    }
+    if (params.relationType !== undefined) {
+      if (params.relationType === null) {
+        query += " AND relation_type IS NULL";
+      } else {
+        query += " AND relation_type = ?";
+        values.push(params.relationType);
+      }
+    }
+    query += `
+      ORDER BY relation_type ASC, from_node_id ASC, to_node_id ASC, updated_at DESC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 500, params.offset ?? 0);
+    const rows = scope.db.prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToSemanticMemoryRelation(row));
+  }
+
+  deleteIntegrationTreeMemory(params: {
+    treeId: string;
+  }): {
+    deleted: boolean;
+    deletedTree: boolean;
+    deletedLeaves: number;
+    deletedSemanticNodes: number;
+    deletedSemanticEdges: number;
+    deletedSemanticRelations: number;
+    deletedEmbeddings: number;
+  } {
+    const db = this.controlPlaneDb();
+    const remove = db.transaction(() => {
+      const count = (table: string): number =>
+        Number(
+          (db
+            .prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE tree_id = ?`)
+            .get(params.treeId) as { count?: number } | undefined)?.count ?? 0,
+        );
+      const deletedLeaves = count("integration_leaves");
+      const deletedEmbeddings = count("integration_node_embeddings");
+      const deletedSemanticNodes = Number(
+        (db
+          .prepare(
+            `
+              SELECT COUNT(*) AS count
+              FROM semantic_memory_nodes
+              WHERE category = 'integration' AND tree_id = ?
+            `,
+          )
+          .get(params.treeId) as { count?: number } | undefined)?.count ?? 0,
+      );
+      const deletedSemanticRelations = Number(
+        (db
+          .prepare(
+            `
+              SELECT COUNT(*) AS count
+              FROM semantic_memory_relations
+              WHERE category = 'integration' AND tree_id = ?
+            `,
+          )
+          .get(params.treeId) as { count?: number } | undefined)?.count ?? 0,
+      );
+      const deletedSemanticEdges = Number(
+        (db
+          .prepare(
+            `
+              SELECT COUNT(*) AS count
+              FROM semantic_memory_edges
+              WHERE category = 'integration' AND tree_id = ?
+            `,
+          )
+          .get(params.treeId) as { count?: number } | undefined)?.count ?? 0,
+      );
+
+      db.prepare(`
+        DELETE FROM integration_node_embeddings
+        WHERE tree_id = ?
+      `).run(params.treeId);
+      db.prepare(`
+        DELETE FROM semantic_memory_edges
+        WHERE category = 'integration' AND tree_id = ?
+      `).run(params.treeId);
+      db.prepare(`
+        DELETE FROM semantic_memory_relations
+        WHERE category = 'integration' AND tree_id = ?
+      `).run(params.treeId);
+      db.prepare(`
+        DELETE FROM semantic_memory_nodes
+        WHERE category = 'integration' AND tree_id = ?
+      `).run(params.treeId);
+      db.prepare(`
+        DELETE FROM integration_leaves
+        WHERE tree_id = ?
+      `).run(params.treeId);
+      const deletedTree = db.prepare(`
+        DELETE FROM integration_trees
+        WHERE tree_id = ?
+      `).run(params.treeId).changes > 0;
+      return {
+        deleted: deletedTree
+          || deletedLeaves > 0
+          || deletedSemanticNodes > 0
+          || deletedSemanticRelations > 0
+          || deletedSemanticEdges > 0
+          || deletedEmbeddings > 0,
+        deletedTree,
+        deletedLeaves,
+        deletedSemanticNodes,
+        deletedSemanticEdges,
+        deletedSemanticRelations,
+        deletedEmbeddings,
+      };
+    });
+    return remove();
+  }
+
+  upsertIntegrationNodeEmbedding(params: {
+    nodeKind: InteractionTreeChildKind;
+    nodeId: string;
+    treeId: string;
+    embeddingModel: string;
+    contentFingerprint: string;
+    dimensions: number;
+    vector: number[];
+    createdAt?: string;
+    updatedAt?: string;
+  }): IntegrationNodeEmbeddingRecord {
+    const existing = this.getIntegrationNodeEmbedding({
+      nodeKind: params.nodeKind,
+      nodeId: params.nodeId,
+      embeddingModel: params.embeddingModel,
+    });
+    const now = params.updatedAt ?? utcNowIso();
+    const createdAt = existing?.createdAt ?? params.createdAt ?? now;
+    this.controlPlaneDb()
+      .prepare(`
+        INSERT INTO integration_node_embeddings (
+          node_kind,
+          node_id,
+          tree_id,
+          embedding_model,
+          content_fingerprint,
+          dimensions,
+          vector_json,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(node_kind, node_id, embedding_model) DO UPDATE SET
+          tree_id = excluded.tree_id,
+          content_fingerprint = excluded.content_fingerprint,
+          dimensions = excluded.dimensions,
+          vector_json = excluded.vector_json,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        params.nodeKind,
+        params.nodeId,
+        params.treeId,
+        params.embeddingModel,
+        params.contentFingerprint,
+        params.dimensions,
+        JSON.stringify(params.vector),
+        createdAt,
+        now,
+      );
+    const record = this.getIntegrationNodeEmbedding({
+      nodeKind: params.nodeKind,
+      nodeId: params.nodeId,
+      embeddingModel: params.embeddingModel,
+    });
+    if (!record) {
+      throw new Error("integration embedding row not found after upsert");
+    }
+    return record;
+  }
+
+  getIntegrationNodeEmbedding(params: {
+    nodeKind: InteractionTreeChildKind;
+    nodeId: string;
+    embeddingModel: string;
+  }): IntegrationNodeEmbeddingRecord | null {
+    const row = this.controlPlaneDb()
+      .prepare<[string, string, string], Record<string, unknown>>(
+        `
+          SELECT *
+          FROM integration_node_embeddings
+          WHERE node_kind = ?
+            AND node_id = ?
+            AND embedding_model = ?
+          LIMIT 1
+        `,
+      )
+      .get(params.nodeKind, params.nodeId, params.embeddingModel);
+    return row ? this.rowToIntegrationNodeEmbedding(row) : null;
+  }
+
+  listIntegrationNodeEmbeddings(params: {
+    treeId?: string | null;
+    embeddingModel?: string | null;
+  } = {}): IntegrationNodeEmbeddingRecord[] {
+    let query = `
+      SELECT *
+      FROM integration_node_embeddings
+      WHERE 1 = 1
+    `;
+    const values: Array<string | number> = [];
+    if (params.treeId !== undefined) {
+      if (params.treeId === null) {
+        query += " AND tree_id IS NULL";
+      } else {
+        query += " AND tree_id = ?";
+        values.push(params.treeId);
+      }
+    }
+    if (params.embeddingModel !== undefined) {
+      if (params.embeddingModel === null) {
+        query += " AND embedding_model IS NULL";
+      } else {
+        query += " AND embedding_model = ?";
+        values.push(params.embeddingModel);
+      }
+    }
+    query += " ORDER BY updated_at DESC, created_at DESC, node_id ASC";
+    const rows = this.controlPlaneDb().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToIntegrationNodeEmbedding(row));
   }
 
   getMemoryEmbeddingIndexByMemoryId(params: {
@@ -7223,6 +9246,25 @@ export class RuntimeStateStore {
     return databases;
   }
 
+  private resolveSemanticMemoryScope(
+    category: SemanticMemoryCategory,
+    workspaceId: string | null,
+  ): { workspaceId: string | null; db: Database.Database } {
+    if (category === "interaction") {
+      if (!workspaceId) {
+        throw new Error("semantic interaction memory requires workspaceId");
+      }
+      return {
+        workspaceId,
+        db: this.workspaceRuntimeDb(workspaceId),
+      };
+    }
+    return {
+      workspaceId: null,
+      db: this.controlPlaneDb(),
+    };
+  }
+
   private backfillControlPlaneDbFromLegacyRuntimeDb(
     db: Database.Database,
     legacy: Database.Database,
@@ -7832,6 +9874,10 @@ export class RuntimeStateStore {
           account_external_id TEXT,
           account_handle TEXT,
           account_email TEXT,
+          context_cron_auto_fetch_enabled INTEGER NOT NULL DEFAULT 1,
+          last_context_fetch_attempted_at TEXT,
+          last_context_fetch_completed_at TEXT,
+          last_context_fetch_status TEXT,
           auth_mode TEXT NOT NULL,
           granted_scopes TEXT NOT NULL DEFAULT '[]',
           status TEXT NOT NULL,
@@ -7859,6 +9905,93 @@ export class RuntimeStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_integration_bindings_workspace_updated
           ON integration_bindings (workspace_id, is_default DESC, updated_at DESC, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS integration_trees (
+          tree_id TEXT PRIMARY KEY,
+          provider TEXT NOT NULL,
+          owner_user_id TEXT NOT NULL,
+          account_key TEXT NOT NULL,
+          account_label TEXT NOT NULL,
+          slug TEXT NOT NULL UNIQUE,
+          summary TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE (provider, owner_user_id, account_key)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_integration_trees_provider_owner_status_updated
+          ON integration_trees (provider, owner_user_id, status, updated_at DESC, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS integration_leaves (
+          leaf_id TEXT PRIMARY KEY,
+          tree_id TEXT NOT NULL,
+          subject_key TEXT NOT NULL,
+          entity_key TEXT,
+          entity_label TEXT,
+          branch_key TEXT,
+          branch_label TEXT,
+          path TEXT NOT NULL UNIQUE,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          fingerprint TEXT NOT NULL,
+          body_sha256 TEXT NOT NULL,
+          tags TEXT NOT NULL DEFAULT '[]',
+          source_type TEXT,
+          source_event_id TEXT,
+          source_message_id TEXT,
+          external_object_id TEXT,
+          external_object_type TEXT,
+          admission_confidence REAL,
+          observed_at TEXT,
+          supersedes_leaf_id TEXT,
+          superseded_at TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_integration_leaves_tree_status_observed
+          ON integration_leaves (tree_id, status, observed_at DESC, updated_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_integration_leaves_tree_subject
+          ON integration_leaves (tree_id, subject_key, status, updated_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_integration_leaves_tree_fingerprint
+          ON integration_leaves (tree_id, fingerprint);
+
+      CREATE TABLE IF NOT EXISTS integration_node_embeddings (
+          node_kind TEXT NOT NULL,
+          node_id TEXT NOT NULL,
+          tree_id TEXT NOT NULL,
+          embedding_model TEXT NOT NULL,
+          content_fingerprint TEXT NOT NULL,
+          dimensions INTEGER NOT NULL,
+          vector_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (node_kind, node_id, embedding_model)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_integration_node_embeddings_tree_updated
+          ON integration_node_embeddings (tree_id, embedding_model, updated_at DESC);
+
+      -- Workspace-scoped opt-out / pin override for Composio toolkits.
+      -- No row: workspace inherits the account active pool.
+      -- state=disabled: toolkit hidden from this workspace agent.
+      -- state=pinned: only pinned_connection_id is used in this workspace.
+      CREATE TABLE IF NOT EXISTS workspace_integration_overrides (
+          workspace_id TEXT NOT NULL,
+          toolkit_slug TEXT NOT NULL,
+          state TEXT NOT NULL,
+          pinned_connection_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, toolkit_slug)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_workspace_integration_overrides_workspace
+          ON workspace_integration_overrides (workspace_id);
 
       CREATE TABLE IF NOT EXISTS app_catalog (
           app_id TEXT NOT NULL,
@@ -7895,6 +10028,8 @@ export class RuntimeStateStore {
     `);
     this.ensureMemoryEntriesTableSchema(db);
     this.ensureMemoryEmbeddingIndexSchema(db);
+    this.ensureIntegrationLeavesTableSchema(db);
+    this.ensureSemanticMemoryTableSchema({ db, workspaceScoped: false });
     this.migrateIntegrationConnectionIdentityColumns(db);
     this.migrateAppCatalogProviderColumns(db);
   }
@@ -8087,6 +10222,7 @@ export class RuntimeStateStore {
           session_id TEXT NOT NULL,
           role TEXT NOT NULL,
           text TEXT NOT NULL,
+          metadata TEXT NOT NULL DEFAULT '{}',
           created_at TEXT NOT NULL
       );
 
@@ -8316,6 +10452,156 @@ export class RuntimeStateStore {
       CREATE INDEX IF NOT EXISTS idx_memory_update_proposals_workspace_state_created
           ON memory_update_proposals (workspace_id, state, created_at DESC);
 
+      CREATE TABLE IF NOT EXISTS interaction_entities (
+          workspace_id TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          entity_type TEXT NOT NULL,
+          canonical_name TEXT NOT NULL,
+          slug TEXT NOT NULL,
+          summary TEXT,
+          aliases TEXT NOT NULL DEFAULT '[]',
+          is_system INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, entity_id),
+          UNIQUE (workspace_id, slug)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_interaction_entities_workspace_status_updated
+          ON interaction_entities (workspace_id, status, updated_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_interaction_entities_workspace_slug
+          ON interaction_entities (workspace_id, slug);
+
+      CREATE TABLE IF NOT EXISTS interaction_leaves (
+          workspace_id TEXT NOT NULL,
+          leaf_id TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          subject_key TEXT NOT NULL,
+          path TEXT NOT NULL,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          fingerprint TEXT NOT NULL,
+          body_sha256 TEXT NOT NULL,
+          tags TEXT NOT NULL DEFAULT '[]',
+          secondary_entity_ids TEXT NOT NULL DEFAULT '[]',
+          source_type TEXT,
+          source_event_id TEXT,
+          source_message_id TEXT,
+          source_turn_input_id TEXT,
+          admission_confidence REAL,
+          entity_confidence REAL,
+          observed_at TEXT,
+          supersedes_leaf_id TEXT,
+          superseded_at TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, leaf_id),
+          UNIQUE (workspace_id, path)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_interaction_leaves_workspace_entity_status_observed
+          ON interaction_leaves (workspace_id, entity_id, status, observed_at DESC, updated_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_interaction_leaves_workspace_entity_subject
+          ON interaction_leaves (workspace_id, entity_id, subject_key, status, updated_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_interaction_leaves_workspace_entity_fingerprint
+          ON interaction_leaves (workspace_id, entity_id, fingerprint);
+
+      CREATE TABLE IF NOT EXISTS interaction_node_embeddings (
+          workspace_id TEXT NOT NULL,
+          node_kind TEXT NOT NULL,
+          node_id TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          embedding_model TEXT NOT NULL,
+          content_fingerprint TEXT NOT NULL,
+          dimensions INTEGER NOT NULL,
+          vector_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, node_kind, node_id, embedding_model)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_interaction_node_embeddings_workspace_entity_updated
+          ON interaction_node_embeddings (workspace_id, entity_id, embedding_model, updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS integration_trees (
+          workspace_id TEXT NOT NULL,
+          tree_id TEXT NOT NULL,
+          provider TEXT NOT NULL,
+          account_id TEXT NOT NULL,
+          account_label TEXT NOT NULL,
+          slug TEXT NOT NULL,
+          summary TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, tree_id),
+          UNIQUE (workspace_id, slug)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_integration_trees_workspace_status_updated
+          ON integration_trees (workspace_id, status, updated_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_integration_trees_workspace_provider_account
+          ON integration_trees (workspace_id, provider, account_id);
+
+      CREATE TABLE IF NOT EXISTS integration_leaves (
+          workspace_id TEXT NOT NULL,
+          leaf_id TEXT NOT NULL,
+          tree_id TEXT NOT NULL,
+          subject_key TEXT NOT NULL,
+          path TEXT NOT NULL,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          fingerprint TEXT NOT NULL,
+          body_sha256 TEXT NOT NULL,
+          tags TEXT NOT NULL DEFAULT '[]',
+          source_type TEXT,
+          source_event_id TEXT,
+          source_message_id TEXT,
+          external_object_id TEXT,
+          external_object_type TEXT,
+          admission_confidence REAL,
+          observed_at TEXT,
+          supersedes_leaf_id TEXT,
+          superseded_at TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, leaf_id),
+          UNIQUE (workspace_id, path)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_integration_leaves_workspace_tree_status_observed
+          ON integration_leaves (workspace_id, tree_id, status, observed_at DESC, updated_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_integration_leaves_workspace_tree_subject
+          ON integration_leaves (workspace_id, tree_id, subject_key, status, updated_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_integration_leaves_workspace_tree_fingerprint
+          ON integration_leaves (workspace_id, tree_id, fingerprint);
+
+      CREATE TABLE IF NOT EXISTS integration_node_embeddings (
+          workspace_id TEXT NOT NULL,
+          node_kind TEXT NOT NULL,
+          node_id TEXT NOT NULL,
+          tree_id TEXT NOT NULL,
+          embedding_model TEXT NOT NULL,
+          content_fingerprint TEXT NOT NULL,
+          dimensions INTEGER NOT NULL,
+          vector_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, node_kind, node_id, embedding_model)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_integration_node_embeddings_workspace_tree_updated
+          ON integration_node_embeddings (workspace_id, tree_id, embedding_model, updated_at DESC);
+
       CREATE TABLE IF NOT EXISTS output_folders (
           id TEXT PRIMARY KEY,
           workspace_id TEXT NOT NULL,
@@ -8437,7 +10723,9 @@ export class RuntimeStateStore {
     `);
     this.ensureMemoryEntriesTableSchema(db);
     this.ensureMemoryEmbeddingIndexSchema(db);
+    this.ensureSessionMessagesTableSchema(db);
     this.ensureConversationBindingsTableSchema(db);
+    this.ensureSemanticMemoryTableSchema({ db, workspaceScoped: true });
     this.migrateLegacyMainSessionLabels(db);
     this.ensureSubagentRunsTableSchema(db);
     this.ensureSessionRuntimeStateTableSchema(db);
@@ -8464,7 +10752,11 @@ export class RuntimeStateStore {
           harness TEXT,
           error_message TEXT,
           onboarding_status TEXT NOT NULL,
+          onboarding_state TEXT,
           onboarding_session_id TEXT,
+          onboarding_alignment_question TEXT,
+          onboarding_alignment_report TEXT,
+          onboarding_verification_report TEXT,
           onboarding_completed_at TEXT,
           onboarding_completion_summary TEXT,
           onboarding_requested_at TEXT,
@@ -8473,11 +10765,130 @@ export class RuntimeStateStore {
           updated_at TEXT,
           deleted_at_utc TEXT,
           icon TEXT,
-          icon_color TEXT
+          icon_color TEXT,
+          workspace_role TEXT NOT NULL DEFAULT 'source',
+          source_workspace_id TEXT,
+          lab_purpose TEXT,
+          lab_status TEXT
       );
 
       CREATE INDEX IF NOT EXISTS idx_workspaces_updated
           ON workspaces (updated_at DESC, created_at DESC);
+    `);
+    this.ensureSessionMessagesTableSchema(db);
+  }
+
+  private ensureSessionMessagesTableSchema(db: Database.Database): void {
+    const tableNames = new Set<string>(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(
+        (row) => row.name
+      )
+    );
+    if (!tableNames.has("session_messages")) {
+      return;
+    }
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(session_messages)").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+    if (!columns.has("metadata")) {
+      db.exec("ALTER TABLE session_messages ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}';");
+    }
+  }
+
+  private ensureIntegrationLeavesTableSchema(db: Database.Database): void {
+    const tableNames = new Set<string>(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(
+        (row) => row.name,
+      ),
+    );
+    if (!tableNames.has("integration_leaves")) {
+      return;
+    }
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(integration_leaves)").all() as Array<{ name: string }>).map((row) => row.name),
+    );
+    if (!columns.has("entity_key")) {
+      db.exec("ALTER TABLE integration_leaves ADD COLUMN entity_key TEXT;");
+    }
+    if (!columns.has("entity_label")) {
+      db.exec("ALTER TABLE integration_leaves ADD COLUMN entity_label TEXT;");
+    }
+    if (!columns.has("branch_key")) {
+      db.exec("ALTER TABLE integration_leaves ADD COLUMN branch_key TEXT;");
+    }
+    if (!columns.has("branch_label")) {
+      db.exec("ALTER TABLE integration_leaves ADD COLUMN branch_label TEXT;");
+    }
+  }
+
+  private ensureSemanticMemoryTableSchema(params: {
+    db: Database.Database;
+    workspaceScoped: boolean;
+  }): void {
+    const prefix = params.workspaceScoped
+      ? `
+          workspace_id TEXT NOT NULL,
+      `
+      : "";
+    const workspaceIdPrefix = params.workspaceScoped ? "workspace_id, " : "";
+    const workspaceUniquePrefix = params.workspaceScoped ? "workspace_id, " : "";
+    params.db.exec(`
+      CREATE TABLE IF NOT EXISTS semantic_memory_nodes (
+          ${prefix}category TEXT NOT NULL,
+          tree_id TEXT NOT NULL,
+          node_id TEXT NOT NULL,
+          node_class TEXT NOT NULL,
+          node_kind TEXT NOT NULL,
+          source_leaf_id TEXT,
+          path TEXT NOT NULL,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          body_sha256 TEXT NOT NULL,
+          child_count INTEGER NOT NULL DEFAULT 0,
+          observed_at TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          is_materialized INTEGER NOT NULL DEFAULT 0,
+          metadata TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (${workspaceIdPrefix}category, tree_id, node_id),
+          UNIQUE (${workspaceUniquePrefix}category, path)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_semantic_memory_nodes_tree_status_kind
+          ON semantic_memory_nodes (${workspaceIdPrefix}category, tree_id, status, node_class, node_kind, updated_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_semantic_memory_nodes_tree_path
+          ON semantic_memory_nodes (${workspaceIdPrefix}category, tree_id, path);
+
+      CREATE TABLE IF NOT EXISTS semantic_memory_edges (
+          ${prefix}category TEXT NOT NULL,
+          tree_id TEXT NOT NULL,
+          parent_node_id TEXT NOT NULL,
+          child_node_id TEXT NOT NULL,
+          position INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (${workspaceIdPrefix}category, tree_id, parent_node_id, child_node_id),
+          UNIQUE (${workspaceUniquePrefix}category, tree_id, parent_node_id, position)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_semantic_memory_edges_parent_position
+          ON semantic_memory_edges (${workspaceIdPrefix}category, tree_id, parent_node_id, position ASC);
+
+      CREATE TABLE IF NOT EXISTS semantic_memory_relations (
+          ${prefix}category TEXT NOT NULL,
+          tree_id TEXT NOT NULL,
+          from_node_id TEXT NOT NULL,
+          to_node_id TEXT NOT NULL,
+          relation_type TEXT NOT NULL,
+          metadata TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (${workspaceIdPrefix}category, tree_id, from_node_id, to_node_id, relation_type)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_semantic_memory_relations_tree_from_type
+          ON semantic_memory_relations (${workspaceIdPrefix}category, tree_id, from_node_id, relation_type, updated_at DESC);
     `);
   }
 
@@ -8784,6 +11195,18 @@ export class RuntimeStateStore {
     }
     if (!columns.has("account_email")) {
       db.exec("ALTER TABLE integration_connections ADD COLUMN account_email TEXT;");
+    }
+    if (!columns.has("context_cron_auto_fetch_enabled")) {
+      db.exec("ALTER TABLE integration_connections ADD COLUMN context_cron_auto_fetch_enabled INTEGER NOT NULL DEFAULT 1;");
+    }
+    if (!columns.has("last_context_fetch_attempted_at")) {
+      db.exec("ALTER TABLE integration_connections ADD COLUMN last_context_fetch_attempted_at TEXT;");
+    }
+    if (!columns.has("last_context_fetch_completed_at")) {
+      db.exec("ALTER TABLE integration_connections ADD COLUMN last_context_fetch_completed_at TEXT;");
+    }
+    if (!columns.has("last_context_fetch_status")) {
+      db.exec("ALTER TABLE integration_connections ADD COLUMN last_context_fetch_status TEXT;");
     }
     db.exec(
       "CREATE INDEX IF NOT EXISTS idx_integration_connections_provider_owner_handle ON integration_connections (provider_id, owner_user_id, account_handle);"
@@ -9365,6 +11788,30 @@ export class RuntimeStateStore {
     if (!columns.has("icon_color")) {
       db.exec("ALTER TABLE workspaces ADD COLUMN icon_color TEXT;");
     }
+    if (!columns.has("workspace_role")) {
+      db.exec("ALTER TABLE workspaces ADD COLUMN workspace_role TEXT NOT NULL DEFAULT 'source';");
+    }
+    if (!columns.has("source_workspace_id")) {
+      db.exec("ALTER TABLE workspaces ADD COLUMN source_workspace_id TEXT;");
+    }
+    if (!columns.has("lab_purpose")) {
+      db.exec("ALTER TABLE workspaces ADD COLUMN lab_purpose TEXT;");
+    }
+    if (!columns.has("lab_status")) {
+      db.exec("ALTER TABLE workspaces ADD COLUMN lab_status TEXT;");
+    }
+    if (!columns.has("onboarding_state")) {
+      db.exec("ALTER TABLE workspaces ADD COLUMN onboarding_state TEXT;");
+    }
+    if (!columns.has("onboarding_alignment_question")) {
+      db.exec("ALTER TABLE workspaces ADD COLUMN onboarding_alignment_question TEXT;");
+    }
+    if (!columns.has("onboarding_alignment_report")) {
+      db.exec("ALTER TABLE workspaces ADD COLUMN onboarding_alignment_report TEXT;");
+    }
+    if (!columns.has("onboarding_verification_report")) {
+      db.exec("ALTER TABLE workspaces ADD COLUMN onboarding_verification_report TEXT;");
+    }
   }
 
   private migrateWorkspacesTable(db: Database.Database): void {
@@ -9508,7 +11955,14 @@ export class RuntimeStateStore {
       harness: row.harness == null ? null : String(row.harness),
       errorMessage: row.error_message == null ? null : String(row.error_message),
       onboardingStatus: String(row.onboarding_status),
+      onboardingState: row.onboarding_state == null ? null : String(row.onboarding_state),
       onboardingSessionId: row.onboarding_session_id == null ? null : String(row.onboarding_session_id),
+      onboardingAlignmentQuestion:
+        row.onboarding_alignment_question == null ? null : String(row.onboarding_alignment_question),
+      onboardingAlignmentReport:
+        row.onboarding_alignment_report == null ? null : String(row.onboarding_alignment_report),
+      onboardingVerificationReport:
+        row.onboarding_verification_report == null ? null : String(row.onboarding_verification_report),
       onboardingCompletedAt: row.onboarding_completed_at == null ? null : String(row.onboarding_completed_at),
       onboardingCompletionSummary:
         row.onboarding_completion_summary == null ? null : String(row.onboarding_completion_summary),
@@ -9518,7 +11972,11 @@ export class RuntimeStateStore {
       updatedAt: row.updated_at == null ? null : String(row.updated_at),
       deletedAtUtc: row.deleted_at_utc == null ? null : String(row.deleted_at_utc),
       icon: row.icon == null ? null : String(row.icon),
-      iconColor: row.icon_color == null ? null : String(row.icon_color)
+      iconColor: row.icon_color == null ? null : String(row.icon_color),
+      workspaceRole: row.workspace_role == null ? "source" : String(row.workspace_role),
+      sourceWorkspaceId: row.source_workspace_id == null ? null : String(row.source_workspace_id),
+      labPurpose: row.lab_purpose == null ? null : String(row.lab_purpose),
+      labStatus: row.lab_status == null ? null : String(row.lab_status)
     };
   }
 
@@ -9530,7 +11988,14 @@ export class RuntimeStateStore {
       harness: data.harness == null ? null : String(data.harness),
       errorMessage: data.error_message == null ? null : String(data.error_message),
       onboardingStatus: String(data.onboarding_status),
+      onboardingState: data.onboarding_state == null ? null : String(data.onboarding_state),
       onboardingSessionId: data.onboarding_session_id == null ? null : String(data.onboarding_session_id),
+      onboardingAlignmentQuestion:
+        data.onboarding_alignment_question == null ? null : String(data.onboarding_alignment_question),
+      onboardingAlignmentReport:
+        data.onboarding_alignment_report == null ? null : String(data.onboarding_alignment_report),
+      onboardingVerificationReport:
+        data.onboarding_verification_report == null ? null : String(data.onboarding_verification_report),
       onboardingCompletedAt: data.onboarding_completed_at == null ? null : String(data.onboarding_completed_at),
       onboardingCompletionSummary:
         data.onboarding_completion_summary == null ? null : String(data.onboarding_completion_summary),
@@ -9540,7 +12005,11 @@ export class RuntimeStateStore {
       updatedAt: data.updated_at == null ? null : String(data.updated_at),
       deletedAtUtc: data.deleted_at_utc == null ? null : String(data.deleted_at_utc),
       icon: data.icon == null ? null : String(data.icon),
-      iconColor: data.icon_color == null ? null : String(data.icon_color)
+      iconColor: data.icon_color == null ? null : String(data.icon_color),
+      workspaceRole: data.workspace_role == null ? "source" : String(data.workspace_role),
+      sourceWorkspaceId: data.source_workspace_id == null ? null : String(data.source_workspace_id),
+      labPurpose: data.lab_purpose == null ? null : String(data.lab_purpose),
+      labStatus: data.lab_status == null ? null : String(data.lab_status)
     };
   }
 
@@ -9559,10 +12028,12 @@ export class RuntimeStateStore {
     db.prepare(`
       INSERT INTO workspaces (
           id, workspace_path, name, status, harness, error_message,
-          onboarding_status, onboarding_session_id, onboarding_completed_at,
+          onboarding_status, onboarding_state, onboarding_session_id,
+          onboarding_alignment_question, onboarding_alignment_report, onboarding_verification_report, onboarding_completed_at,
           onboarding_completion_summary, onboarding_requested_at, onboarding_requested_by,
-          created_at, updated_at, deleted_at_utc, icon, icon_color
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          created_at, updated_at, deleted_at_utc, icon, icon_color,
+          workspace_role, source_workspace_id, lab_purpose, lab_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
           workspace_path = excluded.workspace_path,
           name = excluded.name,
@@ -9570,7 +12041,11 @@ export class RuntimeStateStore {
           harness = excluded.harness,
           error_message = excluded.error_message,
           onboarding_status = excluded.onboarding_status,
+          onboarding_state = excluded.onboarding_state,
           onboarding_session_id = excluded.onboarding_session_id,
+          onboarding_alignment_question = excluded.onboarding_alignment_question,
+          onboarding_alignment_report = excluded.onboarding_alignment_report,
+          onboarding_verification_report = excluded.onboarding_verification_report,
           onboarding_completed_at = excluded.onboarding_completed_at,
           onboarding_completion_summary = excluded.onboarding_completion_summary,
           onboarding_requested_at = excluded.onboarding_requested_at,
@@ -9579,7 +12054,11 @@ export class RuntimeStateStore {
           updated_at = excluded.updated_at,
           deleted_at_utc = excluded.deleted_at_utc,
           icon = excluded.icon,
-          icon_color = excluded.icon_color
+          icon_color = excluded.icon_color,
+          workspace_role = excluded.workspace_role,
+          source_workspace_id = excluded.source_workspace_id,
+          lab_purpose = excluded.lab_purpose,
+          lab_status = excluded.lab_status
     `).run(
       record.id,
       workspacePath,
@@ -9588,7 +12067,11 @@ export class RuntimeStateStore {
       record.harness,
       record.errorMessage,
       record.onboardingStatus,
+      record.onboardingState,
       record.onboardingSessionId,
+      record.onboardingAlignmentQuestion,
+      record.onboardingAlignmentReport,
+      record.onboardingVerificationReport,
       record.onboardingCompletedAt,
       record.onboardingCompletionSummary,
       record.onboardingRequestedAt,
@@ -9597,7 +12080,11 @@ export class RuntimeStateStore {
       record.updatedAt,
       record.deletedAtUtc,
       record.icon,
-      record.iconColor
+      record.iconColor,
+      record.workspaceRole,
+      record.sourceWorkspaceId,
+      record.labPurpose,
+      record.labStatus
     );
   }
 
@@ -9855,7 +12342,11 @@ export class RuntimeStateStore {
       harness: this.sandboxAgentHarness,
       errorMessage: null,
       onboardingStatus: "not_required",
+      onboardingState: null,
       onboardingSessionId: null,
+      onboardingAlignmentQuestion: null,
+      onboardingAlignmentReport: null,
+      onboardingVerificationReport: null,
       onboardingCompletedAt: null,
       onboardingCompletionSummary: null,
       onboardingRequestedAt: null,
@@ -9864,7 +12355,11 @@ export class RuntimeStateStore {
       updatedAt: now,
       deletedAtUtc: null,
       icon: null,
-      iconColor: null
+      iconColor: null,
+      workspaceRole: "source",
+      sourceWorkspaceId: null,
+      labPurpose: null,
+      labStatus: null
     };
     this.upsertWorkspaceRow(record, discovered);
     return record;
@@ -10096,6 +12591,183 @@ export class RuntimeStateStore {
     };
   }
 
+  private rowToInteractionEntity(row: Record<string, unknown>): InteractionEntityRecord {
+    return {
+      workspaceId: String(row.workspace_id),
+      entityId: String(row.entity_id),
+      entityType: String(row.entity_type) as InteractionEntityType,
+      canonicalName: String(row.canonical_name),
+      slug: String(row.slug),
+      summary: row.summary == null ? null : String(row.summary),
+      aliases: this.parseJsonList(row.aliases).filter((item): item is string => typeof item === "string"),
+      isSystem: Number(row.is_system ?? 0) === 1,
+      status: String(row.status) as InteractionEntityStatus,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private rowToInteractionLeaf(row: Record<string, unknown>): InteractionLeafRecord {
+    return {
+      workspaceId: String(row.workspace_id),
+      leafId: String(row.leaf_id),
+      entityId: String(row.entity_id),
+      subjectKey: String(row.subject_key),
+      path: String(row.path),
+      title: String(row.title),
+      summary: String(row.summary),
+      fingerprint: String(row.fingerprint),
+      bodySha256: String(row.body_sha256),
+      tags: this.parseJsonList(row.tags).filter((item): item is string => typeof item === "string"),
+      secondaryEntityIds: this.parseJsonList(row.secondary_entity_ids).filter(
+        (item): item is string => typeof item === "string",
+      ),
+      sourceType: row.source_type == null ? null : String(row.source_type),
+      sourceEventId: row.source_event_id == null ? null : String(row.source_event_id),
+      sourceMessageId: row.source_message_id == null ? null : String(row.source_message_id),
+      sourceTurnInputId: row.source_turn_input_id == null ? null : String(row.source_turn_input_id),
+      admissionConfidence: row.admission_confidence == null ? null : Number(row.admission_confidence),
+      entityConfidence: row.entity_confidence == null ? null : Number(row.entity_confidence),
+      observedAt: row.observed_at == null ? null : String(row.observed_at),
+      supersedesLeafId: row.supersedes_leaf_id == null ? null : String(row.supersedes_leaf_id),
+      supersededAt: row.superseded_at == null ? null : String(row.superseded_at),
+      status: String(row.status) as InteractionLeafStatus,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private rowToInteractionNodeEmbedding(row: Record<string, unknown>): InteractionNodeEmbeddingRecord {
+    return {
+      workspaceId: String(row.workspace_id),
+      nodeKind: String(row.node_kind) as InteractionTreeChildKind,
+      nodeId: String(row.node_id),
+      entityId: String(row.entity_id),
+      embeddingModel: String(row.embedding_model),
+      contentFingerprint: String(row.content_fingerprint),
+      dimensions: Number(row.dimensions),
+      vector: this.parseJsonList(row.vector_json)
+        .map((value) => (typeof value === "number" ? value : Number(value)))
+        .filter((value) => Number.isFinite(value)),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private rowToIntegrationTree(row: Record<string, unknown>): IntegrationTreeRecord {
+    return {
+      treeId: String(row.tree_id),
+      provider: String(row.provider),
+      ownerUserId: String(row.owner_user_id),
+      accountKey: String(row.account_key),
+      accountLabel: String(row.account_label),
+      slug: String(row.slug),
+      summary: row.summary == null ? null : String(row.summary),
+      status: String(row.status) as IntegrationTreeStatus,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private rowToIntegrationLeaf(row: Record<string, unknown>): IntegrationLeafRecord {
+    return {
+      leafId: String(row.leaf_id),
+      treeId: String(row.tree_id),
+      subjectKey: String(row.subject_key),
+      entityKey: row.entity_key == null ? null : String(row.entity_key),
+      entityLabel: row.entity_label == null ? null : String(row.entity_label),
+      branchKey: row.branch_key == null ? null : String(row.branch_key),
+      branchLabel: row.branch_label == null ? null : String(row.branch_label),
+      path: String(row.path),
+      title: String(row.title),
+      summary: String(row.summary),
+      fingerprint: String(row.fingerprint),
+      bodySha256: String(row.body_sha256),
+      tags: this.parseJsonList(row.tags).filter((item): item is string => typeof item === "string"),
+      sourceType: row.source_type == null ? null : String(row.source_type),
+      sourceEventId: row.source_event_id == null ? null : String(row.source_event_id),
+      sourceMessageId: row.source_message_id == null ? null : String(row.source_message_id),
+      externalObjectId: row.external_object_id == null ? null : String(row.external_object_id),
+      externalObjectType: row.external_object_type == null ? null : String(row.external_object_type),
+      admissionConfidence: row.admission_confidence == null ? null : Number(row.admission_confidence),
+      observedAt: row.observed_at == null ? null : String(row.observed_at),
+      supersedesLeafId: row.supersedes_leaf_id == null ? null : String(row.supersedes_leaf_id),
+      supersededAt: row.superseded_at == null ? null : String(row.superseded_at),
+      status: String(row.status) as IntegrationLeafStatus,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private rowToSemanticMemoryNode(row: Record<string, unknown>): SemanticMemoryNodeRecord {
+    return {
+      workspaceId: row.workspace_id == null ? null : String(row.workspace_id),
+      category: String(row.category) as SemanticMemoryCategory,
+      treeId: String(row.tree_id),
+      nodeId: String(row.node_id),
+      nodeClass: String(row.node_class) as SemanticMemoryNodeClass,
+      nodeKind: String(row.node_kind),
+      sourceLeafId: row.source_leaf_id == null ? null : String(row.source_leaf_id),
+      path: String(row.path),
+      title: String(row.title),
+      summary: String(row.summary),
+      bodySha256: String(row.body_sha256),
+      childCount: Number(row.child_count ?? 0),
+      observedAt: row.observed_at == null ? null : String(row.observed_at),
+      status: String(row.status) as MemoryNodeStatus,
+      isMaterialized: Number(row.is_materialized ?? 0) !== 0,
+      metadata: this.parseJsonDict(row.metadata),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private rowToSemanticMemoryContainmentEdge(
+    row: Record<string, unknown>,
+  ): SemanticMemoryContainmentEdgeRecord {
+    return {
+      workspaceId: row.workspace_id == null ? null : String(row.workspace_id),
+      category: String(row.category) as SemanticMemoryCategory,
+      treeId: String(row.tree_id),
+      parentNodeId: String(row.parent_node_id),
+      childNodeId: String(row.child_node_id),
+      position: Number(row.position),
+      createdAt: String(row.created_at),
+    };
+  }
+
+  private rowToSemanticMemoryRelation(
+    row: Record<string, unknown>,
+  ): SemanticMemoryRelationRecord {
+    return {
+      workspaceId: row.workspace_id == null ? null : String(row.workspace_id),
+      category: String(row.category) as SemanticMemoryCategory,
+      treeId: String(row.tree_id),
+      fromNodeId: String(row.from_node_id),
+      toNodeId: String(row.to_node_id),
+      relationType: String(row.relation_type),
+      metadata: this.parseJsonDict(row.metadata),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private rowToIntegrationNodeEmbedding(row: Record<string, unknown>): IntegrationNodeEmbeddingRecord {
+    return {
+      nodeKind: String(row.node_kind) as InteractionTreeChildKind,
+      nodeId: String(row.node_id),
+      treeId: String(row.tree_id),
+      embeddingModel: String(row.embedding_model),
+      contentFingerprint: String(row.content_fingerprint),
+      dimensions: Number(row.dimensions),
+      vector: this.parseJsonList(row.vector_json)
+        .map((value) => (typeof value === "number" ? value : Number(value)))
+        .filter((value) => Number.isFinite(value)),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
   private vectorResultsForRows(
     db: Database.Database,
     rows: Array<{ vec_rowid: number; distance: number }>
@@ -10147,6 +12819,22 @@ export class RuntimeStateStore {
       accountExternalId: row.account_external_id == null ? null : String(row.account_external_id),
       accountHandle: row.account_handle == null ? null : String(row.account_handle),
       accountEmail: row.account_email == null ? null : String(row.account_email),
+      contextCronAutoFetchEnabled:
+        row.context_cron_auto_fetch_enabled === false
+          ? false
+          : Number(row.context_cron_auto_fetch_enabled ?? 1) !== 0,
+      lastContextFetchAttemptedAt:
+        row.last_context_fetch_attempted_at == null
+          ? null
+          : String(row.last_context_fetch_attempted_at),
+      lastContextFetchCompletedAt:
+        row.last_context_fetch_completed_at == null
+          ? null
+          : String(row.last_context_fetch_completed_at),
+      lastContextFetchStatus:
+        row.last_context_fetch_status == null
+          ? null
+          : String(row.last_context_fetch_status),
       authMode: String(row.auth_mode),
       grantedScopes: this.parseJsonList(row.granted_scopes).filter((item): item is string => typeof item === "string"),
       status: String(row.status),
