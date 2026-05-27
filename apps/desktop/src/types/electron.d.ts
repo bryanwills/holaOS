@@ -2224,6 +2224,9 @@ interface RuntimeNotificationListOptionsPayload {
       onUserUpdated: (callback: (user: AuthUserPayload | null) => unknown) => () => void;
       onError: (callback: (context: AuthErrorPayload) => unknown) => () => void;
     };
+    integration: {
+      onUpdated: (listener: (payload: unknown) => void) => () => void;
+    };
     tabs: {
       showContextMenu: (opts: {
         canCloseLeft: boolean;

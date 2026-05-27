@@ -1782,6 +1782,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
       return () => ipcRenderer.removeListener("auth:error", wrapped);
     }
   },
+  integration: {
+    onUpdated: (listener: (payload: unknown) => void) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, payload: unknown) => listener(payload);
+      ipcRenderer.on("integration:updated", wrapped);
+      return () => ipcRenderer.removeListener("integration:updated", wrapped);
+    },
+  },
   tabs: {
     showContextMenu: (opts: {
       canCloseLeft: boolean;
