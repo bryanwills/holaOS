@@ -1900,6 +1900,7 @@ test("runtime task capability routes create, inspect, rerun, and cancel delegate
       "x-holaboss-selected-model": "openai/gpt-5.4",
     },
     payload: {
+      teammate_id: "general",
       goal: "Research topic A",
       context: "Focus on recent changes.",
       tools: ["web", "browser"],
@@ -2125,6 +2126,7 @@ test("delegated subagents use the configured global subagent model instead of re
       "x-holaboss-selected-model": "openai_direct/gpt-5.4-mini",
     },
     payload: {
+      teammate_id: "general",
       goal: "Summarize the repo status.",
       model: "gemini_direct/gemini-2.5-pro",
     },
@@ -2305,8 +2307,11 @@ test("runtime skill tool hides create-teammate from the main session", async () 
     });
 
     assert.equal(response.statusCode, 404);
-    assert.match(response.body, /Skill "create-teammate" was not found/i);
-    assert.doesNotMatch(response.body, /Available skills:[\s\S]*create-teammate/i);
+    assert.match(String(response.json().detail ?? ""), /Skill "create-teammate" was not found/i);
+    assert.doesNotMatch(
+      String(response.json().detail ?? ""),
+      /Available skills:[\s\S]*create-teammate/i,
+    );
   } finally {
     await app.close();
     store.close();

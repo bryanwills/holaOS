@@ -34,6 +34,7 @@ test("buildAgentCapabilityManifest classifies tools, skills, and MCP aliases", (
   assert.deepEqual(manifest.context, {
     harness_id: "pi",
     session_kind: "subagent",
+    onboarding_state: null,
     browser_tools_available: true,
     browser_tool_ids: ["browser_get_state"],
     runtime_tool_ids: ["holaboss_onboarding_complete", "todoread", "todowrite"],
@@ -276,6 +277,7 @@ test("buildAgentCapabilityManifest filters browser tools when policy context doe
   assert.deepEqual(manifest.context, {
     harness_id: "pi",
     session_kind: "subagent",
+    onboarding_state: null,
     browser_tools_available: false,
     browser_tool_ids: [],
     runtime_tool_ids: ["holaboss_onboarding_complete"],
@@ -610,6 +612,7 @@ test("buildAgentCapabilityManifest marks connected MCP servers as available with
   assert.deepEqual(manifest.context, {
     harness_id: "pi",
     session_kind: "main_session",
+    onboarding_state: null,
     browser_tools_available: true,
     browser_tool_ids: ["browser_get_state"],
     runtime_tool_ids: [],

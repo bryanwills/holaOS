@@ -240,6 +240,7 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
     assert.deepEqual(result.capability_manifest?.context, {
       harness_id: "pi",
       session_kind: "subagent",
+      onboarding_state: null,
       browser_tools_available: false,
       browser_tool_ids: [],
       runtime_tool_ids: [],
@@ -738,6 +739,7 @@ test("projectAgentRuntimeConfig strips direct MCP access from workspace sessions
     assert.deepEqual(result.capability_manifest?.context, {
       harness_id: "pi",
       session_kind: "main_session",
+      onboarding_state: null,
       browser_tools_available: false,
       browser_tool_ids: [],
       runtime_tool_ids: [],
@@ -852,6 +854,7 @@ test("projectAgentRuntimeConfig includes operator surface context as a context m
     assert.deepEqual(result.capability_manifest?.context, {
       harness_id: "pi",
       session_kind: "main_session",
+      onboarding_state: null,
       browser_tools_available: false,
       browser_tool_ids: [],
       runtime_tool_ids: [],
