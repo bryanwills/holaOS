@@ -1373,6 +1373,7 @@ test("runtime tools cronjobs stay inert inside draft labs", async () => {
       source_session_id: "session-main",
       author_recommended_enabled: true,
       lab_execution_disabled: true,
+      timezone: "UTC",
     });
 
     const updatedJob = await app.inject({
@@ -1394,6 +1395,7 @@ test("runtime tools cronjobs stay inert inside draft labs", async () => {
       source_session_id: "session-main",
       author_recommended_enabled: true,
       lab_execution_disabled: true,
+      timezone: "UTC",
     });
   } finally {
     await app.close();
@@ -4981,6 +4983,7 @@ test("workspace lab keeps copied cronjobs inert and restores their recommended e
   assert.ok(mergedJob.nextRunAt);
   assert.deepEqual(mergedJob.metadata, {
     author_recommended_enabled: true,
+    timezone: "UTC",
   });
 
   await app.close();
@@ -7112,6 +7115,7 @@ test("raw cronjob routes keep draft lab jobs disabled by default", async () => {
   assert.deepEqual(createdJob.json().metadata, {
     author_recommended_enabled: true,
     lab_execution_disabled: true,
+    timezone: "UTC",
   });
   const jobId = createdJob.json().id as string;
 
@@ -7131,6 +7135,7 @@ test("raw cronjob routes keep draft lab jobs disabled by default", async () => {
   assert.deepEqual(updatedJob.json().metadata, {
     author_recommended_enabled: true,
     lab_execution_disabled: true,
+    timezone: "UTC",
   });
 
   await app.close();
@@ -7174,6 +7179,7 @@ test("raw cronjob routes keep draft lab jobs disabled by default", async () => {
   assert.deepEqual(createdJob.json().metadata, {
     author_recommended_enabled: true,
     lab_execution_disabled: true,
+    timezone: "UTC",
   });
   const jobId = createdJob.json().id as string;
 
@@ -7193,6 +7199,7 @@ test("raw cronjob routes keep draft lab jobs disabled by default", async () => {
   assert.deepEqual(updatedJob.json().metadata, {
     author_recommended_enabled: true,
     lab_execution_disabled: true,
+    timezone: "UTC",
   });
 
   await app.close();

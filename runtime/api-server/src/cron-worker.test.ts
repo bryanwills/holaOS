@@ -924,6 +924,7 @@ test("runtime cron worker does not execute a newly created cronjob before next_r
     metadata: {
       source_session_id: "session-main",
       model: "openai_codex/gpt-5.4",
+      timezone: "UTC",
     },
     nextRunAt: "2025-01-01T10:00:00Z",
   });

@@ -691,10 +691,6 @@ test("delegateTask creates issue-owned runs for an explicitly assigned teammate"
     assert.equal(delegatedTask?.issue_id, "WOR-1");
     assert.equal(delegatedTask?.teammate_id, teammate.teammateId);
     assert.equal(delegatedTask?.subagent_id, undefined);
-    const latestRunSubagentId = String(
-      ((delegatedTask?.latest_run as Record<string, unknown> | null) ?? {})
-        ?.subagent_id ?? "",
-    );
     const issue = store.getIssue({
       workspaceId,
       issueId: String(delegatedTask?.issue_id),
@@ -702,7 +698,12 @@ test("delegateTask creates issue-owned runs for an explicitly assigned teammate"
     assert.ok(issue);
     assert.equal(issue?.status, "todo");
     assert.equal(issue?.assigneeTeammateId, teammate.teammateId);
-    assert.equal(issue?.latestSubagentId, latestRunSubagentId);
+    const latestRun = store.getSubagentRunByChildSession({
+      workspaceId,
+      childSessionId: String(delegatedTask?.child_session_id ?? ""),
+    });
+    assert.ok(latestRun);
+    assert.equal(issue?.latestSubagentId, latestRun?.subagentId);
     assert.equal(issue?.description, [
       "Implement the dashboard cards and charts in React.",
       "",
