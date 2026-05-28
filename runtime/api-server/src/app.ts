@@ -6165,7 +6165,18 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         }),
         tasks: requiredDelegateTaskInputs(request.body),
       });
-      return payload;
+      const delegatedTasks = Array.isArray(payload.tasks) ? payload.tasks : [];
+      const hydratedTasks = delegatedTasks.map((task) => {
+        const delegatedTask = isRecord(task) ? task : {};
+        return runtimeAgentToolsService.getTask({
+          workspaceId,
+          taskId: requiredString(delegatedTask.task_id, "task_id"),
+        });
+      });
+      return {
+        tasks: hydratedTasks,
+        count: hydratedTasks.length,
+      };
     } catch (error) {
       if (error instanceof RuntimeAgentToolsServiceError) {
         return sendError(reply, error.statusCode, error.message);
