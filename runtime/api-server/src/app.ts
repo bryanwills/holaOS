@@ -726,6 +726,7 @@ function optionalCronjobDeliveryInput(value: unknown): {
 }
 
 function parseDelegateTaskInput(value: unknown): {
+  teammateId?: string | null;
   title?: string | null;
   goal: string;
   context?: string | null;
@@ -742,6 +743,7 @@ function parseDelegateTaskInput(value: unknown): {
     return null;
   }
   return {
+    teammateId: nullableString(value.teammate_id) ?? null,
     title: nullableString(value.title) ?? null,
     goal,
     context: nullableString(value.context) ?? null,
@@ -756,6 +758,7 @@ function parseDelegateTaskInput(value: unknown): {
 }
 
 function requiredDelegateTaskInputs(body: Record<string, unknown>): Array<{
+  teammateId?: string | null;
   title?: string | null;
   goal: string;
   context?: string | null;
@@ -2165,13 +2168,13 @@ function ensureWorkspaceOnboardingStarterMessage(params: {
 }
 
 function labPayload(params: {
-  lab: WorkspaceRecord;
+  lab: WorkspaceRecord | null;
   source: WorkspaceRecord;
   session: AgentSessionRecord | null;
   created?: boolean;
 }): Record<string, unknown> {
   return {
-    lab: workspaceRecordPayload(params.lab, null, null),
+    lab: params.lab ? workspaceRecordPayload(params.lab, null, null) : null,
     source: workspaceRecordPayload(params.source, null, null),
     session: params.session ? agentSessionPayload(params.session) : null,
     created: params.created === true,
@@ -2325,7 +2328,12 @@ function ensureWorkspaceLab(params: {
   store: RuntimeStateStore;
   sourceWorkspaceId: string;
   purpose: string;
-}): { lab: WorkspaceRecord; source: WorkspaceRecord; session: AgentSessionRecord; created: boolean } {
+}): {
+  lab: WorkspaceRecord | null;
+  source: WorkspaceRecord;
+  session: AgentSessionRecord;
+  created: boolean;
+} {
   const source = params.store.getWorkspace(params.sourceWorkspaceId);
   if (!source) {
     throw new Error("source workspace not found");
@@ -2366,6 +2374,49 @@ function ensureWorkspaceLab(params: {
       });
     }
     return { lab: existingLab, source, session: existingSession, created: false };
+  }
+
+  if (params.purpose === "workspace_onboarding") {
+    const existingSourceSessions = params.store.listSessions({
+      workspaceId: source.id,
+      includeArchived: false,
+      limit: 50,
+      offset: 0,
+    });
+    const session =
+      existingSourceSessions.find((item) => item.kind === kind) ??
+      params.store.ensureSession({
+        workspaceId: source.id,
+        sessionId: `${kind}-${randomUUID()}`,
+        kind,
+        title: "Workspace Onboarding",
+        createdBy: "system",
+      });
+    ensureWorkspaceOnboardingStarterMessage({
+      store: params.store,
+      workspaceId: source.id,
+      sessionId: session.sessionId,
+    });
+    const updatedSource = params.store.updateWorkspace(source.id, {
+      onboardingStatus: "pending",
+      onboardingState: ONBOARDING_ALIGNMENT_STATE,
+      onboardingSessionId: session.sessionId,
+      onboardingAlignmentQuestion: null,
+      onboardingAlignmentReport: null,
+      onboardingVerificationReport: null,
+      onboardingCompletedAt: null,
+      onboardingCompletionSummary: null,
+      onboardingRequestedAt: utcNowIso(),
+      onboardingRequestedBy: "workspace_user",
+    });
+    return {
+      lab: null,
+      source: updatedSource,
+      session,
+      created: existingSourceSessions.every(
+        (item) => item.sessionId !== session.sessionId,
+      ),
+    };
   }
 
   const lab = params.store.createWorkspace({
@@ -8213,7 +8264,21 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
     const lab = store.getActiveWorkspaceLab(params.workspaceId);
     if (!lab) {
-      return { lab: null, source: workspaceRecordPayload(source), session: null };
+      const session = sessionSelectionUsesOnboarding(source)
+        ? store
+            .listSessions({
+              workspaceId: source.id,
+              includeArchived: false,
+              limit: 50,
+              offset: 0,
+            })
+            .find((item) => item.kind === "workspace_onboarding") ?? null
+        : null;
+      return {
+        lab: null,
+        source: workspaceRecordPayload(source),
+        session: session ? agentSessionPayload(session) : null,
+      };
     }
     const session =
       store

@@ -90,7 +90,6 @@ import {
   parseOnboardingAlignmentReport,
   sanitizeOnboardingAlignmentReport,
 } from "../../../shared/onboarding-contract.js";
-import { selectDelegatedTaskTeammateByCapability } from "./teammate-routing.js";
 import { preferredCoordinatorSessionId } from "./coordinator-session-routing.js";
 import {
   createTeammateIdForFilesystem,
@@ -402,6 +401,7 @@ export interface RuntimeAgentToolsUpdateCronjobParams {
 }
 
 export interface RuntimeAgentToolsDelegateTaskItem {
+  teammateId?: string | null;
   title?: string | null;
   goal: string;
   context?: string | null;
@@ -3075,7 +3075,7 @@ export class RuntimeAgentToolsService {
     workspaceId: string;
     question: Record<string, unknown>;
   }): JsonObject {
-    const scope = this.requireActiveOnboardingLab(params.workspaceId);
+    const scope = this.requireOnboardingFlowScope(params.workspaceId);
     this.requireOnboardingState(scope.source, [ONBOARDING_ALIGNMENT_STATE]);
     let question: OnboardingAlignmentQuestion;
     try {
@@ -3092,9 +3092,9 @@ export class RuntimeAgentToolsService {
     });
     return {
       ...onboardingPayload(source),
-      lab_workspace_id: scope.lab.id,
-      lab_purpose: scope.lab.labPurpose,
-      lab_status: scope.lab.labStatus,
+      lab_workspace_id: scope.lab?.id ?? null,
+      lab_purpose: scope.lab?.labPurpose ?? null,
+      lab_status: scope.lab?.labStatus ?? null,
     };
   }
 
@@ -3107,7 +3107,8 @@ export class RuntimeAgentToolsService {
     notes?: string | null;
     answers?: OnboardingAlignmentQuestionAnswer[] | null;
   }): JsonObject {
-    const scope = this.requireActiveOnboardingLab(params.workspaceId);
+    const scope = this.requireOnboardingFlowScope(params.workspaceId);
+    const sessionWorkspaceId = this.onboardingFlowWorkspaceId(scope);
     this.requireOnboardingState(scope.source, [ONBOARDING_ALIGNMENT_STATE]);
     const question = parseStoredAlignmentQuestion(
       scope.source.onboardingAlignmentQuestion,
@@ -3137,14 +3138,14 @@ export class RuntimeAgentToolsService {
     }
     if (
       !this.store.getSession({
-        workspaceId: scope.lab.id,
+        workspaceId: sessionWorkspaceId,
         sessionId,
       })
     ) {
       throw new RuntimeAgentToolsServiceError(
         409,
         "onboarding_session_not_found",
-        "onboarding session could not be found in the active lab",
+        "onboarding session could not be found in the active onboarding workspace",
       );
     }
     const normalizedAnswers =
@@ -3229,12 +3230,12 @@ export class RuntimeAgentToolsService {
     }
     const queuedText = answerLines.map((entry) => entry.text).join("\n\n");
     this.store.ensureRuntimeState({
-      workspaceId: scope.lab.id,
+      workspaceId: sessionWorkspaceId,
       sessionId,
       status: "QUEUED",
     });
     const input = this.store.enqueueInput({
-      workspaceId: scope.lab.id,
+      workspaceId: sessionWorkspaceId,
       sessionId,
       payload: {
         text: queuedText,
@@ -3250,7 +3251,7 @@ export class RuntimeAgentToolsService {
       },
     });
     this.store.updateRuntimeState({
-      workspaceId: scope.lab.id,
+      workspaceId: sessionWorkspaceId,
       sessionId,
       status: "QUEUED",
       currentInputId: input.inputId,
@@ -3265,9 +3266,9 @@ export class RuntimeAgentToolsService {
     this.options.queueWorker?.wake();
     return {
       ...onboardingPayload(source),
-      lab_workspace_id: scope.lab.id,
-      lab_purpose: scope.lab.labPurpose,
-      lab_status: scope.lab.labStatus,
+      lab_workspace_id: scope.lab?.id ?? null,
+      lab_purpose: scope.lab?.labPurpose ?? null,
+      lab_status: scope.lab?.labStatus ?? null,
     };
   }
 
@@ -3275,7 +3276,7 @@ export class RuntimeAgentToolsService {
     workspaceId: string;
     report: Record<string, unknown>;
   }): JsonObject {
-    const scope = this.requireActiveOnboardingLab(params.workspaceId);
+    const scope = this.requireOnboardingFlowScope(params.workspaceId);
     this.requireOnboardingState(scope.source, [ONBOARDING_ALIGNMENT_STATE]);
     let report;
     try {
@@ -3296,14 +3297,14 @@ export class RuntimeAgentToolsService {
     });
     return {
       ...onboardingPayload(source),
-      lab_workspace_id: scope.lab.id,
-      lab_purpose: scope.lab.labPurpose,
-      lab_status: scope.lab.labStatus,
+      lab_workspace_id: scope.lab?.id ?? null,
+      lab_purpose: scope.lab?.labPurpose ?? null,
+      lab_status: scope.lab?.labStatus ?? null,
     };
   }
 
   approveAlignment(params: { workspaceId: string }): JsonObject {
-    const scope = this.requireActiveOnboardingLab(params.workspaceId);
+    const scope = this.requireOnboardingFlowScope(params.workspaceId);
     this.requireOnboardingState(scope.source, [
       ONBOARDING_AWAITING_ALIGNMENT_APPROVAL_STATE,
     ]);
@@ -3314,14 +3315,14 @@ export class RuntimeAgentToolsService {
     });
     return {
       ...onboardingPayload(source),
-      lab_workspace_id: scope.lab.id,
-      lab_purpose: scope.lab.labPurpose,
-      lab_status: scope.lab.labStatus,
+      lab_workspace_id: scope.lab?.id ?? null,
+      lab_purpose: scope.lab?.labPurpose ?? null,
+      lab_status: scope.lab?.labStatus ?? null,
     };
   }
 
   requestAlignmentRevision(params: { workspaceId: string }): JsonObject {
-    const scope = this.requireActiveOnboardingLab(params.workspaceId);
+    const scope = this.requireOnboardingFlowScope(params.workspaceId);
     this.requireOnboardingState(scope.source, [
       ONBOARDING_AWAITING_ALIGNMENT_APPROVAL_STATE,
     ]);
@@ -3331,9 +3332,9 @@ export class RuntimeAgentToolsService {
     });
     return {
       ...onboardingPayload(source),
-      lab_workspace_id: scope.lab.id,
-      lab_purpose: scope.lab.labPurpose,
-      lab_status: scope.lab.labStatus,
+      lab_workspace_id: scope.lab?.id ?? null,
+      lab_purpose: scope.lab?.labPurpose ?? null,
+      lab_status: scope.lab?.labStatus ?? null,
     };
   }
 
@@ -3341,7 +3342,7 @@ export class RuntimeAgentToolsService {
     workspaceId: string;
     report: Record<string, unknown>;
   }): JsonObject {
-    const scope = this.requireActiveOnboardingLab(params.workspaceId);
+    const scope = this.requireOnboardingFlowScope(params.workspaceId);
     this.requireOnboardingState(scope.source, [ONBOARDING_IMPLEMENTING_STATE]);
     if (Object.keys(params.report).length === 0) {
       throw new RuntimeAgentToolsServiceError(
@@ -3358,14 +3359,14 @@ export class RuntimeAgentToolsService {
     });
     return {
       ...onboardingPayload(source),
-      lab_workspace_id: scope.lab.id,
-      lab_purpose: scope.lab.labPurpose,
-      lab_status: scope.lab.labStatus,
+      lab_workspace_id: scope.lab?.id ?? null,
+      lab_purpose: scope.lab?.labPurpose ?? null,
+      lab_status: scope.lab?.labStatus ?? null,
     };
   }
 
   requestVerificationRevision(params: { workspaceId: string }): JsonObject {
-    const scope = this.requireActiveOnboardingLab(params.workspaceId);
+    const scope = this.requireOnboardingFlowScope(params.workspaceId);
     this.requireOnboardingState(scope.source, [
       ONBOARDING_AWAITING_VERIFICATION_ACCEPTANCE_STATE,
     ]);
@@ -3376,9 +3377,9 @@ export class RuntimeAgentToolsService {
     });
     return {
       ...onboardingPayload(source),
-      lab_workspace_id: scope.lab.id,
-      lab_purpose: scope.lab.labPurpose,
-      lab_status: scope.lab.labStatus,
+      lab_workspace_id: scope.lab?.id ?? null,
+      lab_purpose: scope.lab?.labPurpose ?? null,
+      lab_status: scope.lab?.labStatus ?? null,
     };
   }
 
@@ -3733,6 +3734,7 @@ export class RuntimeAgentToolsService {
     const parentInputId = normalizedString(params.inputId) || null;
     const requestedTasks = params.tasks
       .map((task) => ({
+        teammateId: normalizedString(task.teammateId),
         title: normalizedString(task.title),
         goal: normalizedString(task.goal),
         context: normalizedString(task.context),
@@ -3756,6 +3758,13 @@ export class RuntimeAgentToolsService {
     const createdRuns: SyncedSubagentRunState[] = [];
     for (const task of requestedTasks) {
       const title = normalizedSubagentTaskTitle(task.title, task.goal);
+      if (!task.teammateId) {
+        throw new RuntimeAgentToolsServiceError(
+          400,
+          "teammate_id_required",
+          "teammate_id is required for delegated tasks",
+        );
+      }
       const requestedModel = task.model || null;
       const parentInput = parentInputId
         ? this.store.getInput({
@@ -3777,12 +3786,13 @@ export class RuntimeAgentToolsService {
         tools: task.tools,
         timeoutMs: task.timeoutMs,
       });
-      const assignee = this.selectDelegatedTaskTeammate({
+      const assignee = this.requireActiveTeammate({
         workspaceId: params.workspaceId,
-        title,
-        goal: task.goal,
-        context: task.context || null,
-        tools: task.tools,
+        teammateId: task.teammateId,
+        missingCode: "teammate_not_found",
+        inactiveCode: "teammate_inactive",
+        inactiveMessage:
+          "teammate must be active before it can receive delegated tasks",
       });
       const forwardedAttachments = attachmentsFromInputPayload(parentInput?.payload.attachments);
       const forwardedImageUrls = normalizedStringList(parentInput?.payload.image_urls);
@@ -5852,29 +5862,34 @@ export class RuntimeAgentToolsService {
     });
   }
 
-  private selectDelegatedTaskTeammate(params: {
+  private requireActiveTeammate(params: {
     workspaceId: string;
-    title: string;
-    goal: string;
-    context?: string | null;
-    tools?: string[] | null;
+    teammateId: string;
+    missingCode?: string;
+    inactiveCode?: string;
+    inactiveMessage?: string;
   }): TeammateRecord {
-    const general = this.store.ensureGeneralTeammate(params.workspaceId);
-    const teammates = this.store.listTeammates({
+    const teammate = this.store.getTeammate({
       workspaceId: params.workspaceId,
+      teammateId: params.teammateId,
+      includeArchived: true,
     });
-    const workspaceDir = this.store.workspaceDir(params.workspaceId);
-    return selectDelegatedTaskTeammateByCapability({
-      general,
-      teammates,
-      workspaceDir,
-      query: {
-        title: params.title,
-        goal: params.goal,
-        context: params.context ?? null,
-        tools: normalizedStringList(params.tools),
-      },
-    });
+    if (!teammate) {
+      throw new RuntimeAgentToolsServiceError(
+        404,
+        params.missingCode ?? "teammate_not_found",
+        "teammate not found",
+      );
+    }
+    if (teammate.status !== "active") {
+      throw new RuntimeAgentToolsServiceError(
+        409,
+        params.inactiveCode ?? "teammate_inactive",
+        params.inactiveMessage ??
+          "teammate must be active before it can receive delegated tasks",
+      );
+    }
+    return teammate;
   }
 
   private issueBlockerReasonFromState(state: SyncedSubagentRunState): string | null {
@@ -6220,19 +6235,27 @@ export class RuntimeAgentToolsService {
     return { source: workspace, lab: null };
   }
 
-  private requireActiveOnboardingLab(workspaceId: string): {
+  private requireOnboardingFlowScope(workspaceId: string): {
     source: WorkspaceRecord;
-    lab: WorkspaceRecord;
+    lab: WorkspaceRecord | null;
   } {
     const scope = this.resolveOnboardingFlowScope(workspaceId);
-    if (!scope.lab) {
+    const onboardingSessionId = normalizedString(scope.source.onboardingSessionId);
+    if (!scope.lab && !onboardingSessionId) {
       throw new RuntimeAgentToolsServiceError(
         409,
-        "onboarding_lab_not_active",
-        "active workspace onboarding lab not found",
+        "onboarding_session_not_active",
+        "active workspace onboarding session not found",
       );
     }
-    return { source: scope.source, lab: scope.lab };
+    return scope;
+  }
+
+  private onboardingFlowWorkspaceId(scope: {
+    source: WorkspaceRecord;
+    lab: WorkspaceRecord | null;
+  }): string {
+    return scope.lab?.id ?? scope.source.id;
   }
 
   private requireOnboardingState(

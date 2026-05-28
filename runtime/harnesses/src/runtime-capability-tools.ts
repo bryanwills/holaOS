@@ -428,6 +428,11 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
             items: {
               type: "object",
               properties: {
+                teammate_id: {
+                  type: "string",
+                  description:
+                    "Required teammate id for the delegated worker. Choose the assignee explicitly; do not rely on runtime auto-routing.",
+                },
                 title: { type: "string", description: "Optional short task title." },
                 goal: { type: "string", description: "Required task goal or instruction." },
                 context: { type: "string", description: "Optional supporting context for this task." },
@@ -448,9 +453,14 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
                   minimum: 1,
                 },
               },
-              required: ["goal"],
+              required: ["teammate_id", "goal"],
               additionalProperties: false,
             },
+          },
+          teammate_id: {
+            type: "string",
+            description:
+              "Singleton alias: required teammate id for the delegated worker.",
           },
           title: { type: "string", description: "Singleton alias: optional short task title." },
           goal: { type: "string", description: "Singleton alias: task goal or instruction." },
@@ -472,6 +482,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
             minimum: 1,
           },
         },
+        required: ["tasks"],
         additionalProperties: false,
       };
     case "get_task":
@@ -1265,7 +1276,8 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
   if (toolId === "delegate_task") {
     return [
       "Use `delegate_task` for longer-running, multi-step, or interruptible work that should continue while the main conversation remains free.",
-      "Keep each delegated task narrowly scoped and self-contained. Use the canonical `tasks` array for batched delegation and the singleton top-level fields only for one task.",
+      "Keep each delegated task narrowly scoped and self-contained. Pass delegated work through the canonical `tasks` array.",
+      "Always choose and pass an explicit `teammate_id`. The manager owns teammate routing; do not omit the assignee and do not expect the runtime to choose one for you.",
       "Use `tools` as coarse capability buckets such as `web`, `browser`, `terminal`, or `file`; do not treat them as raw low-level tool ids.",
       "Default delegated browser work to the agent browser. Set `use_user_browser_surface` only when the user explicitly says `use my browser`.",
       "Do not infer user-browser intent from `current tab`, `current page`, `this page`, generic browser requests, or operator-surface context alone.",

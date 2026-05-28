@@ -907,7 +907,7 @@ test("composeAgentPrompt keeps onboarding sessions free of subagent delegation d
   assert.doesNotMatch(prompt.systemPrompt, /Subagents are backstage executors\./);
 });
 
-test("composeAgentPrompt gives workspace onboarding its own design-lab prompt", () => {
+test("composeAgentPrompt gives workspace onboarding its own controller prompt", () => {
   const capabilityManifest = buildAgentCapabilityManifest({
     defaultTools: ["read", "edit", "bash"],
     extraTools: [
@@ -943,7 +943,7 @@ test("composeAgentPrompt gives workspace onboarding its own design-lab prompt", 
     capabilityManifest,
   });
 
-  assert.match(prompt.systemPrompt, /workspace onboarding design lab controller/);
+  assert.match(prompt.systemPrompt, /workspace onboarding controller/);
   assert.match(prompt.systemPrompt, /user-facing architect and builder/);
   assert.match(prompt.systemPrompt, /cronjobs or recurring work/);
   assert.match(prompt.systemPrompt, /small app builds or slices to implement/);
@@ -1000,7 +1000,7 @@ test("composeAgentPrompt gives meeting mode its own critique-lab prompt", () => 
   assert.match(prompt.systemPrompt, /concrete backlog first/);
   assert.match(prompt.systemPrompt, /confirms priorities/);
   assert.match(prompt.systemPrompt, /explicit user acceptance before merging/);
-  assert.doesNotMatch(prompt.systemPrompt, /workspace onboarding design lab controller/);
+  assert.doesNotMatch(prompt.systemPrompt, /workspace onboarding controller/);
 });
 
 test("composeBaseAgentPrompt includes shared todo continuity policy when todo tools are available", () => {
@@ -1311,13 +1311,14 @@ test("composeBaseAgentPrompt includes teammate routing context when provided", (
   assert.doesNotMatch(prompt.systemPrompt, /Teammate routing roster:/);
   assert.match(prompt.contextMessages.join("\n\n"), /Teammate routing roster:/);
   assert.match(prompt.contextMessages.join("\n\n"), /Fall back to `General` when no custom teammate is a clear fit\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /always pass an explicit `teammate_id`/i);
   assert.match(prompt.contextMessages.join("\n\n"), /Prefer `HR` for teammate creation, teammate reshaping, roster design, and teammate bootstrap work when that teammate is available\./);
   assert.match(prompt.contextMessages.join("\n\n"), /load the `create-teammate` skill via the `skill` tool before creating anyone/i);
   assert.match(prompt.contextMessages.join("\n\n"), /Do not create a teammate until the stable remit is understood/i);
   assert.match(prompt.contextMessages.join("\n\n"), /ask for the concrete missing remit details before calling teammate-creation tools/i);
   assert.match(prompt.contextMessages.join("\n\n"), /identify required integrations, ask the user to connect missing prerequisites, and create teammate-local skills/i);
-  assert.match(prompt.contextMessages.join("\n\n"), /`HR` \[system\/active\]: Roster manager for teammate design, teammate creation, skills bootstrap, and integration readiness\./);
-  assert.match(prompt.contextMessages.join("\n\n"), /`Frontend` \[custom\/active\]: Best for React dashboard implementation and UI refactors\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /`HR` \(id: `hr`\) \[system\/active\]: Roster manager for teammate design, teammate creation, skills bootstrap, and integration readiness\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /`Frontend` \(id: `frontend`\) \[custom\/active\]: Best for React dashboard implementation and UI refactors\./);
   assert.match(prompt.contextMessages.join("\n\n"), /Capability tags: `frontend`, `react`, `dashboard`, `ui`\./);
   assert.match(
     prompt.contextMessages.join("\n\n"),

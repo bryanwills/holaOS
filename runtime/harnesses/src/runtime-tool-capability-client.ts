@@ -278,7 +278,9 @@ function createImageGenerationBody(toolParams: unknown): Record<string, unknown>
 function normalizeDelegateTask(taskParams: unknown): Record<string, unknown> {
   const params = isRecord(taskParams) ? taskParams : {};
   const goal = optionalString(params.goal);
+  const teammateId = optionalString(params.teammate_id);
   return {
+    ...(teammateId ? { teammate_id: teammateId } : {}),
     ...(optionalString(params.title) ? { title: optionalString(params.title) } : {}),
     ...(goal ? { goal } : {}),
     ...(optionalString(params.context) ? { context: optionalString(params.context) } : {}),
@@ -294,7 +296,9 @@ function normalizeDelegateTask(taskParams: unknown): Record<string, unknown> {
 function createDelegateTaskBody(toolParams: unknown): Record<string, unknown> {
   const params = isRecord(toolParams) ? toolParams : {};
   const normalizedTasks = Array.isArray(params.tasks)
-    ? params.tasks.map((task) => normalizeDelegateTask(task)).filter((task) => typeof task.goal === "string")
+    ? params.tasks
+        .map((task) => normalizeDelegateTask(task))
+        .filter((task) => typeof task.goal === "string")
     : [];
   if (normalizedTasks.length > 0) {
     return { tasks: normalizedTasks };

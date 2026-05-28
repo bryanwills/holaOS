@@ -70,7 +70,7 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
   {
     id: "delegate_task",
     description:
-      "Delegate one or more background tasks to hidden subagents for the current workspace session while keeping the main conversation free.",
+      "Delegate one or more background tasks to hidden subagents for the current workspace session while keeping the main conversation free. Each delegated task must include an explicit teammate_id chosen by the manager.",
     policy: "coordinate"
   },
   {

@@ -45,13 +45,6 @@ import { CHAT_LAYOUT } from "@/lib/chatLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Textarea } from "@/components/ui/textarea";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
@@ -65,28 +58,6 @@ import {
   upsertInternalTab,
   workspaceSurfaceTab,
 } from "./state/internalTabs";
-
-const ISSUE_STATUS_OPTIONS: Array<{
-  value: IssueStatusPayload;
-  label: string;
-  disabled?: boolean;
-}> = [
-  { value: "todo", label: "Todo" },
-  { value: "in_progress", label: "In progress", disabled: true },
-  { value: "in_review", label: "In review" },
-  { value: "blocked", label: "Blocked" },
-  { value: "done", label: "Done" },
-];
-
-const ISSUE_PRIORITY_OPTIONS: Array<{
-  value: IssuePriorityPayload;
-  label: string;
-}> = [
-  { value: "critical", label: "Critical" },
-  { value: "high", label: "High" },
-  { value: "medium", label: "Medium" },
-  { value: "low", label: "Low" },
-];
 
 function issueStatusLabel(status: IssueStatusPayload): string {
   switch (status) {
@@ -301,16 +272,6 @@ export function IssueDetailPane({
   const assignee = issue?.assignee_teammate_id
     ? teammatesById[issue.assignee_teammate_id] ?? null
     : null;
-  const statusOptions = useMemo(
-    () =>
-      issue?.status === "backlog"
-        ? [
-            { value: "backlog", label: "Backlog (hidden)", disabled: true },
-            ...ISSUE_STATUS_OPTIONS,
-          ]
-        : ISSUE_STATUS_OPTIONS,
-    [issue?.status],
-  );
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [historyError, setHistoryError] = useState("");
@@ -1056,76 +1017,6 @@ export function IssueDetailPane({
     [issue, refresh, refreshThread],
   );
 
-  const handleStatusChange = useCallback(
-    async (nextStatus: IssueStatusPayload) => {
-      if (!issue || nextStatus === issue.status) {
-        return;
-      }
-      let blockerReason: string | null | undefined = undefined;
-      if (nextStatus === "blocked") {
-        const response = window.prompt(
-          "Why is this issue blocked?",
-          issue.blocker_reason ?? "",
-        );
-        if (response == null) {
-          return;
-        }
-        const trimmed = response.trim();
-        if (!trimmed) {
-          setMutationError("Blocked issues need a blocker reason.");
-          return;
-        }
-        blockerReason = trimmed;
-      } else if (issue.blocker_reason) {
-        blockerReason = null;
-      }
-      await runIssueMutation(
-        () =>
-          window.electronAPI.workspace.updateIssue(workspaceId, issue.issue_id, {
-            workspace_id: workspaceId,
-            status: nextStatus,
-            blocker_reason: blockerReason,
-          }),
-        "Failed to update issue status",
-      );
-    },
-    [issue, runIssueMutation, workspaceId],
-  );
-
-  const handleAssigneeChange = useCallback(
-    async (nextTeammateId: string | null) => {
-      if (!issue || (issue.assignee_teammate_id ?? null) === nextTeammateId) {
-        return;
-      }
-      await runIssueMutation(
-        () =>
-          window.electronAPI.workspace.updateIssue(workspaceId, issue.issue_id, {
-            workspace_id: workspaceId,
-            assignee_teammate_id: nextTeammateId,
-          }),
-        "Failed to update issue assignee",
-      );
-    },
-    [issue, runIssueMutation, workspaceId],
-  );
-
-  const handlePriorityChange = useCallback(
-    async (nextPriority: IssuePriorityPayload | null) => {
-      if (!issue || (issue.priority ?? null) === nextPriority) {
-        return;
-      }
-      await runIssueMutation(
-        () =>
-          window.electronAPI.workspace.updateIssue(workspaceId, issue.issue_id, {
-            workspace_id: workspaceId,
-            priority: nextPriority,
-          }),
-        "Failed to update issue priority",
-      );
-    },
-    [issue, runIssueMutation, workspaceId],
-  );
-
   const handleSaveDetails = useCallback(async () => {
     if (!issue) {
       return;
@@ -1740,130 +1631,6 @@ export function IssueDetailPane({
 
             <aside className="grid content-start gap-6 xl:sticky xl:top-0 xl:self-start xl:border-l xl:border-border/70 xl:pl-5">
               <SidebarSection
-                title="Properties"
-                description="Status, assignee, and priority can be changed while the issue is idle."
-              >
-                <div className="space-y-5">
-                  <div className="flex flex-wrap gap-2">
-                    <Badge variant="outline" className="bg-background/70">
-                      <StatusDot
-                        variant={issueStatusVariant(issue.status)}
-                        pulse={Boolean(issue.active_subagent_id)}
-                      />
-                      {issueStatusLabel(issue.status)}
-                    </Badge>
-                    <Badge variant="outline" className="bg-background/70">
-                      <UserRound className="size-3.5" />
-                      {assignee?.name || "Unassigned"}
-                    </Badge>
-                    {issue.priority ? (
-                      <Badge variant="outline" className="bg-background/70">
-                        {issue.priority.slice(0, 1).toUpperCase() +
-                          issue.priority.slice(1)}
-                      </Badge>
-                    ) : null}
-                    {issue.attachments.length > 0 ? (
-                      <Badge variant="outline" className="bg-background/70">
-                        <Paperclip className="size-3.5" />
-                        {issue.attachments.length} attachment
-                        {issue.attachments.length === 1 ? "" : "s"}
-                      </Badge>
-                    ) : null}
-                  </div>
-
-                  <PropertyRow
-                    label="Status"
-                    description="Todo auto-dispatches when the issue has an assignee."
-                  >
-                    <Select
-                      value={issue.status}
-                      onValueChange={(value) => {
-                        if (!value) return;
-                        void handleStatusChange(value as IssueStatusPayload);
-                      }}
-                      disabled={Boolean(issue.active_subagent_id) || isMutationPending}
-                    >
-                      <SelectTrigger className="h-10 w-full bg-background text-sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent align="start">
-                    {statusOptions.map((option) => (
-                      <SelectItem
-                        key={option.value}
-                        value={option.value}
-                        disabled={option.disabled}
-                          >
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </PropertyRow>
-
-                  <PropertyRow
-                    label="Assignee"
-                    description="Unassigned Todo issues stay idle until someone takes them."
-                  >
-                    <Select
-                      value={issue.assignee_teammate_id ?? "__unassigned__"}
-                      onValueChange={(value) => {
-                        if (!value) return;
-                        void handleAssigneeChange(
-                          value === "__unassigned__" ? null : value,
-                        );
-                      }}
-                      disabled={Boolean(issue.active_subagent_id) || isMutationPending}
-                    >
-                      <SelectTrigger className="h-10 w-full bg-background text-sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent align="start">
-                        <SelectItem value="__unassigned__">Unassigned</SelectItem>
-                        {teammates.map((teammate) => (
-                          <SelectItem
-                            key={teammate.teammate_id}
-                            value={teammate.teammate_id}
-                          >
-                            {teammate.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </PropertyRow>
-
-                  <PropertyRow
-                    label="Priority"
-                    description="Optional routing hint for humans reviewing the board."
-                  >
-                    <Select
-                      value={issue.priority ?? "__none__"}
-                      onValueChange={(value) => {
-                        if (!value) return;
-                        void handlePriorityChange(
-                          value === "__none__"
-                            ? null
-                            : (value as IssuePriorityPayload),
-                        );
-                      }}
-                      disabled={Boolean(issue.active_subagent_id) || isMutationPending}
-                    >
-                      <SelectTrigger className="h-10 w-full bg-background text-sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent align="start">
-                        <SelectItem value="__none__">No priority</SelectItem>
-                        {ISSUE_PRIORITY_OPTIONS.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </PropertyRow>
-                </div>
-              </SidebarSection>
-
-              <SidebarSection
                 title="Execution log"
                 description="Current run state for the assigned teammate."
               >
@@ -1970,30 +1737,6 @@ function SidebarSection({
       </div>
       <div className="mt-4">{children}</div>
     </section>
-  );
-}
-
-function PropertyRow({
-  label,
-  description,
-  children,
-}: {
-  label: string;
-  description?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <div className="text-xs font-medium uppercase tracking-[0.18em] text-foreground/38">
-        {label}
-      </div>
-      {description ? (
-        <div className="mt-1 text-xs leading-5 text-foreground/48">
-          {description}
-        </div>
-      ) : null}
-      <div className="mt-2">{children}</div>
-    </div>
   );
 }
 

@@ -15612,7 +15612,7 @@ async function createLocalWorkspace(
         updated = await runtimeClient.workspaces
           .update(workspaceId, {
             error_message: contextualWorkspaceCreateError(
-              "Workspace created, but workspace onboarding lab could not start",
+              "Workspace created, but workspace onboarding could not start",
               error,
             ),
           })

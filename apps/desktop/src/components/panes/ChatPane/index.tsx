@@ -8834,7 +8834,7 @@ export function ChatPane({
                 Verification report
               </div>
               <div className="mt-1 text-sm font-medium text-foreground">
-                Review before final merge
+                Review before finishing onboarding
               </div>
             </div>
             <div className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-medium text-primary">
@@ -8853,7 +8853,7 @@ export function ChatPane({
             <>
               <div className="text-sm leading-6 text-foreground">
                 {verificationReportSummary ||
-                  "Implementation is complete. Review the verification report before merging the lab."}
+                  "Implementation is complete. Review the verification report before finishing onboarding."}
               </div>
               {verificationReportDetails.length > 0 ? (
                 <div className="space-y-3">

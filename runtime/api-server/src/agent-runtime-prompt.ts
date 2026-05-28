@@ -230,12 +230,12 @@ function sessionPolicyPromptSection(request: ComposeBaseAgentPromptRequest): str
       break;
     case "workspace_onboarding":
       lines.push(
-        "This is a workspace onboarding lab controller session. Act as a user-facing architect and builder with executor-grade tools.",
-        "Run onboarding as a gated design process: converse with the user to gather requirements, converge those requirements into a concrete design report, wait for user confirmation, then execute and implement the confirmed design in the lab workspace.",
+        "This is a workspace onboarding controller session. Act as a user-facing architect and builder with executor-grade tools.",
+        "Run onboarding as a gated design process: converse with the user to gather requirements, converge those requirements into a concrete design report, wait for user confirmation, then execute and implement the confirmed design directly in the workspace.",
         "Keep the user-facing onboarding thread focused and sequential. Delegate implementation to subagents only after the user confirms the design report, then wait for the delegated implementation to finish before continuing the onboarding conversation.",
-        "After implementation, verify the result and present a concise verification report to the user. If the user is not satisfied, continue the conversation-design-implementation-verification loop in the lab.",
+        "After implementation, verify the result and present a concise verification report to the user. If the user is not satisfied, continue the conversation-design-implementation-verification loop in the same workspace.",
         "Required requirements to obtain: cronjobs or recurring work, small app builds or slices to implement, workspace file and folder organization, skills or repeatable workflows, and AI manager personality and behavior.",
-        "Only call onboarding completion and merge the lab after the user explicitly accepts the verified implementation."
+        "Only mark onboarding complete after the user explicitly accepts the verified implementation."
       );
       break;
     case "meeting_mode":
@@ -487,6 +487,7 @@ function teammateRoutingContextPromptSection(
     "Teammate routing roster:",
     "Use this roster to choose who should receive delegated work. These are routing profiles for teammate selection, not direct authority grants for the current front session.",
     "Prefer the teammate whose declared capabilities, summary, instructions, and skills best match the task. Fall back to `General` when no custom teammate is a clear fit.",
+    "When calling `delegate_task`, always pass an explicit `teammate_id`. The manager owns assignee selection; do not omit it and do not expect the runtime to choose for you.",
     "Prefer `HR` for teammate creation, teammate reshaping, roster design, and teammate bootstrap work when that teammate is available.",
     "If the user wants to add or reshape teammates, load the `create-teammate` skill via the `skill` tool before creating anyone when that skill is available.",
     "Do not create a teammate until the stable remit is understood: responsibilities, boundaries, default work, and how the role differs from the current roster.",
@@ -495,6 +496,7 @@ function teammateRoutingContextPromptSection(
   ];
 
   for (const teammate of teammates) {
+    const teammateId = nonEmptyText(teammate.teammate_id);
     const name = nonEmptyText(teammate.name);
     const kind = nonEmptyText(teammate.kind) || "custom";
     const status = nonEmptyText(teammate.status) || "active";
@@ -537,7 +539,10 @@ function teammateRoutingContextPromptSection(
           )
           .slice(0, 6)
       : [];
-    lines.push(`- \`${name}\` [${kind}/${status}]: ${summary}`);
+    const rosterLabel = teammateId
+      ? `\`${name}\` (id: \`${teammateId}\`)`
+      : `\`${name}\``;
+    lines.push(`- ${rosterLabel} [${kind}/${status}]: ${summary}`);
     if (capabilities.length > 0) {
       lines.push(
         `  Capability tags: ${capabilities.map((value) => `\`${value}\``).join(", ")}.`,
@@ -1269,7 +1274,7 @@ export function buildMainSessionPromptSections(
     );
   } else if (normalizedSessionKind === "workspace_onboarding") {
     conversationLines.splice(4, 0,
-      "This session is the workspace onboarding design lab controller.",
+      "This session is the workspace onboarding controller.",
       "You are a user-facing architect and builder. Keep the onboarding thread conversational and uncluttered; do implementation work through delegated workers only after the user has confirmed the design.",
       "Actively obtain the required workspace alignment inputs: cronjobs or recurring work, small app builds or slices to implement, workspace file and folder organization, skills or repeatable workflows, and AI manager personality and behavior.",
       "Use `holaboss_onboarding_status` to ground the current onboarding state before changing phases or claiming what comes next.",
@@ -1277,9 +1282,9 @@ export function buildMainSessionPromptSections(
       "While aligning, converse first, then when ready, call `holaboss_create_alignment_report` to converge the answers into a concise alignment report that states the proposed workspace structure, scoped app builds, skills, cronjobs, and AI manager behavior.",
       "The alignment report must include non-empty `summary` and `markdown` fields plus these structured top-level keys: `workspace_structure`, `app_builds`, `skills`, `cronjobs`, `ai_manager_behavior`, `open_questions`, and `implementation_notes`. Keep app builds small and concrete enough that implementation can start from a thin first pass instead of a full product spec.",
       "After creating the alignment report, stop and wait for the alignment review card. Do not ask the user to type approval words such as `approve`, and do not restate the report as a freeform chat approval handoff.",
-      "Once onboarding state moves to implementing through the review UI, delegate the approved implementation inside the lab workspace. Keep onboarding sequential by waiting for implementation results before moving to verification.",
-      "After delegated implementation finishes, inspect or verify the lab result yourself, then create the verification handoff with `holaboss_create_verification_report`, again including a concise human-readable `markdown` body plus any structured verification fields that should remain machine-readable.",
-      "After creating the verification report, stop and wait for the verification review card. Final acceptance, revision, and merge are handled by the UI, not by a runtime tool call from the model."
+      "Once onboarding state moves to implementing through the review UI, delegate the approved implementation in the workspace. Keep onboarding sequential by waiting for implementation results before moving to verification.",
+      "After delegated implementation finishes, inspect or verify the result yourself, then create the verification handoff with `holaboss_create_verification_report`, again including a concise human-readable `markdown` body plus any structured verification fields that should remain machine-readable.",
+      "After creating the verification report, stop and wait for the verification review card. Final acceptance and revision are handled by the UI, not by a runtime tool call from the model."
     );
   } else if (normalizedSessionKind === "meeting_mode") {
     conversationLines.splice(4, 0,

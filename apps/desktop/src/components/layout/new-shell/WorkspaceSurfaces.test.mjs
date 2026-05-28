@@ -157,13 +157,13 @@ test("workspace surfaces wire board and dashboard tabs through the shell", async
   assert.match(issueDetailPaneSource, /workspaceSurfaceTab\("issues_board"/);
   assert.match(issueDetailPaneSource, /Back to board/);
   assert.match(issueDetailPaneSource, /attachments: nextIssueAttachments/);
-  assert.match(issueDetailPaneSource, /Properties/);
+  assert.doesNotMatch(issueDetailPaneSource, /title="Properties"/);
   assert.match(issueDetailPaneSource, /Activity/);
   assert.doesNotMatch(
     issueDetailPaneSource,
     /\{ value: "backlog", label: "Backlog" \},/,
   );
-  assert.match(issueDetailPaneSource, /Backlog \(hidden\)/);
+  assert.doesNotMatch(issueDetailPaneSource, /Backlog \(hidden\)/);
   assert.match(issueDetailPaneSource, /showExecutionInternals: true,/);
   assert.match(issueDetailPaneSource, /<ConversationTurns[\s\S]*showExecutionInternals/);
   assert.match(issueDetailPaneSource, /liveAssistantTurn=\{/);
