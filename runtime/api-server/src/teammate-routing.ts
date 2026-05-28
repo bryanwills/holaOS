@@ -24,6 +24,21 @@ export interface TeammateRoutingRosterEntry {
   skill_names: string[];
 }
 
+const APP_DOMAIN_QUERY_PATTERN =
+  /\b(app|apps|dashboard|dashboards|ui|frontend|client|surface|internal tool|integration module|polish|workspace_apps_[a-z_]+)\b/i;
+const APP_DOMAIN_CAPABILITY_TOKENS = new Set([
+  "app",
+  "apps",
+  "dashboard",
+  "dashboards",
+  "ui",
+  "frontend",
+  "client",
+  "sdk",
+  "polish",
+  "lifecycle",
+]);
+
 function nonEmptyText(value: string | null | undefined): string {
   return (value ?? "").trim();
 }
@@ -166,6 +181,37 @@ function teammateRoutingCorpusTokens(
   ]);
 }
 
+function queryTargetsAppDomain(params: {
+  queryText: string;
+  queryTools: string[];
+}): boolean {
+  return (
+    APP_DOMAIN_QUERY_PATTERN.test(params.queryText) ||
+    params.queryTools.some((tool) => tool.startsWith("workspace_apps_"))
+  );
+}
+
+function teammateOwnsAppDomain(
+  teammate: TeammateRecord,
+  entry: TeammateRoutingRosterEntry,
+): boolean {
+  if (teammate.teammateId === "app_builder") {
+    return true;
+  }
+  const teammateTokens = new Set([
+    ...routingTokens(teammate.teammateId),
+    ...routingTokens(teammate.name),
+    ...routingTokens(entry.summary),
+    ...entry.capabilities.flatMap((value) => routingTokens(value)),
+  ]);
+  for (const token of APP_DOMAIN_CAPABILITY_TOKENS) {
+    if (teammateTokens.has(token)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function selectDelegatedTaskTeammateByCapability(params: {
   general: TeammateRecord;
   teammates: TeammateRecord[];
@@ -191,6 +237,10 @@ export function selectDelegatedTaskTeammateByCapability(params: {
   ]
     .join("\n")
     .toLowerCase();
+  const appDomainQuery = queryTargetsAppDomain({
+    queryText,
+    queryTools,
+  });
 
   let bestTeammate = params.general;
   let bestScore = 0;
@@ -230,6 +280,10 @@ export function selectDelegatedTaskTeammateByCapability(params: {
       if (corpusTokens.has(token)) {
         score += 1;
       }
+    }
+
+    if (appDomainQuery && teammateOwnsAppDomain(teammate, entry)) {
+      score += queryTools.some((tool) => tool.startsWith("workspace_apps_")) ? 10 : 6;
     }
 
     if (score > bestScore) {

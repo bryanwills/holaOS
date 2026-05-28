@@ -39,17 +39,20 @@ const GENERAL_TEAMMATE_ID = "general";
 const GENERAL_TEAMMATE_NAME = "General";
 const HR_TEAMMATE_ID = "hr";
 const HR_TEAMMATE_NAME = "HR";
+const APP_BUILDER_TEAMMATE_ID = "app_builder";
+const APP_BUILDER_TEAMMATE_NAME = "App Builder";
 const LEGACY_GENERAL_TEAMMATE_INSTRUCTIONS =
   "General-purpose execution teammate backed by the current subagent runtime.";
 const GENERAL_TEAMMATE_INSTRUCTIONS = [
   LEGACY_GENERAL_TEAMMATE_INSTRUCTIONS,
+  "Do not own holaOS app creation, dashboard polish, or managed app lifecycle work. Route those requests to App Builder instead of absorbing them as generic execution.",
   "For multi-source research, latest-news scans, investigations, comparisons, and other evidence-heavy work, produce a report artifact instead of packing the full findings into the final session message.",
   "Use `write_report` when available; otherwise save a self-contained HTML report under `outputs/reports/`.",
   "Keep the final session message to a concise handoff with the key takeaways and the artifact reference.",
 ].join("\n\n");
 const GENERAL_TEAMMATE_CAPABILITY_PROFILE: TeammateCapabilityProfileRecord = {
   summary:
-    "Fallback executor for general implementation, research, triage, and catch-all delegated work.",
+    "Fallback executor for non-app implementation, research, triage, and catch-all delegated work.",
   capabilities: [
     "generalist",
     "implementation",
@@ -78,6 +81,28 @@ const HR_TEAMMATE_CAPABILITY_PROFILE: TeammateCapabilityProfileRecord = {
     "integrations",
   ],
 };
+const APP_BUILDER_TEAMMATE_INSTRUCTIONS = [
+  "Built-in application specialist for the workspace.",
+  "Own requests to create, extend, and polish holaOS apps, including both integration modules and dashboard apps.",
+  "Before building or reshaping an app, confirm the app's user-facing purpose, the required integrations, the core data model, and whether the result should be integration-only or include a dashboard surface.",
+  "Use the `app-builder-sdk` skill before creating new apps or making substantial app architecture changes.",
+  "For dashboard-shape apps with a `src/client/` surface, load and follow `build-dashboard` once the SDK and runtime wiring are in place.",
+  "Treat app work as production work: wire the runtime correctly, build and restart the app, and verify readiness before handing it back.",
+  "For dashboard apps, verify the rendered result and iterate on polish instead of stopping at scaffolding or placeholder UI.",
+].join("\n\n");
+const APP_BUILDER_TEAMMATE_CAPABILITY_PROFILE: TeammateCapabilityProfileRecord = {
+  summary:
+    "Specialist builder for holaOS apps, dashboard surfaces, app runtime wiring, managed lifecycle, and app polish.",
+  capabilities: [
+    "apps",
+    "dashboards",
+    "ui",
+    "sdk",
+    "implementation",
+    "lifecycle",
+    "polish",
+  ],
+};
 type SystemTeammateDefinition = Readonly<{
   teammateId: string;
   name: string;
@@ -98,10 +123,25 @@ const SYSTEM_TEAMMATE_DEFINITIONS: readonly SystemTeammateDefinition[] = [
     instructions: HR_TEAMMATE_INSTRUCTIONS,
     capabilityProfile: HR_TEAMMATE_CAPABILITY_PROFILE,
   },
+  {
+    teammateId: APP_BUILDER_TEAMMATE_ID,
+    name: APP_BUILDER_TEAMMATE_NAME,
+    instructions: APP_BUILDER_TEAMMATE_INSTRUCTIONS,
+    capabilityProfile: APP_BUILDER_TEAMMATE_CAPABILITY_PROFILE,
+  },
 ];
 const SYSTEM_TEAMMATE_DEFINITIONS_BY_ID = new Map<string, SystemTeammateDefinition>(
   SYSTEM_TEAMMATE_DEFINITIONS.map((definition) => [definition.teammateId, definition]),
 );
+const SYSTEM_TEAMMATE_ORDER_CASE_SQL = SYSTEM_TEAMMATE_DEFINITIONS.map(
+  (definition, index) =>
+    `WHEN kind = 'system' AND teammate_id = '${definition.teammateId}' THEN ${index}`,
+).join("\n            ");
+const CUSTOM_TEAMMATE_ORDER_INDEX = SYSTEM_TEAMMATE_DEFINITIONS.length;
+const SYSTEM_TEAMMATE_IDS = SYSTEM_TEAMMATE_DEFINITIONS.map(
+  (definition) => definition.teammateId,
+);
+const SYSTEM_TEAMMATE_PLACEHOLDERS = SYSTEM_TEAMMATE_IDS.map(() => "?").join(", ");
 const WORKSPACE_SCOPED_LEGACY_BACKFILL_TABLES = [
   "agent_sessions",
   "agent_runtime_sessions",
@@ -2370,14 +2410,30 @@ export class RuntimeStateStore {
   ensureGeneralTeammate(workspaceId: string): TeammateRecord {
     return (
       this.ensureSystemTeammates(workspaceId).get(GENERAL_TEAMMATE_ID) ??
-      this.ensureSystemTeammate(workspaceId, SYSTEM_TEAMMATE_DEFINITIONS[0]!)
+      this.ensureSystemTeammate(
+        workspaceId,
+        SYSTEM_TEAMMATE_DEFINITIONS_BY_ID.get(GENERAL_TEAMMATE_ID)!,
+      )
     );
   }
 
   ensureHrTeammate(workspaceId: string): TeammateRecord {
     return (
       this.ensureSystemTeammates(workspaceId).get(HR_TEAMMATE_ID) ??
-      this.ensureSystemTeammate(workspaceId, SYSTEM_TEAMMATE_DEFINITIONS[1]!)
+      this.ensureSystemTeammate(
+        workspaceId,
+        SYSTEM_TEAMMATE_DEFINITIONS_BY_ID.get(HR_TEAMMATE_ID)!,
+      )
+    );
+  }
+
+  ensureAppBuilderTeammate(workspaceId: string): TeammateRecord {
+    return (
+      this.ensureSystemTeammates(workspaceId).get(APP_BUILDER_TEAMMATE_ID) ??
+      this.ensureSystemTeammate(
+        workspaceId,
+        SYSTEM_TEAMMATE_DEFINITIONS_BY_ID.get(APP_BUILDER_TEAMMATE_ID)!,
+      )
     );
   }
 
@@ -2491,10 +2547,9 @@ export class RuntimeStateStore {
           AND (? = 1 OR archived_at IS NULL)
         ORDER BY
           CASE
-            WHEN kind = 'system' AND teammate_id = '${GENERAL_TEAMMATE_ID}' THEN 0
-            WHEN kind = 'system' AND teammate_id = '${HR_TEAMMATE_ID}' THEN 1
-            WHEN kind = 'system' THEN 2
-            ELSE 3
+            ${SYSTEM_TEAMMATE_ORDER_CASE_SQL}
+            WHEN kind = 'system' THEN ${CUSTOM_TEAMMATE_ORDER_INDEX}
+            ELSE ${CUSTOM_TEAMMATE_ORDER_INDEX + 1}
           END ASC,
           datetime(updated_at) DESC,
           datetime(created_at) DESC,
@@ -14042,47 +14097,37 @@ export class RuntimeStateStore {
     db.prepare(`
       UPDATE teammates
       SET kind = CASE
-            WHEN teammate_id IN (?, ?) THEN 'system'
+            WHEN teammate_id IN (${SYSTEM_TEAMMATE_PLACEHOLDERS}) THEN 'system'
             ELSE 'custom'
           END
       WHERE lower(trim(coalesce(kind, ''))) NOT IN ('system', 'custom')
-         OR (teammate_id IN (?, ?) AND lower(trim(coalesce(kind, ''))) != 'system')
-    `).run(
-      GENERAL_TEAMMATE_ID,
-      HR_TEAMMATE_ID,
-      GENERAL_TEAMMATE_ID,
-      HR_TEAMMATE_ID,
-    );
+         OR (teammate_id IN (${SYSTEM_TEAMMATE_PLACEHOLDERS}) AND lower(trim(coalesce(kind, ''))) != 'system')
+    `).run(...SYSTEM_TEAMMATE_IDS, ...SYSTEM_TEAMMATE_IDS);
     db.prepare(`
       UPDATE teammates
       SET status = CASE
-            WHEN teammate_id IN (?, ?) THEN 'active'
+            WHEN teammate_id IN (${SYSTEM_TEAMMATE_PLACEHOLDERS}) THEN 'active'
             WHEN trim(coalesce(archived_at, '')) != '' THEN 'archived'
             ELSE 'active'
           END
       WHERE lower(trim(coalesce(status, ''))) NOT IN ('active', 'archived')
-         OR (teammate_id IN (?, ?) AND lower(trim(coalesce(status, ''))) != 'active')
-    `).run(
-      GENERAL_TEAMMATE_ID,
-      HR_TEAMMATE_ID,
-      GENERAL_TEAMMATE_ID,
-      HR_TEAMMATE_ID,
-    );
+         OR (teammate_id IN (${SYSTEM_TEAMMATE_PLACEHOLDERS}) AND lower(trim(coalesce(status, ''))) != 'active')
+    `).run(...SYSTEM_TEAMMATE_IDS, ...SYSTEM_TEAMMATE_IDS);
     if (addedStatusColumn) {
       db.prepare(`
         UPDATE teammates
         SET status = CASE
-              WHEN teammate_id IN (?, ?) THEN 'active'
+              WHEN teammate_id IN (${SYSTEM_TEAMMATE_PLACEHOLDERS}) THEN 'active'
               WHEN trim(coalesce(archived_at, '')) != '' THEN 'archived'
               ELSE 'active'
             END
-      `).run(GENERAL_TEAMMATE_ID, HR_TEAMMATE_ID);
+      `).run(...SYSTEM_TEAMMATE_IDS);
     }
     db.prepare(`
       UPDATE teammates
       SET archived_at = NULL
-      WHERE teammate_id IN (?, ?)
-    `).run(GENERAL_TEAMMATE_ID, HR_TEAMMATE_ID);
+      WHERE teammate_id IN (${SYSTEM_TEAMMATE_PLACEHOLDERS})
+    `).run(...SYSTEM_TEAMMATE_IDS);
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_teammates_workspace_status_updated
           ON teammates (workspace_id, status, updated_at DESC, created_at DESC);

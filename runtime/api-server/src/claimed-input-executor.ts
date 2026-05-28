@@ -2721,6 +2721,22 @@ function optionalString(value: unknown): string | null {
   return trimmed ? trimmed : null;
 }
 
+function effectiveWorkspaceOnboardingState(
+  workspace: WorkspaceRecord,
+): string | null {
+  const explicit = optionalString(workspace.onboardingState)?.toLowerCase();
+  if (explicit) {
+    return explicit;
+  }
+  if (workspace.onboardingStatus === "completed") {
+    return "completed";
+  }
+  if (workspace.onboardingStatus === "pending") {
+    return "aligning";
+  }
+  return null;
+}
+
 function titleCaseWords(value: string): string {
   return value.replace(/\b([a-z])/g, (match) => match.toUpperCase());
 }
@@ -4675,6 +4691,12 @@ export async function processClaimedInput(params: {
     const runtimeContext = isRecord(record.payload.context)
       ? { ...record.payload.context }
       : {};
+    if (sessionKind === "workspace_onboarding") {
+      const onboardingState = effectiveWorkspaceOnboardingState(workspace);
+      if (onboardingState) {
+        runtimeContext.onboarding_state = onboardingState;
+      }
+    }
     const priorExecContext = isRecord(runtimeContext[RUNTIME_EXEC_CONTEXT_KEY])
       ? { ...runtimeContext[RUNTIME_EXEC_CONTEXT_KEY] }
       : {};

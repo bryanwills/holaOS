@@ -162,6 +162,22 @@ function cronjobsListPath(toolParams: unknown): string {
   return suffix ? `${RUNTIME_TOOLS_CRONJOBS_PATH}?${suffix}` : RUNTIME_TOOLS_CRONJOBS_PATH;
 }
 
+function teammatesListPath(toolParams: unknown): string {
+  const params = isRecord(toolParams) ? toolParams : {};
+  const query = new URLSearchParams();
+  if (typeof params.include_archived === "boolean") {
+    query.set("include_archived", params.include_archived ? "1" : "0");
+  }
+  if (typeof params.limit === "number" && Number.isFinite(params.limit)) {
+    query.set("limit", String(Math.trunc(params.limit)));
+  }
+  if (typeof params.offset === "number" && Number.isFinite(params.offset)) {
+    query.set("offset", String(Math.trunc(params.offset)));
+  }
+  const suffix = query.toString();
+  return suffix ? `${RUNTIME_TOOLS_TEAMMATES_PATH}?${suffix}` : RUNTIME_TOOLS_TEAMMATES_PATH;
+}
+
 function createCronjobBody(toolParams: unknown): Record<string, unknown> {
   const params = isRecord(toolParams) ? toolParams : {};
   const delivery = buildDeliveryPayload(params);
@@ -731,6 +747,8 @@ function requestPlan(
     }
     case "cronjobs_list":
       return { method: "GET", requestPath: cronjobsListPath(toolParams) };
+    case "teammates_list":
+      return { method: "GET", requestPath: teammatesListPath(toolParams) };
     case "cronjobs_create":
       return { method: "POST", requestPath: RUNTIME_TOOLS_CRONJOBS_PATH, body: createCronjobBody(toolParams) };
     case "teammates_create":

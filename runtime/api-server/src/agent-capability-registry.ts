@@ -82,6 +82,7 @@ export interface AgentCapabilityAuthorityBoundary {
 export interface AgentCapabilityPolicyContext {
   harness_id: string | null;
   session_kind: string | null;
+  onboarding_state?: string | null;
   browser_tools_available: boolean | null;
   browser_tool_ids: string[];
   runtime_tool_ids: string[];
@@ -164,6 +165,7 @@ export interface AgentCapabilityManifest {
 export interface BuildAgentCapabilityManifestParams {
   harnessId?: string | null;
   sessionKind?: string | null;
+  onboardingState?: string | null;
   browserToolsAvailable?: boolean | null;
   browserToolIds?: string[] | null;
   runtimeToolIds?: string[] | null;
@@ -182,6 +184,35 @@ interface CapabilityAvailabilityRules {
   sessionKinds?: string[];
   excludedSessionKinds?: string[];
 }
+
+const WORKSPACE_ONBOARDING_IMPLEMENTATION_ONLY_TOOL_IDS = new Set([
+  "delegate_task",
+  "get_task",
+  "list_tasks",
+  "reply_task",
+  "cancel_task",
+  "rerun_task",
+  "cronjobs_list",
+  "cronjobs_create",
+  "cronjobs_get",
+  "cronjobs_update",
+  "cronjobs_delete",
+  "image_generate",
+  "download_url",
+  "write_report",
+  "terminal_sessions_list",
+  "terminal_session_start",
+  "terminal_session_get",
+  "terminal_session_read",
+  "terminal_session_wait",
+  "terminal_session_send_input",
+  "terminal_session_signal",
+  "terminal_session_close",
+  "workspace_data_list_tables",
+  "workspace_data_describe_table",
+  "workspace_data_sample_rows",
+  "workspace_data_query",
+]);
 
 type ToolCapabilityDefinition = {
   kind: Exclude<AgentCapabilityKind, "mcp_tool" | "skill" | "workspace_command">;
@@ -374,16 +405,6 @@ function runtimeToolAvailability(toolId: string): CapabilityAvailabilityRules | 
   ) {
     return { sessionKinds: ["workspace_onboarding"] };
   }
-  if (
-    toolId === "delegate_task" ||
-    toolId === "get_task" ||
-    toolId === "list_tasks" ||
-    toolId === "reply_task" ||
-    toolId === "cancel_task" ||
-    toolId === "rerun_task"
-  ) {
-    return { excludedSessionKinds: ["workspace_onboarding"] };
-  }
   if (toolId === "holaboss_onboarding_complete") {
     return { excludedSessionKinds: ["workspace_onboarding"] };
   }
@@ -553,10 +574,24 @@ export function callableToolNameFromMcpServerAndTool(serverId: string, toolName:
 }
 
 function definitionAllowedInContext(
+  toolId: string,
   availability: CapabilityAvailabilityRules | undefined,
   context: AgentCapabilityPolicyContext
 ): { allowed: boolean; reason: string | null } {
   if (!availability) {
+    const normalizedSessionKind = canonicalSessionKind(context.session_kind);
+    if (
+      normalizedSessionKind === "workspace_onboarding" &&
+      WORKSPACE_ONBOARDING_IMPLEMENTATION_ONLY_TOOL_IDS.has(
+        normalizedToken(toolId),
+      ) &&
+      normalizeOptionalToken(context.onboarding_state) !== "implementing"
+    ) {
+      return {
+        allowed: false,
+        reason: "onboarding_state_not_allowed",
+      };
+    }
     return { allowed: true, reason: null };
   }
 
@@ -937,6 +972,7 @@ function buildPolicyContext(
   const context: AgentCapabilityPolicyContext = {
     harness_id: (params.harnessId ?? "").trim() || null,
     session_kind: canonicalSessionKind(params.sessionKind),
+    onboarding_state: normalizeOptionalToken(params.onboardingState) || null,
     browser_tools_available:
       typeof params.browserToolsAvailable === "boolean" ? params.browserToolsAvailable : null,
     browser_tool_ids: browserToolIds,
@@ -1142,7 +1178,11 @@ export function evaluateAgentCapabilities(
   const evaluatedCapabilities = sortEvaluatedCapabilities(
     registry.descriptors.map((descriptor) => {
       const callable = descriptor.callable_spec !== null;
-      const permissionCheck = definitionAllowedInContext(descriptor.availability, registry.context);
+      const permissionCheck = definitionAllowedInContext(
+        descriptor.id,
+        descriptor.availability,
+        registry.context,
+      );
       const callCheck =
         callable && permissionCheck.allowed
           ? evaluateCallAllowance(descriptor, registry.context)

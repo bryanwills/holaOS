@@ -840,6 +840,11 @@ test("runtime tools capability routes expose local onboarding and cronjob action
     assert.ok(
       capabilityStatus
         .json()
+        .tools.some((tool: { id: string }) => tool.id === "teammates_list")
+    );
+    assert.ok(
+      capabilityStatus
+        .json()
         .tools.some((tool: { id: string }) => tool.id === "teammates_create")
     );
     assert.ok(
@@ -2491,6 +2496,60 @@ test("runtime teammates_create tool creates a teammate without bundling skills i
   }
 });
 
+test("runtime teammates_list tool returns the live teammate roster for HR sessions", async () => {
+  const root = makeTempDir("hb-runtime-api-teammates-list-tool-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const hr = store.ensureHrTeammate(workspace.id);
+  const hrIssue = store.createIssue({
+    workspaceId: workspace.id,
+    sessionId: "session-hr-1",
+    title: "Inspect teammate roster",
+    description: "Inspect the current roster before teammate bootstrap.",
+    status: "todo",
+    assigneeTeammateId: hr.teammateId,
+    createdBy: "workspace_user",
+  });
+  store.createTeammate({
+    workspaceId: workspace.id,
+    teammateId: "researcher",
+    name: "Researcher",
+    instructions: "Own research work.",
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/capabilities/runtime-tools/teammates?limit=10",
+      headers: {
+        "x-holaboss-workspace-id": workspace.id,
+        "x-holaboss-session-id": hrIssue.sessionId,
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().tool_id, "teammates_list");
+    assert.equal(response.json().count, 4);
+    assert.deepEqual(
+      response.json().teammates.map((teammate: { teammate_id: string }) => teammate.teammate_id),
+      ["general", "hr", "app_builder", "researcher"],
+    );
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
 test("runtime teammate_skills_create tool creates a teammate-local skill bundle", async () => {
   const root = makeTempDir("hb-runtime-api-teammate-skills-create-tool-");
   const workspaceRoot = path.join(root, "workspace");
@@ -2615,6 +2674,45 @@ test("runtime teammates_create tool rejects non-HR sessions", async () => {
       },
       payload: {
         name: "Researcher",
+      },
+    });
+
+    assert.equal(response.statusCode, 403);
+    assert.match(response.body, /only available to the HR teammate/i);
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
+test("runtime teammates_list tool rejects non-HR sessions", async () => {
+  const root = makeTempDir("hb-runtime-api-teammates-list-forbidden-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    kind: "main_session",
+    createdBy: "workspace_user",
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/capabilities/runtime-tools/teammates",
+      headers: {
+        "x-holaboss-workspace-id": workspace.id,
+        "x-holaboss-session-id": "session-main",
       },
     });
 
@@ -6624,9 +6722,10 @@ test("teammate and issue routes preserve local payload shape", async () => {
   assert.equal(createdTeammate.statusCode, 200);
   assert.equal(createdTeammate.json().teammate.name, "Coder");
   assert.equal(createdTeammate.json().teammate.skills.length, 0);
+  const createdTeammateId = createdTeammate.json().teammate.teammate_id;
   const createdSkill = await app.inject({
     method: "POST",
-    url: `/api/v1/teammates/${createdTeammate.json().teammate.teammate_id}/skills`,
+    url: `/api/v1/teammates/${createdTeammateId}/skills`,
     payload: {
       workspace_id: workspace.id,
       skill: {
@@ -6661,10 +6760,17 @@ test("teammate and issue routes preserve local payload shape", async () => {
     url: `/api/v1/teammates?workspace_id=${workspace.id}`
   });
   assert.equal(listedTeammates.statusCode, 200);
-  assert.equal(listedTeammates.json().count, 3);
+  assert.equal(listedTeammates.json().count, 4);
   assert.equal(listedTeammates.json().teammates[0]?.teammate_id, "general");
   assert.equal(listedTeammates.json().teammates[1]?.teammate_id, "hr");
-  assert.equal(listedTeammates.json().teammates[2]?.skills.length, 1);
+  assert.equal(listedTeammates.json().teammates[2]?.teammate_id, "app_builder");
+  assert.equal(
+    listedTeammates.json().teammates.find(
+      (teammate: { teammate_id: string; skills: Array<unknown> }) =>
+        teammate.teammate_id === createdTeammateId,
+    )?.skills.length,
+    1,
+  );
   assert.match(
     listedTeammates.json().teammates[0]?.capability_profile.summary ?? "",
     /Fallback executor/i,
@@ -6767,7 +6873,7 @@ test("teammate and issue routes preserve local payload shape", async () => {
     url: `/api/v1/teammates?workspace_id=${workspace.id}`
   });
   assert.equal(visibleTeammates.statusCode, 200);
-  assert.equal(visibleTeammates.json().count, 2);
+  assert.equal(visibleTeammates.json().count, 3);
   assert.equal(visibleTeammates.json().teammates[0]?.teammate_id, "general");
 
   await app.close();

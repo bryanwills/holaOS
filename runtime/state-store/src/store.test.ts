@@ -4171,8 +4171,20 @@ test("teammate capability profiles persist and update cleanly", () => {
     "sourcing",
   ]);
   const hr = store.ensureHrTeammate("workspace-1");
+  const appBuilder = store.ensureAppBuilderTeammate("workspace-1");
   assert.match(hr.capabilityProfile.summary ?? "", /Roster manager/i);
   assert.match(hr.instructions ?? "", /Load and follow the `create-teammate` skill/i);
+  assert.match(appBuilder.capabilityProfile.summary ?? "", /Specialist builder for holaOS apps/i);
+  assert.match(appBuilder.instructions ?? "", /Use the `app-builder-sdk` skill/i);
+  assert.deepEqual(appBuilder.capabilityProfile.capabilities, [
+    "apps",
+    "dashboards",
+    "ui",
+    "sdk",
+    "implementation",
+    "lifecycle",
+    "polish",
+  ]);
   store.close();
 });
 
@@ -4255,16 +4267,19 @@ test("legacy teammate tables migrate missing kind and status columns", () => {
     includeArchived: true,
   });
 
-  assert.equal(teammates.length, 3);
+  assert.equal(teammates.length, 4);
   assert.equal(teammates[0]?.teammateId, "general");
   assert.equal(teammates[0]?.kind, "system");
   assert.equal(teammates[0]?.status, "active");
   assert.equal(teammates[1]?.teammateId, "hr");
   assert.equal(teammates[1]?.kind, "system");
   assert.equal(teammates[1]?.status, "active");
-  assert.equal(teammates[2]?.teammateId, "teammate-1");
-  assert.equal(teammates[2]?.kind, "custom");
+  assert.equal(teammates[2]?.teammateId, "app_builder");
+  assert.equal(teammates[2]?.kind, "system");
   assert.equal(teammates[2]?.status, "active");
+  assert.equal(teammates[3]?.teammateId, "teammate-1");
+  assert.equal(teammates[3]?.kind, "custom");
+  assert.equal(teammates[3]?.status, "active");
 
   const migratedDb = new Database(runtimeDbPath, { readonly: true });
   const teammateColumns = new Set<string>(

@@ -92,18 +92,21 @@ test("buildAgentCapabilityManifest classifies tools, skills, and MCP aliases", (
   assert.equal(toolMap.skill, true);
 });
 
-test("buildAgentCapabilityManifest keeps workspace-onboarding review mutations out of the model surface", () => {
+test("buildAgentCapabilityManifest keeps workspace-onboarding alignment free of implementation-only tools", () => {
   const manifest = buildAgentCapabilityManifest({
     harnessId: "pi",
     sessionKind: "workspace_onboarding",
+    onboardingState: "aligning",
     browserToolsAvailable: false,
     runtimeToolIds: [
       "delegate_task",
-      "get_task",
-      "list_tasks",
-      "reply_task",
-      "cancel_task",
-      "rerun_task",
+      "cronjobs_create",
+      "image_generate",
+      "download_url",
+      "write_report",
+      "terminal_session_start",
+      "workspace_data_query",
+      "onboarding_status",
       "holaboss_create_alignment_question",
       "holaboss_create_alignment_report",
       "holaboss_create_verification_report",
@@ -112,11 +115,13 @@ test("buildAgentCapabilityManifest keeps workspace-onboarding review mutations o
     defaultTools: ["read", "edit"],
     extraTools: [
       "delegate_task",
-      "get_task",
-      "list_tasks",
-      "reply_task",
-      "cancel_task",
-      "rerun_task",
+      "cronjobs_create",
+      "image_generate",
+      "download_url",
+      "write_report",
+      "terminal_session_start",
+      "workspace_data_query",
+      "onboarding_status",
       "holaboss_create_alignment_question",
       "holaboss_create_alignment_report",
       "holaboss_create_verification_report",
@@ -132,6 +137,7 @@ test("buildAgentCapabilityManifest keeps workspace-onboarding review mutations o
       "holaboss_create_alignment_question",
       "holaboss_create_alignment_report",
       "holaboss_create_verification_report",
+      "onboarding_status",
     ],
   );
   assert.equal(
@@ -147,14 +153,78 @@ test("buildAgentCapabilityManifest keeps workspace-onboarding review mutations o
         typeof callableName === "string" &&
         [
           "delegate_task",
-          "get_task",
-          "list_tasks",
-          "reply_task",
-          "cancel_task",
-          "rerun_task",
+          "cronjobs_create",
+          "image_generate",
+          "download_url",
+          "write_report",
+          "terminal_session_start",
+          "workspace_data_query",
         ].includes(callableName)
       );
     }),
+    false,
+  );
+});
+
+test("buildAgentCapabilityManifest exposes implementation-only tools for workspace-onboarding implementation", () => {
+  const manifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "workspace_onboarding",
+    onboardingState: "implementing",
+    browserToolsAvailable: false,
+    runtimeToolIds: [
+      "delegate_task",
+      "cronjobs_create",
+      "image_generate",
+      "download_url",
+      "write_report",
+      "terminal_session_start",
+      "workspace_data_query",
+      "onboarding_status",
+      "holaboss_create_alignment_question",
+      "holaboss_create_alignment_report",
+      "holaboss_create_verification_report",
+      "holaboss_onboarding_complete",
+    ],
+    defaultTools: ["read", "edit"],
+    extraTools: [
+      "delegate_task",
+      "cronjobs_create",
+      "image_generate",
+      "download_url",
+      "write_report",
+      "terminal_session_start",
+      "workspace_data_query",
+      "onboarding_status",
+      "holaboss_create_alignment_question",
+      "holaboss_create_alignment_report",
+      "holaboss_create_verification_report",
+      "holaboss_onboarding_complete",
+    ],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  assert.deepEqual(
+    manifest.runtime_tools.map((capability) => capability.callable_name).sort(),
+    [
+      "cronjobs_create",
+      "delegate_task",
+      "download_url",
+      "holaboss_create_alignment_question",
+      "holaboss_create_alignment_report",
+      "holaboss_create_verification_report",
+      "image_generate",
+      "onboarding_status",
+      "terminal_session_start",
+      "workspace_data_query",
+      "write_report",
+    ],
+  );
+  assert.equal(
+    manifest.capabilities.some(
+      (capability) => capability.callable_name === "holaboss_onboarding_complete",
+    ),
     false,
   );
 });

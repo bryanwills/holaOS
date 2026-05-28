@@ -110,10 +110,12 @@ test("resolveWorkspaceSkills finds bundled embedded skills when HOLABOSS_RUNTIME
   ]);
 });
 
-test("projectSessionVisibleWorkspaceSkills hides HR-only embedded skills outside HR sessions", () => {
+test("projectSessionVisibleWorkspaceSkills scopes owner-bound embedded skills to their system teammates", () => {
   const embeddedRoot = makeTempDir("hb-embedded-skills-");
   process.env.HOLABOSS_EMBEDDED_SKILLS_DIR = embeddedRoot;
   writeSkill(embeddedRoot, "create-teammate");
+  writeSkill(embeddedRoot, "app-builder-sdk");
+  writeSkill(embeddedRoot, "build-dashboard");
   writeSkill(embeddedRoot, "skill-creator");
   const workspaceDir = makeTempDir("hb-workspace-skill-visibility-");
   const resolved = resolveWorkspaceSkills(workspaceDir);
@@ -122,22 +124,29 @@ test("projectSessionVisibleWorkspaceSkills hides HR-only embedded skills outside
     projectSessionVisibleWorkspaceSkills({
       workspaceSkills: resolved,
       teammateId: null,
-    }).map((skill) => skill.skill_id),
+    }).map((skill) => skill.skill_id).sort(),
     ["skill-creator"],
   );
   assert.deepEqual(
     projectSessionVisibleWorkspaceSkills({
       workspaceSkills: resolved,
       teammateId: "general",
-    }).map((skill) => skill.skill_id),
+    }).map((skill) => skill.skill_id).sort(),
     ["skill-creator"],
   );
   assert.deepEqual(
     projectSessionVisibleWorkspaceSkills({
       workspaceSkills: resolved,
       teammateId: "hr",
-    }).map((skill) => skill.skill_id),
+    }).map((skill) => skill.skill_id).sort(),
     ["create-teammate", "skill-creator"],
+  );
+  assert.deepEqual(
+    projectSessionVisibleWorkspaceSkills({
+      workspaceSkills: resolved,
+      teammateId: "app_builder",
+    }).map((skill) => skill.skill_id).sort(),
+    ["app-builder-sdk", "build-dashboard", "skill-creator"],
   );
 });
 

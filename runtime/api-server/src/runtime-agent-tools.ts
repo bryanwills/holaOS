@@ -371,6 +371,14 @@ export interface RuntimeAgentToolsCreateCronjobParams {
   holabossUserId?: string | null;
 }
 
+export interface RuntimeAgentToolsListTeammatesParams {
+  workspaceId: string;
+  sessionId?: string | null;
+  includeArchived?: boolean | null;
+  limit?: number | null;
+  offset?: number | null;
+}
+
 export interface RuntimeAgentToolsCreateTeammateParams {
   workspaceId: string;
   sessionId?: string | null;
@@ -595,6 +603,7 @@ export interface RuntimeAgentToolsListDataTablesParams {
 
 export interface RuntimeAgentToolsScaffoldWorkspaceAppParams {
   workspaceId: string;
+  sessionId?: string | null;
   appId: string;
   name?: string | null;
   overwrite?: boolean;
@@ -602,12 +611,14 @@ export interface RuntimeAgentToolsScaffoldWorkspaceAppParams {
 
 export interface RuntimeAgentToolsRegisterWorkspaceAppParams {
   workspaceId: string;
+  sessionId?: string | null;
   appId: string;
   configPath?: string | null;
 }
 
 export interface RuntimeAgentToolsBuildWorkspaceAppParams {
   workspaceId: string;
+  sessionId?: string | null;
   appId: string;
   timeoutMs?: number | null;
 }
@@ -624,6 +635,7 @@ export interface RuntimeAgentToolsEnsureWorkspaceAppsRunningParams {
 
 export interface RuntimeAgentToolsRestartWorkspaceAppParams {
   workspaceId: string;
+  sessionId?: string | null;
   appId: string;
 }
 
@@ -640,6 +652,7 @@ export interface RuntimeAgentToolsInstallWorkspaceAppParams {
 
 export interface RuntimeAgentToolsRestartAndWaitWorkspaceAppReadyParams {
   workspaceId: string;
+  sessionId?: string | null;
   appId: string;
   timeoutMs?: number | null;
   pollIntervalMs?: number | null;
@@ -647,6 +660,7 @@ export interface RuntimeAgentToolsRestartAndWaitWorkspaceAppReadyParams {
 
 export interface RuntimeAgentToolsWaitUntilWorkspaceAppReadyParams {
   workspaceId: string;
+  sessionId?: string | null;
   appId: string;
   timeoutMs?: number | null;
   pollIntervalMs?: number | null;
@@ -654,16 +668,19 @@ export interface RuntimeAgentToolsWaitUntilWorkspaceAppReadyParams {
 
 export interface RuntimeAgentToolsGetWorkspaceAppStatusParams {
   workspaceId: string;
+  sessionId?: string | null;
   appId?: string | null;
 }
 
 export interface RuntimeAgentToolsGetWorkspaceAppPortsParams {
   workspaceId: string;
+  sessionId?: string | null;
   appId?: string | null;
 }
 
 export interface RuntimeAgentToolsProbeWorkspaceAppEndpointsParams {
   workspaceId: string;
+  sessionId?: string | null;
   appId: string;
   checks?: string[] | null;
   timeoutMs?: number | null;
@@ -1244,6 +1261,12 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     method: "POST",
     path: "/api/v1/capabilities/runtime-tools/cronjobs",
     description: runtimeToolBaseDefinition("cronjobs_create").description
+  },
+  {
+    id: runtimeToolBaseDefinition("teammates_list").id,
+    method: "GET",
+    path: "/api/v1/capabilities/runtime-tools/teammates",
+    description: runtimeToolBaseDefinition("teammates_list").description
   },
   {
     id: runtimeToolBaseDefinition("teammates_create").id,
@@ -3598,7 +3621,7 @@ export class RuntimeAgentToolsService {
   private requireHrTeammateRuntimeToolSession(params: {
     workspaceId: string;
     sessionId?: string | null;
-    toolId: "teammates_create" | "teammate_skills_create";
+    toolId: "teammates_list" | "teammates_create" | "teammate_skills_create";
   }): void {
     const sessionId = normalizedString(params.sessionId);
     if (!sessionId) {
@@ -3630,6 +3653,80 @@ export class RuntimeAgentToolsService {
         `${params.toolId} is only available to the HR teammate`,
       );
     }
+  }
+
+  private requireAppBuilderRuntimeToolSession(params: {
+    workspaceId: string;
+    sessionId?: string | null;
+    toolId:
+      | "workspace_apps_scaffold"
+      | "workspace_apps_register"
+      | "workspace_apps_build"
+      | "workspace_apps_ensure_running"
+      | "workspace_apps_restart"
+      | "workspace_apps_restart_and_wait_ready"
+      | "workspace_apps_wait_until_ready"
+      | "workspace_apps_get_status"
+      | "workspace_apps_get_ports"
+      | "workspace_apps_probe_endpoints";
+  }): void {
+    const sessionId = normalizedString(params.sessionId);
+    if (!sessionId) {
+      return;
+    }
+    const issue = this.store.getIssueBySessionId({
+      workspaceId: params.workspaceId,
+      sessionId,
+    });
+    const subagentRun =
+      !issue
+        ? this.store.getSubagentRunByChildSession({
+            workspaceId: params.workspaceId,
+            childSessionId: sessionId,
+          })
+        : null;
+    const teammateId =
+      normalizedString(issue?.assigneeTeammateId) ??
+      normalizedString(subagentRun?.teammateId) ??
+      null;
+    if (teammateId !== "app_builder") {
+      throw new RuntimeAgentToolsServiceError(
+        403,
+        "app_builder_teammate_required",
+        `${params.toolId} is only available to the App Builder teammate`,
+      );
+    }
+  }
+
+  listTeammates(params: RuntimeAgentToolsListTeammatesParams): JsonObject {
+    this.requireWorkspace(params.workspaceId);
+    this.requireHrTeammateRuntimeToolSession({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      toolId: "teammates_list",
+    });
+    const workspaceDir = this.store.workspaceDir(params.workspaceId);
+    const limit =
+      typeof params.limit === "number" && Number.isFinite(params.limit)
+        ? Math.max(1, Math.min(1000, Math.trunc(params.limit)))
+        : undefined;
+    const offset =
+      typeof params.offset === "number" && Number.isFinite(params.offset)
+        ? Math.max(0, Math.trunc(params.offset))
+        : undefined;
+    const teammates = this.store
+      .listTeammates({
+        workspaceId: params.workspaceId,
+        includeArchived: params.includeArchived === true,
+        limit,
+        offset,
+      })
+      .map((record) => teammatePayload(record, workspaceDir));
+    return {
+      teammates,
+      count: teammates.length,
+      tool_id: "teammates_list",
+    };
   }
 
   createTeammate(params: RuntimeAgentToolsCreateTeammateParams): JsonObject {
@@ -5891,11 +5988,14 @@ export class RuntimeAgentToolsService {
     }
     const kind = normalizedString(session.kind);
     if (kind === "workspace_onboarding") {
-      throw new RuntimeAgentToolsServiceError(
-        403,
-        "onboarding_delegation_forbidden",
-        "workspace onboarding must execute directly in the onboarding session",
-      );
+      const workspace = this.requireWorkspace(workspaceId);
+      if (effectiveOnboardingState(workspace) !== ONBOARDING_IMPLEMENTING_STATE) {
+        throw new RuntimeAgentToolsServiceError(
+          403,
+          "onboarding_delegation_forbidden",
+          "workspace onboarding can delegate tasks only during implementing",
+        );
+      }
     }
     if (kind === "subagent" || kind === "cronjob") {
       throw new RuntimeAgentToolsServiceError(
@@ -6825,6 +6925,11 @@ export class RuntimeAgentToolsService {
     params: RuntimeAgentToolsScaffoldWorkspaceAppParams,
   ): Promise<JsonObject> {
     this.requireWorkspace(params.workspaceId);
+    this.requireAppBuilderRuntimeToolSession({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      toolId: "workspace_apps_scaffold",
+    });
     const appId = sanitizeWorkspaceAppId(params.appId);
     const name =
       normalizedString(params.name) || humanizeWorkspaceAppName(appId) || appId;
@@ -6896,6 +7001,11 @@ export class RuntimeAgentToolsService {
     params: RuntimeAgentToolsRegisterWorkspaceAppParams,
   ): Promise<JsonObject> {
     this.requireWorkspace(params.workspaceId);
+    this.requireAppBuilderRuntimeToolSession({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      toolId: "workspace_apps_register",
+    });
     const appId = sanitizeWorkspaceAppId(params.appId);
     const workspaceDir = path.join(this.options.workspaceRoot, params.workspaceId);
     const configPath =
@@ -7005,6 +7115,11 @@ export class RuntimeAgentToolsService {
     params: RuntimeAgentToolsBuildWorkspaceAppParams,
   ): Promise<JsonObject> {
     this.requireWorkspace(params.workspaceId);
+    this.requireAppBuilderRuntimeToolSession({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      toolId: "workspace_apps_build",
+    });
     const appId = sanitizeWorkspaceAppId(params.appId);
     this.requireRegisteredWorkspaceApp({ workspaceId: params.workspaceId, appId });
     const workspaceDir = path.join(this.options.workspaceRoot, params.workspaceId);
@@ -7089,6 +7204,11 @@ export class RuntimeAgentToolsService {
   getWorkspaceAppStatus(
     params: RuntimeAgentToolsGetWorkspaceAppStatusParams,
   ): JsonObject {
+    this.requireAppBuilderRuntimeToolSession({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      toolId: "workspace_apps_get_status",
+    });
     const appId = normalizedString(params.appId);
     if (appId) {
       const entry = this.requireRegisteredWorkspaceApp({
@@ -7131,6 +7251,11 @@ export class RuntimeAgentToolsService {
     params: RuntimeAgentToolsGetWorkspaceAppPortsParams,
   ): JsonObject {
     this.requireWorkspace(params.workspaceId);
+    this.requireAppBuilderRuntimeToolSession({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      toolId: "workspace_apps_get_ports",
+    });
     const workspaceDir = path.join(this.options.workspaceRoot, params.workspaceId);
     const portsByApp = listWorkspaceApplicationPorts(workspaceDir, {
       store: this.store,
@@ -7166,6 +7291,11 @@ export class RuntimeAgentToolsService {
     params: RuntimeAgentToolsEnsureWorkspaceAppsRunningParams,
   ): Promise<JsonObject> {
     this.requireWorkspace(params.workspaceId);
+    this.requireAppBuilderRuntimeToolSession({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      toolId: "workspace_apps_ensure_running",
+    });
     const lifecycle = this.requireWorkspaceAppLifecycle();
     const requestedAppIds = normalizedStringList(params.appIds);
     const targetAppIds =
@@ -7581,6 +7711,11 @@ export class RuntimeAgentToolsService {
     params: RuntimeAgentToolsRestartWorkspaceAppParams,
   ): Promise<JsonObject> {
     this.requireWorkspace(params.workspaceId);
+    this.requireAppBuilderRuntimeToolSession({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      toolId: "workspace_apps_restart",
+    });
     const lifecycle = this.requireWorkspaceAppLifecycle();
     const appId = sanitizeWorkspaceAppId(params.appId);
     this.requireRegisteredWorkspaceApp({ workspaceId: params.workspaceId, appId });
@@ -7614,13 +7749,20 @@ export class RuntimeAgentToolsService {
   async restartAndWaitUntilWorkspaceAppReady(
     params: RuntimeAgentToolsRestartAndWaitWorkspaceAppReadyParams,
   ): Promise<JsonObject> {
+    this.requireAppBuilderRuntimeToolSession({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      toolId: "workspace_apps_restart_and_wait_ready",
+    });
     const appId = sanitizeWorkspaceAppId(params.appId);
     await this.restartWorkspaceApp({
       workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
       appId,
     });
     const waited = await this.waitUntilWorkspaceAppReady({
       workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
       appId,
       timeoutMs: params.timeoutMs,
       pollIntervalMs: params.pollIntervalMs,
@@ -7634,6 +7776,11 @@ export class RuntimeAgentToolsService {
   async waitUntilWorkspaceAppReady(
     params: RuntimeAgentToolsWaitUntilWorkspaceAppReadyParams,
   ): Promise<JsonObject> {
+    this.requireAppBuilderRuntimeToolSession({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      toolId: "workspace_apps_wait_until_ready",
+    });
     const appId = sanitizeWorkspaceAppId(params.appId);
     this.requireRegisteredWorkspaceApp({ workspaceId: params.workspaceId, appId });
     const timeoutMs = normalizedInteger(params.timeoutMs ?? 60_000, 60_000, 1, 300_000);
@@ -7687,6 +7834,11 @@ export class RuntimeAgentToolsService {
     params: RuntimeAgentToolsProbeWorkspaceAppEndpointsParams,
   ): Promise<JsonObject> {
     this.requireWorkspace(params.workspaceId);
+    this.requireAppBuilderRuntimeToolSession({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      toolId: "workspace_apps_probe_endpoints",
+    });
     const appId = sanitizeWorkspaceAppId(params.appId);
     this.requireRegisteredWorkspaceApp({ workspaceId: params.workspaceId, appId });
     const requestedChecks = normalizedStringList(params.checks);

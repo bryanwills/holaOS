@@ -6586,6 +6586,41 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+  app.get("/api/v1/capabilities/runtime-tools/teammates", async (request, reply) => {
+    const query = isRecord(request.query) ? request.query : {};
+    try {
+      const workspaceId = requiredCapabilityWorkspaceId({
+        headers: request.headers as Record<string, unknown>,
+        query,
+      });
+      const sessionId = capabilitySessionId({
+        headers: request.headers as Record<string, unknown>,
+        query,
+      });
+      const result = runtimeAgentToolsService.listTeammates({
+        workspaceId,
+        sessionId: sessionId ?? null,
+        includeArchived: hasOwn(query, "include_archived")
+          ? optionalBoolean(query.include_archived)
+          : undefined,
+        limit: hasOwn(query, "limit") ? optionalInteger(query.limit, 100) : undefined,
+        offset: hasOwn(query, "offset") ? optionalInteger(query.offset, 0) : undefined,
+      });
+      return await maybeShapeCapabilityToolResult({
+        headers: request.headers as Record<string, unknown>,
+        toolId: "teammates_list",
+        payload: result,
+        workspaceId,
+        sessionId,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime list teammates failed");
+    }
+  });
+
   app.post("/api/v1/capabilities/runtime-tools/teammates", async (request, reply) => {
     if (!isRecord(request.body)) {
       return sendError(reply, 400, "request body must be an object");
@@ -7275,6 +7310,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
             headers: request.headers as Record<string, unknown>,
             body,
           }),
+          sessionId: capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }) || null,
           appId: requiredString(body.app_id, "app_id"),
           name: nullableString(body.name) ?? undefined,
           overwrite: body.overwrite === true,
@@ -7305,6 +7344,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
             headers: request.headers as Record<string, unknown>,
             body,
           }),
+          sessionId: capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }) || null,
           appId: requiredString(body.app_id, "app_id"),
           configPath: nullableString(body.config_path) ?? undefined,
         });
@@ -7546,6 +7589,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
             headers: request.headers as Record<string, unknown>,
             body,
           }),
+          sessionId: capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }) || null,
           appId: requiredString(params.appId, "appId"),
           timeoutMs: typeof body.timeout_ms === "number" ? body.timeout_ms : undefined,
         });
@@ -7573,6 +7620,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
             headers: request.headers as Record<string, unknown>,
             body,
           }),
+          sessionId: capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }) || null,
           appId: requiredString(params.appId, "appId"),
         });
       } catch (error) {
@@ -7599,6 +7650,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
             headers: request.headers as Record<string, unknown>,
             body,
           }),
+          sessionId: capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }) || null,
           appId: requiredString(params.appId, "appId"),
           timeoutMs: typeof body.timeout_ms === "number" ? body.timeout_ms : undefined,
           pollIntervalMs:
@@ -7628,6 +7683,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
             headers: request.headers as Record<string, unknown>,
             body,
           }),
+          sessionId: capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }) || null,
           appId: requiredString(params.appId, "appId"),
           timeoutMs: typeof body.timeout_ms === "number" ? body.timeout_ms : undefined,
           pollIntervalMs:
@@ -7657,6 +7716,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
             headers: request.headers as Record<string, unknown>,
             body,
           }),
+          sessionId: capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            body,
+          }) || null,
           appId: requiredString(params.appId, "appId"),
           checks: Array.isArray(body.checks)
             ? body.checks.filter((value): value is string => typeof value === "string")
@@ -7685,6 +7748,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
             headers: request.headers as Record<string, unknown>,
             query: isRecord(request.query) ? request.query : undefined,
           }),
+          sessionId: capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            query: isRecord(request.query) ? request.query : undefined,
+          }) || null,
         });
       } catch (error) {
         if (error instanceof RuntimeAgentToolsServiceError) {
@@ -7709,6 +7776,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
             headers: request.headers as Record<string, unknown>,
             query: isRecord(request.query) ? request.query : undefined,
           }),
+          sessionId: capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            query: isRecord(request.query) ? request.query : undefined,
+          }) || null,
           appId: requiredString(params.appId, "appId"),
         });
       } catch (error) {
@@ -7733,6 +7804,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
             headers: request.headers as Record<string, unknown>,
             query: isRecord(request.query) ? request.query : undefined,
           }),
+          sessionId: capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            query: isRecord(request.query) ? request.query : undefined,
+          }) || null,
         });
       } catch (error) {
         if (error instanceof RuntimeAgentToolsServiceError) {
@@ -7757,6 +7832,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
             headers: request.headers as Record<string, unknown>,
             query: isRecord(request.query) ? request.query : undefined,
           }),
+          sessionId: capabilitySessionId({
+            headers: request.headers as Record<string, unknown>,
+            query: isRecord(request.query) ? request.query : undefined,
+          }) || null,
           appId: requiredString(params.appId, "appId"),
         });
       } catch (error) {

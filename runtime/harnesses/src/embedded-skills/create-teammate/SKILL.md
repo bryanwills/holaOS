@@ -18,7 +18,7 @@ Before you call `teammates_create`, make sure you understand the stable remit:
 - what durable local skill bundle is needed for the role to be effective immediately
 
 If any of that is still vague, overlapping, or one-off:
-- inspect the current teammate roster first
+- inspect the current teammate roster first, preferably with `teammates_list`
 - infer what you can from the user's request and current workspace context
 - ask only for the concrete missing responsibility details that block a durable definition
 - do not create the teammate yet
@@ -49,6 +49,7 @@ When a new specialist teammate is warranted, provision it so it can do real work
 2. Capture the stable remit before creation.
    - Identify responsibilities, boundaries, default work, and non-goals.
    - Compare that remit against the existing roster so you do not create an overlapping teammate.
+   - Use `teammates_list` for the authoritative live roster instead of guessing from file layout or stale memory.
    - If the remit is not durable enough to survive beyond the current task, stop and do not create the teammate.
 3. Inspect prerequisites before creation.
    - Identify which integrations, connected apps, files, references, or workspace capabilities this teammate will rely on.

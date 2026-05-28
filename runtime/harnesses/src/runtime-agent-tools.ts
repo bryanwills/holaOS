@@ -40,6 +40,12 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
     policy: "mutate"
   },
   {
+    id: "teammates_list",
+    description:
+      "HR teammate only: list the current workspace teammates so roster bootstrap work can compare against the live available roster before creating or reshaping anyone.",
+    policy: "inspect"
+  },
+  {
     id: "teammates_create",
     description:
       "HR teammate only: create a custom teammate record for the current workspace, including optional capability profile hints and durable teammate instructions.",

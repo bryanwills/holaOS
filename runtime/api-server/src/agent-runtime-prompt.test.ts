@@ -941,7 +941,7 @@ test("composeAgentPrompt gives workspace onboarding its own controller prompt", 
   });
 
   assert.match(prompt.systemPrompt, /workspace onboarding controller/);
-  assert.match(prompt.systemPrompt, /user-facing architect and builder/);
+  assert.match(prompt.systemPrompt, /user-facing architect and implementation orchestrator/);
   assert.match(prompt.systemPrompt, /user's intended outcome/);
   assert.match(prompt.systemPrompt, /real work context and systems involved/);
   assert.match(prompt.systemPrompt, /integrations required to understand or act on that work/);
@@ -952,7 +952,10 @@ test("composeAgentPrompt gives workspace onboarding its own controller prompt", 
   assert.match(prompt.systemPrompt, /converse with the user/);
   assert.match(prompt.systemPrompt, /converge those requirements into a concrete design report/);
   assert.match(prompt.systemPrompt, /wait for user confirmation/);
-  assert.match(prompt.systemPrompt, /execute the approved implementation directly in this same session/);
+  assert.match(prompt.systemPrompt, /treat implementation as a coordinated execution phase/);
+  assert.match(prompt.systemPrompt, /route teammate provisioning to HR/);
+  assert.match(prompt.systemPrompt, /app creation or migration work to App Builder/);
+  assert.match(prompt.systemPrompt, /remaining generic workspace execution to General/);
   assert.match(prompt.systemPrompt, /Keep the onboarding thread conversational and uncluttered/);
   assert.match(prompt.systemPrompt, /holaboss_create_alignment_question/);
   assert.match(prompt.systemPrompt, /closed choices/);
@@ -962,6 +965,11 @@ test("composeAgentPrompt gives workspace onboarding its own controller prompt", 
   assert.match(prompt.systemPrompt, /`user_intent`, `work_context`, `research_basis`, `integrations`, `teammates`, `workspace_rules`, `workspace_structure`, `apps`, `cronjobs`, `open_questions`, and `implementation_notes`/);
   assert.match(prompt.systemPrompt, /Cronjobs should name an owner teammate/);
   assert.match(prompt.systemPrompt, /focused first pass instead of a full product spec/);
+  assert.match(prompt.systemPrompt, /source of truth/);
+  assert.match(prompt.systemPrompt, /route teammate creation and teammate-local skills to HR/);
+  assert.match(prompt.systemPrompt, /route app creation, migration, and polish work to App Builder/);
+  assert.match(prompt.systemPrompt, /Every implementation task brief should quote the relevant part of the approved alignment report/);
+  assert.match(prompt.systemPrompt, /Stay responsible for sequencing, dependency management, blocker resolution with the user, and final verification/);
   assert.match(prompt.systemPrompt, /finishing the implementation work before moving to verification/);
   assert.match(prompt.systemPrompt, /verification report/);
   assert.match(prompt.systemPrompt, /including a concise human-readable `markdown` body/);
@@ -969,7 +977,6 @@ test("composeAgentPrompt gives workspace onboarding its own controller prompt", 
   assert.match(prompt.systemPrompt, /alignment review card/);
   assert.match(prompt.systemPrompt, /verification review card/);
   assert.doesNotMatch(prompt.systemPrompt, /Delegate implementation to subagents/);
-  assert.doesNotMatch(prompt.systemPrompt, /delegated workers/);
   assert.doesNotMatch(prompt.systemPrompt, /holaboss_approve_alignment/);
   assert.doesNotMatch(prompt.systemPrompt, /holaboss_onboarding_complete/);
   assert.doesNotMatch(prompt.systemPrompt, /This is an onboarding session\./);

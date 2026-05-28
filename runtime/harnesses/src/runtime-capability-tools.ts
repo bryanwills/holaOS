@@ -17,6 +17,18 @@ const TODO_STATUSES = ["pending", "in_progress", "blocked", "completed", "abando
 const TODO_WRITE_OPS_TEXT = "`replace`, `add_phase`, `add_task`, `update`, and `remove_task`";
 const TODO_WRITE_ALIAS_WARNING =
   "Do not invent alias op names such as `replace_all`, `update_task`, or `set_status`.";
+const APP_BUILDER_RUNTIME_TOOL_IDS = new Set<RuntimeAgentToolId>([
+  "workspace_apps_scaffold",
+  "workspace_apps_register",
+  "workspace_apps_build",
+  "workspace_apps_ensure_running",
+  "workspace_apps_restart",
+  "workspace_apps_restart_and_wait_ready",
+  "workspace_apps_wait_until_ready",
+  "workspace_apps_get_status",
+  "workspace_apps_get_ports",
+  "workspace_apps_probe_endpoints",
+]);
 
 export interface HarnessRuntimeToolOptions {
   runtimeApiBaseUrl: string;
@@ -284,6 +296,25 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
           },
         },
         required: ["cron", "teammate_id", "description", "instruction"],
+        additionalProperties: false,
+      };
+    case "teammates_list":
+      return {
+        type: "object",
+        properties: {
+          include_archived: {
+            type: "boolean",
+            description: "Whether archived teammates should be included in the roster listing.",
+          },
+          limit: {
+            type: "integer",
+            description: "Optional maximum number of teammates to return.",
+          },
+          offset: {
+            type: "integer",
+            description: "Optional roster offset for pagination.",
+          },
+        },
         additionalProperties: false,
       };
     case "teammates_create":
@@ -1224,6 +1255,13 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
 }
 
 function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
+  const appBuilderToolGuidance = APP_BUILDER_RUNTIME_TOOL_IDS.has(toolId)
+    ? [
+        "Only the App Builder teammate should call workspace app build and lifecycle tools.",
+        "If you are not running as App Builder, stop and route the app work there instead of improvising with generic file or terminal work.",
+        "For dashboard-shape apps with `src/client/`, load `build-dashboard` once the SDK and runtime contract are in place and the task has moved into client-surface implementation.",
+      ]
+    : [];
   if (toolId === "holaboss_create_alignment_question") {
     return [
       "Pass `question` as either a single question object or a deck object with `questions: [...]`.",
@@ -1271,6 +1309,14 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "After recording durable guidance in `AGENTS.md`, if it is conditional, situational, or procedural rather than always-on policy, also create or update a workspace-local skill and keep a short skills index entry in `AGENTS.md`.",
       "Use `read_current` before replacing the managed section when you need to preserve or refine existing workspace instructions.",
       "Use `append_rule` for concise rules, `remove_rule` to retract one, and `replace_managed_section` for structured markdown templates, indexes, or larger rule sets.",
+    ];
+  }
+  if (toolId === "teammates_list") {
+    return [
+      "Only the HR teammate should call `teammates_list`.",
+      "Use `teammates_list` to inspect the live current roster before creating, reshaping, merging, or retiring teammates.",
+      "Default to active teammates only. Include archived teammates only when you need historical overlap or restoration context.",
+      "Prefer this tool over generic file inspection when you need the authoritative current teammate roster.",
     ];
   }
   if (toolId === "teammates_create") {
@@ -1418,7 +1464,7 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
     return [
       "When the user wants to USE a third-party service directly via chat (Gmail, Slack, Notion, Linear, GitHub, …) and there is NO matching `<toolkit>_<verb>` tool already in your tool list, call this tool. Connecting an integration is one OAuth click for the user, not an engineering task.",
       "DO NOT call this tool to satisfy a 'build me an app that uses X' request. App-building has its own connect+bind flow: scaffold the app first, declare the required `integration` in `app.runtime.yaml`, and let `workspace_apps_register` / `workspace_apps_ensure_running` surface `pending_integrations`. The chat UI auto-renders the per-app binding card from that response — that card both opens OAuth (if no accounts exist) AND binds the chosen account to the specific app. Calling propose_connect up-front creates a workspace-level connection without binding it to anything, the user clicks Connect once and thinks they're done, then the freshly-built app reports `integration_not_bound` because the per-app binding step was skipped. The screenshot the user takes is of an empty 'Connect X' state, polish has nothing meaningful to compare against, the dashboard ships broken.",
-      "DELEGATE THE BUILD, DO NOT INLINE IT. App-building (scaffold → install → register → build → ensure_running, ~50+ tool calls) must run inside `delegate_task`, NOT in the main chat session. The main session stays responsive for the user; the subagent does the long pipeline. After propose_connect (when it's actually needed) or after the user binds a connection, your follow-up action for the build phase is `delegate_task` with the build brief — never `workspace_apps_scaffold` inline. Building in main session blocks chat, pollutes the user's turn history with read/edit/bash spam, and makes the polish pass turn (which the runtime auto-queues) collide with build output.",
+      "DELEGATE THE BUILD, DO NOT INLINE IT. App-building (scaffold → install → register → build → ensure_running, ~50+ tool calls) must run inside `delegate_task` to the App Builder teammate, NOT in the main chat session. The main session stays responsive for the user; App Builder does the long pipeline. After propose_connect (when it's actually needed) or after the user binds a connection, your follow-up action for the build phase is `delegate_task` with the build brief for App Builder — never `workspace_apps_scaffold` inline. Building in main session blocks chat, pollutes the user's turn history with read/edit/bash spam, and makes the polish pass turn (which the runtime auto-queues) collide with build output.",
       "INTEGRATION-VS-APP-BINDING — Integrations are user-level OAuth accounts; a single connected Gmail account can power any number of apps. Apps consume those accounts via a per-app binding. Two different chat cards exist for the two situations: a 'Connect <provider>' card (this tool) opens the OAuth flow for a brand-new account; a 'Pick a <provider> account for <app>' card auto-renders from `pending_integrations` and lets the user bind an existing connection to the app. Only call this tool when there is NO app context — the user is asking for direct-use of the service in chat.",
       "App context exception still applies: if `workspace_apps_register/build/ensure_running` returned `pending_integrations` entries where `available_accounts === 0`, you may call this tool once per such provider — the user has zero accounts and the binding card alone cannot open OAuth. For entries where `available_accounts >= 1`, the chat UI's binding card handles both account-pick and OAuth via 'Add another'; calling propose_connect on top creates a duplicate Connect card. Do NOT ship a 'safe mode' / 'manual mode' / 'no real recipient' fallback to avoid asking.",
       "Do NOT call `workspace_apps_scaffold` / `workspace_apps_build` to satisfy a 'connect X' request. Integrations and apps are separate concepts: integrations are user OAuth accounts, apps are user-built tools that consume those accounts.",
@@ -1430,11 +1476,12 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
   }
   if (toolId === "workspace_apps_scaffold") {
     return [
+      ...appBuilderToolGuidance,
       "This tool builds a brand-new user-facing app (TanStack Start project, dashboard, vibe-coded internal tool). It is NOT how a user connects an integration.",
       "If the user wants to connect, authorize, or otherwise gain OAuth access to a known third-party service, call `holaboss_workspace_integrations_propose_connect` instead — building an app for that is a category error.",
       "Use this only when the user actually asked for a new app, dashboard, tool, surface, internal product, or other UI/persistence/schedule-bearing capability.",
       "MANDATORY PRECONDITION: invoke `skill({ name: \"app-builder-sdk\" })` ONCE before calling this tool, and read its full output. The skill contains the SDK contract (5 primitives, provider id rules, package.json shape, density rules, anti-patterns, install protocol). Building from training-data priors alone produces apps that consistently miss the SDK shape, the npm semver pin, and the density/aesthetic rules — i.e. the failure mode users keep flagging. The 1-line catalog description is NOT enough; load the full SKILL.md.",
-      "DELEGATE OR YOU'RE IN THE WRONG SESSION. This tool is the entry point of a ~50+ tool-call pipeline (scaffold → bun install → register → build → ensure_running → polish). If you are running in the main chat session (not a delegated subagent), STOP and call `delegate_task` with the full build brief instead — the subagent will run this pipeline in the background while the user's chat stays responsive. Calling this tool directly from main session is the symptom of a wrong control-flow choice; the user has explicitly flagged this as a poor experience. The only acceptable callers of this tool are subagent sessions spawned by delegate_task.",
+      "DELEGATE OR YOU'RE IN THE WRONG SESSION. This tool is the entry point of a ~50+ tool-call pipeline (scaffold → bun install → register → build → ensure_running → polish). If you are running in the main chat session (not a delegated subagent), STOP and call `delegate_task` with the full build brief for App Builder instead — that teammate will run this pipeline in the background while the user's chat stays responsive. Calling this tool directly from main session is the symptom of a wrong control-flow choice; the user has explicitly flagged this as a poor experience. The only acceptable callers of this tool are App Builder subagent sessions spawned by delegate_task.",
     ];
   }
   if (
@@ -1443,6 +1490,7 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
     toolId === "workspace_apps_ensure_running"
   ) {
     return [
+      ...appBuilderToolGuidance,
       "If the response includes a `pending_integrations` array, the app declares providers (Gmail / Twitter / Linear / etc.) that the user has not yet connected. You MUST call `holaboss_workspace_integrations_propose_connect` once per unique `provider_id` in that array — same turn is correct — before you can claim the app is ready.",
       "Do NOT interpret a `pending_integrations` non-empty response as 'the API is unavailable' or 'this provider doesn't expose what I need'. It means exactly one thing: the user hasn't completed OAuth for that toolkit yet. Propose connect and wait for the gate to re-dispatch your input.",
       "Do NOT report the app as 'done', 'in safe mode', 'manual mode', 'logging-only', 'preview mode', or any variant that means the app does not actually do what the user asked for. If a provider is still unconnected, the correct outcome is a Connect card in chat, not a shipped non-functional app.",
@@ -1451,7 +1499,7 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "When that polish turn fires (you will see a `text` payload starting with `[Auto-queued post-build polish pass]`), follow it literally: invoke `interface-design`, REWRITE each `src/client/` file via `bash` heredoc (NOT `edit`), rebuild + restart, then verify with `browser_screenshot`. The polish turn's `text` payload tells you what to do and when it's done; do not bring concrete visual rules from elsewhere — the `interface-design` skill output is the sole authority for what the dashboard should look like.",
     ];
   }
-  return [];
+  return appBuilderToolGuidance;
 }
 
 export function createHarnessRuntimeToolDefinition(
