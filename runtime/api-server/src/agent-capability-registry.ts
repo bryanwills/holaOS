@@ -365,11 +365,17 @@ const BUILTIN_CAPABILITY_DEFINITIONS: Record<string, ToolCapabilityDefinition> =
     title: "Bash",
     description: "Run shell commands that may inspect or mutate workspace state.",
   },
+  ripgrep: {
+    kind: "builtin_tool",
+    policy: "inspect",
+    title: "Ripgrep",
+    description: "Search workspace file contents by pattern using ripgrep (rg).",
+  },
   grep: {
     kind: "builtin_tool",
     policy: "inspect",
-    title: "Grep",
-    description: "Search workspace file contents by pattern.",
+    title: "Ripgrep",
+    description: "Legacy alias for ripgrep (rg) pattern search.",
   },
   glob: {
     kind: "builtin_tool",
@@ -495,6 +501,7 @@ function customCapabilityDefinition(toolName: string): ToolCapabilityDefinition 
   const normalized = normalizedToken(toolName);
   const inspectPrefixes = [
     "read",
+    "ripgrep",
     "grep",
     "glob",
     "list",
@@ -697,7 +704,13 @@ function executionSemanticsForDescriptor(params: {
       requires_user_confirmation: true,
     };
   }
-  if (normalizedId === "read" || normalizedId === "grep" || normalizedId === "glob" || normalizedId === "list") {
+  if (
+    normalizedId === "read" ||
+    normalizedId === "ripgrep" ||
+    normalizedId === "grep" ||
+    normalizedId === "glob" ||
+    normalizedId === "list"
+  ) {
     return {
       concurrency: "parallel_safe",
       requires_runtime_service: false,
@@ -781,7 +794,14 @@ function authorityBoundaryForDescriptor(params: {
       runtime_state: false,
     };
   }
-  if (normalizedId === "read" || normalizedId === "edit" || normalizedId === "grep" || normalizedId === "glob" || normalizedId === "list") {
+  if (
+    normalizedId === "read" ||
+    normalizedId === "edit" ||
+    normalizedId === "ripgrep" ||
+    normalizedId === "grep" ||
+    normalizedId === "glob" ||
+    normalizedId === "list"
+  ) {
     return {
       filesystem: true,
       shell: false,

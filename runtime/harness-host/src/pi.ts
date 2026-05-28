@@ -194,7 +194,9 @@ const PI_HARNESS_CLIENT_NAME = "holaboss-pi-harness";
 const PI_HARNESS_CLIENT_VERSION = "0.1.0";
 const PI_REQUEST_TOOL_NAME_ALIASES: Record<string, string> = {
   find: "glob",
+  grep: "ripgrep",
   ls: "list",
+  ripgrep: "grep",
 };
 // The host provides local implementations for these public tool names. If the
 // runtime capability surface also returns them, OpenAI-compatible providers see
@@ -247,6 +249,16 @@ export type PiMcpToolset = {
   mcpToolMetadata: Map<string, PiMcpToolMetadata>;
   unavailableServers: PiMcpServerUnavailableInfo[];
 };
+
+function createRipgrepTool(cwd: string): ReturnType<typeof createGrepTool> {
+  const grepTool = createGrepTool(cwd);
+  return {
+    ...grepTool,
+    name: "ripgrep",
+    label: "ripgrep",
+    description: "Search file contents with ripgrep (rg). Respects .gitignore.",
+  };
+}
 
 export interface PiPromptPayload {
   text: string;
@@ -1847,7 +1859,7 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
   );
   const baseTools = filterPiToolDefinitionsForRequest(request, [
     ...createCodingTools(request.workspace_dir),
-    createGrepTool(request.workspace_dir),
+    createRipgrepTool(request.workspace_dir),
     createFindTool(request.workspace_dir),
     createLsTool(request.workspace_dir),
   ]);

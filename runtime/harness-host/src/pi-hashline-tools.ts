@@ -20,10 +20,11 @@ import {
   stripBom,
 } from "../node_modules/@mariozechner/pi-coding-agent/dist/core/tools/edit-diff.js";
 import {
-  expandPath,
   resolveReadPath,
   resolveToCwd,
 } from "../node_modules/@mariozechner/pi-coding-agent/dist/core/tools/path-utils.js";
+import { extractHarnessAttachmentText } from "../../harnesses/src/attachment-content.js";
+import type { HarnessInputAttachmentPayload } from "../../harnesses/src/types.js";
 
 type HashlineSnapshot = {
   absolutePath: string;
@@ -62,6 +63,16 @@ const HASHLINE_TAG_SPACE = 0x1000;
 const HASHLINE_TAG_MULTIPLIER = 0xb5d;
 const HASHLINE_TAG_OFFSET = 0x0ad;
 const HASHLINE_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+const HASHLINE_DOCUMENT_MIME_TYPES = new Map<string, string>([
+  [".pdf", "application/pdf"],
+  [".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+  [".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"],
+  [".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+  [".xls", "application/vnd.ms-excel"],
+]);
+const HASHLINE_DIRECTORY_DEFAULT_LIMIT = 200;
+const HASHLINE_MAX_DOCUMENT_CHARS = 120_000;
+const HASHLINE_BINARY_SNIFF_BYTES = 1024;
 
 class HashlineSnapshotStore {
   #counter = 0;
@@ -337,6 +348,182 @@ function renderHashlineReadOutput(params: {
   return rendered.join("\n");
 }
 
+function renderNumberedReadOutput(params: {
+  headerLines: readonly string[];
+  bodyLines: readonly string[];
+  offset?: number;
+  limit?: number;
+  emptyMessage: string;
+  unitLabel: string;
+}): string {
+  const rendered: string[] = [...params.headerLines];
+  const renderedHeader = rendered.join("\n");
+  const headerPrefix = renderedHeader.length > 0 ? `${renderedHeader}\n` : "";
+  const startLine = params.offset && params.offset > 0 ? Math.floor(params.offset) : 1;
+  const startIndex = startLine - 1;
+  if (params.bodyLines.length === 0) {
+    return `${headerPrefix}${params.emptyMessage}`;
+  }
+  if (startIndex >= params.bodyLines.length) {
+    throw new Error(`Offset ${startLine} is beyond end of ${params.unitLabel} (${params.bodyLines.length} total)`);
+  }
+
+  const requestedLimit = params.limit && params.limit > 0 ? Math.floor(params.limit) : Number.POSITIVE_INFINITY;
+  const selectedLines = params.bodyLines.slice(startIndex, startIndex + requestedLimit);
+  let renderedBytes = Buffer.byteLength(headerPrefix, "utf-8");
+  let renderedLineCount = 0;
+  let nextLineNumber = startLine;
+
+  for (const line of selectedLines) {
+    const prefixed = `${nextLineNumber}:${line}`;
+    const prefixedBytes = Buffer.byteLength(`${prefixed}\n`, "utf-8");
+    const wouldExceedLines = renderedLineCount >= DEFAULT_MAX_LINES;
+    const wouldExceedBytes = renderedBytes + prefixedBytes > DEFAULT_MAX_BYTES;
+    if ((wouldExceedLines || wouldExceedBytes) && renderedLineCount > 0) {
+      break;
+    }
+    if (wouldExceedBytes && renderedLineCount === 0) {
+      rendered.push(
+        `[${params.unitLabel.slice(0, 1).toUpperCase()}${params.unitLabel.slice(1)} ${nextLineNumber} exceeds ${formatSize(DEFAULT_MAX_BYTES)} output limit. Use offset=${nextLineNumber} with a more targeted read.]`,
+      );
+      renderedLineCount = 1;
+      nextLineNumber += 1;
+      break;
+    }
+    rendered.push(prefixed);
+    renderedBytes += prefixedBytes;
+    renderedLineCount += 1;
+    nextLineNumber += 1;
+  }
+
+  const renderedRangeEnd = nextLineNumber - 1;
+  if (renderedLineCount === 0) {
+    rendered.push("[No lines rendered.]");
+  }
+  if (renderedRangeEnd < params.bodyLines.length) {
+    rendered.push(
+      `[Showing ${params.unitLabel} ${startLine}-${renderedRangeEnd} of ${params.bodyLines.length}. Use offset=${renderedRangeEnd + 1} to continue.]`,
+    );
+  }
+  return rendered.join("\n");
+}
+
+function isLikelyBinaryBuffer(buffer: Buffer): boolean {
+  return buffer.subarray(0, Math.min(buffer.length, HASHLINE_BINARY_SNIFF_BYTES)).includes(0);
+}
+
+function syntheticReadAttachment(params: {
+  absolutePath: string;
+  displayPath: string;
+  extension: string;
+  sizeBytes: number;
+}): HarnessInputAttachmentPayload {
+  return {
+    id: params.absolutePath,
+    kind: "file",
+    name: path.basename(params.absolutePath),
+    mime_type: HASHLINE_DOCUMENT_MIME_TYPES.get(params.extension) ?? "application/octet-stream",
+    size_bytes: params.sizeBytes,
+    workspace_path: params.displayPath,
+  };
+}
+
+function truncateDocumentText(text: string): { text: string; truncated: boolean } {
+  if (text.length <= HASHLINE_MAX_DOCUMENT_CHARS) {
+    return { text, truncated: false };
+  }
+  return {
+    text: text.slice(0, HASHLINE_MAX_DOCUMENT_CHARS),
+    truncated: true,
+  };
+}
+
+async function renderDirectoryReadOutput(params: {
+  absolutePath: string;
+  displayPath: string;
+  offset?: number;
+  limit?: number;
+}): Promise<string> {
+  const entries = await fs.readdir(params.absolutePath, { withFileTypes: true });
+  const bodyLines = entries
+    .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: "base" }))
+    .map((entry) => {
+      if (entry.isDirectory()) {
+        return `${entry.name}/`;
+      }
+      if (entry.isSymbolicLink()) {
+        return `${entry.name}@`;
+      }
+      return entry.name;
+    });
+  return renderNumberedReadOutput({
+    headerLines: [
+      `[Directory: ${params.displayPath}]`,
+      `Entries: ${bodyLines.length}`,
+      "",
+    ],
+    bodyLines,
+    offset: params.offset,
+    limit: params.limit ?? HASHLINE_DIRECTORY_DEFAULT_LIMIT,
+    emptyMessage: "(empty directory)",
+    unitLabel: "entries",
+  });
+}
+
+async function renderDocumentReadOutput(params: {
+  absolutePath: string;
+  displayPath: string;
+  extension: string;
+  sizeBytes: number;
+  offset?: number;
+  limit?: number;
+}): Promise<string> {
+  const attachment = syntheticReadAttachment(params);
+  const extractedText = await extractHarnessAttachmentText({
+    attachment,
+    absolutePath: params.absolutePath,
+  });
+  if (!extractedText) {
+    throw new Error(`Unable to extract readable content from ${params.displayPath}`);
+  }
+  const truncated = truncateDocumentText(extractedText);
+  const numbered = renderNumberedReadOutput({
+    headerLines: [
+      `[Document: ${attachment.name}]`,
+      `Mime-Type: ${attachment.mime_type}`,
+      `Path: ${params.displayPath}`,
+      "",
+    ],
+    bodyLines: splitLogicalLines(normalizeToLF(truncated.text)),
+    offset: params.offset,
+    limit: params.limit,
+    emptyMessage: "[document contained no readable text]",
+    unitLabel: "lines",
+  });
+  if (!truncated.truncated) {
+    return numbered;
+  }
+  return `${numbered}\n[document text truncated for read output]`;
+}
+
+function renderBinaryReadOutput(params: {
+  displayPath: string;
+  extension: string;
+  sizeBytes: number;
+}): string {
+  const details = [
+    `[Binary file: ${params.displayPath}]`,
+    `Size: ${formatSize(params.sizeBytes)}`,
+  ];
+  if (params.extension) {
+    details.push(`Extension: ${params.extension}`);
+  }
+  details.push(
+    "This file type is not readable as plain text here. The read tool supports text files, directories, images, PDFs, DOCX, PPTX, XLSX, and XLS files.",
+  );
+  return details.join("\n");
+}
+
 function validateHashlineHunks(section: HashlineSection, baseLines: readonly string[]): void {
   let bofSeen = false;
   let eofSeen = false;
@@ -561,7 +748,7 @@ export function createPiHashlineToolDefinitions(cwd: string): ToolDefinition[] {
   const readTool = defineTool({
     ...baseReadTool,
     description:
-      "Read the contents of a file. Text results are returned as snapshot-tagged, line-numbered hashline output (`¶path#TAG` then `N:text`) so follow-up edits can anchor to the exact file view you read. Use the exact header tag from your latest read when editing. Images are still returned inline as attachments.",
+      "Read files, directories, and common documents. Editable text results are returned as snapshot-tagged, line-numbered hashline output (`¶path#TAG` then `N:text`) so follow-up edits can anchor to the exact file view you read. Directories return numbered entry listings. Images are returned inline as attachments. PDFs, DOCX, PPTX, XLSX, and XLS files are converted into readable text output.",
     promptSnippet: "Read snapshot-tagged file contents for anchored hashline edits",
     promptGuidelines: [
       "Use read before edit. Copy the exact `¶path#TAG` header from the latest read output and never invent the tag.",
@@ -570,14 +757,59 @@ export function createPiHashlineToolDefinitions(cwd: string): ToolDefinition[] {
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       const rawPath = String((params as { path: string }).path ?? "").trim();
       const absolutePath = resolveReadPath(rawPath, cwd);
-      const extension = path.extname(expandPath(rawPath)).toLowerCase();
+      const stats = await fs.stat(absolutePath);
+      const displayPath = normalizeDisplayPath(cwd, absolutePath);
+      if (stats.isDirectory()) {
+        return {
+          content: [{
+            type: "text",
+            text: await renderDirectoryReadOutput({
+              absolutePath,
+              displayPath,
+              offset: typeof (params as { offset?: number }).offset === "number" ? (params as { offset?: number }).offset : undefined,
+              limit: typeof (params as { limit?: number }).limit === "number" ? (params as { limit?: number }).limit : undefined,
+            }),
+          }],
+          details: undefined,
+        };
+      }
+      const extension = path.extname(absolutePath).toLowerCase();
       if (HASHLINE_IMAGE_EXTENSIONS.has(extension)) {
         return baseReadTool.execute(toolCallId, params, signal, onUpdate, ctx);
       }
-      const rawContent = await fs.readFile(absolutePath, "utf-8");
+      if (HASHLINE_DOCUMENT_MIME_TYPES.has(extension)) {
+        return {
+          content: [{
+            type: "text",
+            text: await renderDocumentReadOutput({
+              absolutePath,
+              displayPath,
+              extension,
+              sizeBytes: stats.size,
+              offset: typeof (params as { offset?: number }).offset === "number" ? (params as { offset?: number }).offset : undefined,
+              limit: typeof (params as { limit?: number }).limit === "number" ? (params as { limit?: number }).limit : undefined,
+            }),
+          }],
+          details: undefined,
+        };
+      }
+      const rawBuffer = await fs.readFile(absolutePath);
+      if (isLikelyBinaryBuffer(rawBuffer)) {
+        return {
+          content: [{
+            type: "text",
+            text: renderBinaryReadOutput({
+              displayPath,
+              extension,
+              sizeBytes: stats.size,
+            }),
+          }],
+          details: undefined,
+        };
+      }
+      const rawContent = rawBuffer.toString("utf-8");
       const { text } = stripBom(rawContent);
       const normalizedText = normalizeToLF(text);
-      const displayPath = normalizeDisplayPath(cwd, absolutePath);
       const tag = store.record({ absolutePath, displayPath, normalizedText });
       const outputText = renderHashlineReadOutput({
         displayPath,

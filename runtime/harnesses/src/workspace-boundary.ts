@@ -18,6 +18,7 @@ const WORKSPACE_LOCAL_TOOL_NAMES = new Set([
   "write",
   "bash",
   "glob",
+  "ripgrep",
   "grep",
   "find",
   "ls",

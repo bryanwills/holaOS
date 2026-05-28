@@ -4,7 +4,46 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import JSZip from "jszip";
+
 import { createPiHashlineToolDefinitions } from "./pi-hashline-tools.js";
+
+function createPdfBuffer(text: string): Buffer {
+  const escapedText = text.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+  const stream = `BT\n/F1 24 Tf\n72 120 Td\n(${escapedText}) Tj\nET`;
+  const objects = [
+    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n",
+    `4 0 obj\n<< /Length ${Buffer.byteLength(stream, "utf8")} >>\nstream\n${stream}\nendstream\nendobj\n`,
+    "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+  ];
+
+  let output = "%PDF-1.4\n";
+  const offsets: number[] = [0];
+  for (const object of objects) {
+    offsets.push(Buffer.byteLength(output, "utf8"));
+    output += object;
+  }
+  const xrefOffset = Buffer.byteLength(output, "utf8");
+  output += `xref\n0 ${objects.length + 1}\n`;
+  output += "0000000000 65535 f \n";
+  for (const offset of offsets.slice(1)) {
+    output += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  }
+  output += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  return Buffer.from(output, "utf8");
+}
+
+async function createDocxBuffer(lines: string[]): Promise<Buffer> {
+  const zip = new JSZip();
+  const body = lines.map((line) => `<w:p><w:r><w:t>${line}</w:t></w:r></w:p>`).join("");
+  zip.file(
+    "word/document.xml",
+    `<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}</w:body></w:document>`,
+  );
+  return Buffer.from(await zip.generateAsync({ type: "uint8array" }));
+}
 
 async function withTempWorkspace(fn: (workspaceDir: string) => Promise<void>) {
   const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-hashline-tools-"));
@@ -48,6 +87,94 @@ test("hashline read emits snapshot-tagged numbered output", async () => {
     assert.match(text, /^¶example\.ts#[0-9A-F]{3}$/m);
     assert.match(text, /^2:const second = 2;$/m);
     assert.match(text, /^3:const third = 3;$/m);
+  });
+});
+
+test("hashline read lists directory entries with pagination support", async () => {
+  await withTempWorkspace(async (workspaceDir) => {
+    await fs.mkdir(path.join(workspaceDir, "docs", "reports"), { recursive: true });
+    await fs.writeFile(path.join(workspaceDir, "docs", "notes.md"), "# notes\n", "utf-8");
+    await fs.writeFile(path.join(workspaceDir, "docs", "todo.txt"), "ship it\n", "utf-8");
+
+    const [readTool] = createPiHashlineToolDefinitions(workspaceDir);
+    const result = await readTool.execute(
+      "call-1",
+      { path: "docs", offset: 2, limit: 1 },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    const text = firstTextBlock(result);
+
+    assert.match(text, /^\[Directory: docs\]$/m);
+    assert.match(text, /^Entries: 3$/m);
+    assert.match(text, /^2:reports\/$/m);
+    assert.match(text, /\[Showing entries 2-2 of 3\. Use offset=3 to continue\.\]$/m);
+  });
+});
+
+test("hashline read extracts PDF content into readable text", async () => {
+  await withTempWorkspace(async (workspaceDir) => {
+    await fs.writeFile(path.join(workspaceDir, "summary.pdf"), createPdfBuffer("Hello PDF"));
+
+    const [readTool] = createPiHashlineToolDefinitions(workspaceDir);
+    const result = await readTool.execute(
+      "call-1",
+      { path: "summary.pdf" },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    const text = firstTextBlock(result);
+
+    assert.match(text, /^\[Document: summary\.pdf\]$/m);
+    assert.match(text, /^Mime-Type: application\/pdf$/m);
+    assert.match(text, /^1:<pdf filename="summary\.pdf" pages="1">$/m);
+    assert.match(text, /Hello PDF/);
+  });
+});
+
+test("hashline read extracts DOCX content into readable text", async () => {
+  await withTempWorkspace(async (workspaceDir) => {
+    await fs.writeFile(
+      path.join(workspaceDir, "notes.docx"),
+      await createDocxBuffer(["Quarterly plan", "Ship the feature"]),
+    );
+
+    const [readTool] = createPiHashlineToolDefinitions(workspaceDir);
+    const result = await readTool.execute(
+      "call-1",
+      { path: "notes.docx" },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    const text = firstTextBlock(result);
+
+    assert.match(text, /^\[Document: notes\.docx\]$/m);
+    assert.match(text, /^Mime-Type: application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document$/m);
+    assert.match(text, /Quarterly plan/);
+    assert.match(text, /Ship the feature/);
+  });
+});
+
+test("hashline read reports unsupported binary files instead of decoding garbage", async () => {
+  await withTempWorkspace(async (workspaceDir) => {
+    await fs.writeFile(path.join(workspaceDir, "archive.bin"), Buffer.from([0x00, 0x01, 0x02, 0x03]));
+
+    const [readTool] = createPiHashlineToolDefinitions(workspaceDir);
+    const result = await readTool.execute(
+      "call-1",
+      { path: "archive.bin" },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    const text = firstTextBlock(result);
+
+    assert.match(text, /^\[Binary file: archive\.bin\]$/m);
+    assert.match(text, /^Extension: \.bin$/m);
+    assert.match(text, /supports text files, directories, images, PDFs, DOCX, PPTX, XLSX, and XLS files\./);
   });
 });
 

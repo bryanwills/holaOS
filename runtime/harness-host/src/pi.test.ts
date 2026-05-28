@@ -198,12 +198,14 @@ test("filterPiToolDefinitionsForRequest enforces the projected tool map and alia
         read: true,
         glob: true,
         list: true,
+        ripgrep: true,
         skill: true,
         web_search: false,
       },
     },
     [
       { name: "read" },
+      { name: "ripgrep" },
       { name: "find" },
       { name: "ls" },
       { name: "skill" },
@@ -214,7 +216,23 @@ test("filterPiToolDefinitionsForRequest enforces the projected tool map and alia
 
   assert.deepEqual(
     filtered.map((tool) => tool.name),
-    ["read", "find", "ls", "skill"]
+    ["read", "ripgrep", "find", "ls", "skill"]
+  );
+});
+
+test("filterPiToolDefinitionsForRequest keeps the legacy grep request key working for ripgrep", () => {
+  const filtered = filterPiToolDefinitionsForRequest(
+    {
+      tools: {
+        grep: true,
+      },
+    },
+    [{ name: "ripgrep" }, { name: "bash" }]
+  );
+
+  assert.deepEqual(
+    filtered.map((tool) => tool.name),
+    ["ripgrep"]
   );
 });
 
