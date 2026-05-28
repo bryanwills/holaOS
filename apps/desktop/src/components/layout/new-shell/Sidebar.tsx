@@ -81,7 +81,6 @@ import {
   chatComposerPrefillAtom,
   createWorkspaceOpenAtom,
   focusModeAtom,
-  newIssueOpenAtom,
   publishOpenAtom,
   searchOpenAtom,
   SIDEBAR_MAX_WIDTH,
@@ -445,10 +444,22 @@ function SidebarIssuesSection() {
   const { issues, isLoading, statusMessage } = useIssues(
     selectedWorkspaceId || null,
   );
-  const setNewIssueOpen = useSetAtom(newIssueOpenAtom);
+  const setComposerPrefill = useSetAtom(chatComposerPrefillAtom);
+  const setFocusMode = useSetAtom(focusModeAtom);
   const openIssueDetailTab = useOpenIssueDetailTab();
   const setInternalTabs = useSetAtom(internalTabsAtom);
   const setActiveInternalTabId = useSetAtom(activeInternalTabIdAtom);
+  const prefillKeyRef = useRef(0);
+
+  const handleNewIssue = useCallback(() => {
+    prefillKeyRef.current += 1;
+    setComposerPrefill({
+      text: "New issue: ",
+      requestKey: prefillKeyRef.current,
+      mode: "replace",
+    });
+    setFocusMode(false);
+  }, [setComposerPrefill, setFocusMode]);
 
   const handleOpenIssue = useCallback(
     (issue: IssueRecordPayload) => {
@@ -495,7 +506,7 @@ function SidebarIssuesSection() {
         <div className="grid gap-2">
           <Button
             type="button"
-            onClick={() => setNewIssueOpen(true)}
+            onClick={handleNewIssue}
             disabled={!selectedWorkspaceId}
             className="h-8 justify-start rounded-lg px-3 text-xs"
           >

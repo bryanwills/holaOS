@@ -1481,8 +1481,6 @@ test("runTsRunnerCli keeps main workspace sessions on a coordinator surface", as
   assert.deepEqual(
     (capturedProjectRequest as { runtime_tool_ids: string[] }).runtime_tool_ids,
     [
-      "teammates_create",
-      "teammate_skills_create",
       "workspace_integrations_list_catalog",
       "holaboss_workspace_integrations_propose_connect",
       "holaboss_workspace_integrations_set_default_account",
@@ -1506,8 +1504,6 @@ test("runTsRunnerCli keeps main workspace sessions on a coordinator surface", as
   assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
     [
-      "teammates_create",
-      "teammate_skills_create",
       "workspace_integrations_list_catalog",
       "holaboss_workspace_integrations_propose_connect",
       "holaboss_workspace_integrations_set_default_account",

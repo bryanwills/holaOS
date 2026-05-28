@@ -52,6 +52,12 @@ test("new shell issues sidebar opens issue detail tabs and keeps inbox empty", a
   assert.match(sidebarSource, />\s*Dashboard\s*</);
   assert.match(sidebarSource, />\s*Issues\s*</);
   assert.match(sidebarSource, />\s*Teammates\s*</);
+  assert.match(sidebarSource, /const setComposerPrefill = useSetAtom\(chatComposerPrefillAtom\);/);
+  assert.match(sidebarSource, /const setFocusMode = useSetAtom\(focusModeAtom\);/);
+  assert.match(sidebarSource, /const handleNewIssue = useCallback\(\(\) => \{/);
+  assert.match(sidebarSource, /text: "New issue: ",/);
+  assert.match(sidebarSource, /setFocusMode\(false\);/);
+  assert.match(sidebarSource, /onClick=\{handleNewIssue\}/);
   assert.match(
     sidebarSource,
     /<div className="grid gap-2">[\s\S]*>\s*New issue\s*<[\s\S]*>\s*Dashboard\s*<[\s\S]*>\s*Issues\s*<[\s\S]*>\s*Teammates\s*</,
