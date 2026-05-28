@@ -8,7 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 
-import { RuntimeStateStore } from "./store.js";
+import { RuntimeStateStore, utcNowIso } from "./store.js";
 
 const tempDirs: string[] = [];
 
@@ -4172,6 +4172,296 @@ test("teammate capability profiles persist and update cleanly", () => {
   ]);
   assert.deepEqual(updated?.capabilityProfile.preferredTools, ["web_search"]);
   store.close();
+});
+
+test("legacy teammate tables migrate missing kind and status columns", () => {
+  const root = makeTempDir("hb-state-store-teammate-legacy-schema-");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Legacy Teammates Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  store.close();
+
+  const runtimeDbPath = workspaceRuntimeDbFile(workspaceRoot, "workspace-1");
+  fs.rmSync(runtimeDbPath, { force: true });
+
+  const legacyDb = new Database(runtimeDbPath);
+  legacyDb.exec(`
+    CREATE TABLE teammates (
+      teammate_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      instructions TEXT,
+      skills_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+  const createdAt = utcNowIso();
+  legacyDb
+    .prepare(`
+      INSERT INTO teammates (
+        teammate_id,
+        workspace_id,
+        name,
+        instructions,
+        skills_json,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+    .run(
+      "general",
+      "workspace-1",
+      "General",
+      "Legacy fallback executor.",
+      "[]",
+      createdAt,
+      createdAt,
+    );
+  legacyDb
+    .prepare(`
+      INSERT INTO teammates (
+        teammate_id,
+        workspace_id,
+        name,
+        instructions,
+        skills_json,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+    .run(
+      "teammate-1",
+      "workspace-1",
+      "Coder",
+      "Own implementation tasks.",
+      "[]",
+      createdAt,
+      createdAt,
+    );
+  legacyDb.close();
+
+  const reopened = new RuntimeStateStore({ dbPath, workspaceRoot });
+  const teammates = reopened.listTeammates({
+    workspaceId: "workspace-1",
+    includeArchived: true,
+  });
+
+  assert.equal(teammates.length, 2);
+  assert.equal(teammates[0]?.teammateId, "general");
+  assert.equal(teammates[0]?.kind, "system");
+  assert.equal(teammates[0]?.status, "active");
+  assert.deepEqual(
+    teammates[0]?.capabilityProfile.preferredTools,
+    ["local-tools", "browser"],
+  );
+  assert.equal(teammates[1]?.teammateId, "teammate-1");
+  assert.equal(teammates[1]?.kind, "custom");
+  assert.equal(teammates[1]?.status, "active");
+
+  const migratedDb = new Database(runtimeDbPath, { readonly: true });
+  const teammateColumns = new Set<string>(
+    (migratedDb.prepare("PRAGMA table_info(teammates)").all() as Array<{ name: string }>).map(
+      (row) => row.name,
+    ),
+  );
+  const generalRow = migratedDb
+    .prepare<[string], { kind: string; status: string; capability_profile_json: string }>(`
+      SELECT kind, status, capability_profile_json
+      FROM teammates
+      WHERE teammate_id = ?
+      LIMIT 1
+    `)
+    .get("general");
+  migratedDb.close();
+
+  assert.equal(teammateColumns.has("kind"), true);
+  assert.equal(teammateColumns.has("status"), true);
+  assert.equal(teammateColumns.has("archived_at"), true);
+  assert.equal(teammateColumns.has("capability_profile_json"), true);
+  assert.ok(generalRow);
+  assert.equal(generalRow.kind, "system");
+  assert.equal(generalRow.status, "active");
+  assert.match(generalRow.capability_profile_json, /preferredTools/i);
+  reopened.close();
+});
+
+test("workspace runtime schema upgrades legacy tables before creating late indexes", () => {
+  const root = makeTempDir("hb-state-store-legacy-runtime-indexes-");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Legacy Runtime Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  store.close();
+
+  const runtimeDbPath = workspaceRuntimeDbFile(workspaceRoot, "workspace-1");
+  fs.rmSync(runtimeDbPath, { force: true });
+
+  const legacyDb = new Database(runtimeDbPath);
+  legacyDb.exec(`
+    CREATE TABLE conversation_bindings (
+      binding_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      conversation_key TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'main_session',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE main_session_event_queue (
+      event_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      owner_main_session_id TEXT NOT NULL,
+      origin_main_session_id TEXT NOT NULL,
+      subagent_id TEXT,
+      event_type TEXT NOT NULL,
+      delivery_bucket TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      payload TEXT NOT NULL DEFAULT '{}',
+      earliest_deliver_at TEXT,
+      latest_deliver_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE subagent_runs (
+      subagent_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      parent_session_id TEXT,
+      parent_input_id TEXT,
+      origin_main_session_id TEXT NOT NULL,
+      owner_main_session_id TEXT NOT NULL,
+      child_session_id TEXT NOT NULL,
+      title TEXT,
+      goal TEXT NOT NULL,
+      context TEXT,
+      source_type TEXT,
+      source_id TEXT,
+      proposal_id TEXT,
+      cronjob_id TEXT,
+      retry_of_subagent_id TEXT,
+      tool_profile TEXT NOT NULL DEFAULT '{}',
+      requested_model TEXT,
+      effective_model TEXT,
+      status TEXT NOT NULL,
+      summary TEXT,
+      created_at TEXT NOT NULL,
+      started_at TEXT,
+      completed_at TEXT,
+      updated_at TEXT NOT NULL,
+      UNIQUE (workspace_id, child_session_id)
+    );
+    CREATE TABLE outputs (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      output_type TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'draft',
+      module_id TEXT,
+      module_resource_id TEXT,
+      file_path TEXT,
+      html_content TEXT,
+      session_id TEXT,
+      artifact_id TEXT,
+      folder_id TEXT,
+      platform TEXT,
+      metadata TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE evolve_skill_candidates (
+      candidate_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      input_id TEXT NOT NULL
+    );
+    CREATE TABLE memory_update_proposals (
+      proposal_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      input_id TEXT NOT NULL,
+      proposal_kind TEXT NOT NULL,
+      target_key TEXT NOT NULL,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+  legacyDb.close();
+
+  const reopened = new RuntimeStateStore({ dbPath, workspaceRoot });
+  const teammates = reopened.listTeammates({ workspaceId: "workspace-1" });
+  assert.equal(teammates[0]?.teammateId, "general");
+  reopened.close();
+
+  const migratedDb = new Database(runtimeDbPath, { readonly: true });
+  const subagentRunColumns = new Set<string>(
+    (migratedDb.prepare("PRAGMA table_info(subagent_runs)").all() as Array<{ name: string }>).map(
+      (row) => row.name,
+    ),
+  );
+  const outputColumns = new Set<string>(
+    (migratedDb.prepare("PRAGMA table_info(outputs)").all() as Array<{ name: string }>).map(
+      (row) => row.name,
+    ),
+  );
+  const evolveColumns = new Set<string>(
+    (migratedDb.prepare("PRAGMA table_info(evolve_skill_candidates)").all() as Array<{ name: string }>).map(
+      (row) => row.name,
+    ),
+  );
+  const memoryUpdateColumns = new Set<string>(
+    (migratedDb.prepare("PRAGMA table_info(memory_update_proposals)").all() as Array<{ name: string }>).map(
+      (row) => row.name,
+    ),
+  );
+  const subagentRunIndexes = new Set<string>(
+    (migratedDb.prepare("PRAGMA index_list(subagent_runs)").all() as Array<{ name: string }>).map(
+      (row) => row.name,
+    ),
+  );
+  const outputIndexes = new Set<string>(
+    (migratedDb.prepare("PRAGMA index_list(outputs)").all() as Array<{ name: string }>).map(
+      (row) => row.name,
+    ),
+  );
+  const evolveIndexes = new Set<string>(
+    (migratedDb.prepare("PRAGMA index_list(evolve_skill_candidates)").all() as Array<{ name: string }>).map(
+      (row) => row.name,
+    ),
+  );
+  const memoryUpdateIndexes = new Set<string>(
+    (migratedDb.prepare("PRAGMA index_list(memory_update_proposals)").all() as Array<{ name: string }>).map(
+      (row) => row.name,
+    ),
+  );
+  migratedDb.close();
+
+  assert.equal(subagentRunColumns.has("issue_id"), true);
+  assert.equal(subagentRunColumns.has("teammate_id"), true);
+  assert.equal(outputColumns.has("input_id"), true);
+  assert.equal(evolveColumns.has("task_proposal_id"), true);
+  assert.equal(evolveColumns.has("status"), true);
+  assert.equal(evolveColumns.has("created_at"), true);
+  assert.equal(memoryUpdateColumns.has("state"), true);
+  assert.equal(memoryUpdateColumns.has("updated_at"), true);
+  assert.equal(subagentRunIndexes.has("idx_subagent_runs_issue_created"), true);
+  assert.equal(subagentRunIndexes.has("idx_subagent_runs_teammate_status_updated"), true);
+  assert.equal(outputIndexes.has("idx_outputs_session_input_created"), true);
+  assert.equal(evolveIndexes.has("idx_evolve_skill_candidates_workspace_status_created"), true);
+  assert.equal(evolveIndexes.has("idx_evolve_skill_candidates_task_proposal"), true);
+  assert.equal(memoryUpdateIndexes.has("idx_memory_update_proposals_workspace_state_created"), true);
 });
 
 test("listSessions preserves millisecond ordering for latest session selection", async () => {

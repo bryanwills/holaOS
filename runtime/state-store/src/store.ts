@@ -12761,12 +12761,6 @@ export class RuntimeStateStore {
           UNIQUE (session_id)
       );
 
-      CREATE INDEX IF NOT EXISTS idx_conversation_bindings_workspace_role_active_updated
-          ON conversation_bindings (workspace_id, role, is_active, updated_at DESC, created_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_conversation_bindings_channel_key_active
-          ON conversation_bindings (channel, conversation_key, is_active);
-
       CREATE TABLE IF NOT EXISTS agent_session_inputs (
           input_id TEXT PRIMARY KEY,
           session_id TEXT NOT NULL,
@@ -12834,18 +12828,6 @@ export class RuntimeStateStore {
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
       );
-
-      CREATE INDEX IF NOT EXISTS idx_main_session_event_queue_owner_status_earliest
-          ON main_session_event_queue (owner_main_session_id, status, earliest_deliver_at, created_at ASC);
-
-      CREATE INDEX IF NOT EXISTS idx_main_session_event_queue_workspace_status_created
-          ON main_session_event_queue (workspace_id, status, created_at ASC);
-
-      CREATE INDEX IF NOT EXISTS idx_main_session_event_queue_subagent_created
-          ON main_session_event_queue (subagent_id, created_at ASC);
-
-      CREATE INDEX IF NOT EXISTS idx_main_session_event_queue_materialized_input
-          ON main_session_event_queue (materialized_input_id);
 
       CREATE TABLE IF NOT EXISTS session_runtime_state (
           workspace_id TEXT NOT NULL,
@@ -13025,24 +13007,6 @@ export class RuntimeStateStore {
           UNIQUE (workspace_id, child_session_id)
       );
 
-      CREATE INDEX IF NOT EXISTS idx_subagent_runs_workspace_status_updated
-          ON subagent_runs (workspace_id, status, updated_at DESC, created_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_subagent_runs_owner_status_updated
-          ON subagent_runs (owner_main_session_id, status, updated_at DESC, created_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_subagent_runs_origin_created
-          ON subagent_runs (origin_main_session_id, created_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_subagent_runs_retry_created
-          ON subagent_runs (retry_of_subagent_id, created_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_subagent_runs_issue_created
-          ON subagent_runs (issue_id, created_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_subagent_runs_teammate_status_updated
-          ON subagent_runs (teammate_id, status, updated_at DESC, created_at DESC);
-
       CREATE TABLE IF NOT EXISTS issues (
           issue_id TEXT PRIMARY KEY,
           workspace_id TEXT NOT NULL,
@@ -13116,15 +13080,6 @@ export class RuntimeStateStore {
           promoted_at TEXT
       );
 
-      CREATE INDEX IF NOT EXISTS idx_evolve_skill_candidates_workspace_created
-          ON evolve_skill_candidates (workspace_id, created_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_evolve_skill_candidates_workspace_status_created
-          ON evolve_skill_candidates (workspace_id, status, created_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_evolve_skill_candidates_task_proposal
-          ON evolve_skill_candidates (task_proposal_id);
-
       CREATE TABLE IF NOT EXISTS memory_update_proposals (
           proposal_id TEXT PRIMARY KEY,
           workspace_id TEXT NOT NULL,
@@ -13145,15 +13100,6 @@ export class RuntimeStateStore {
           accepted_at TEXT,
           dismissed_at TEXT
       );
-
-      CREATE INDEX IF NOT EXISTS idx_memory_update_proposals_workspace_created
-          ON memory_update_proposals (workspace_id, created_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_memory_update_proposals_session_input_created
-          ON memory_update_proposals (session_id, input_id, created_at ASC);
-
-      CREATE INDEX IF NOT EXISTS idx_memory_update_proposals_workspace_state_created
-          ON memory_update_proposals (workspace_id, state, created_at DESC);
 
       CREATE TABLE IF NOT EXISTS interaction_entities (
           workspace_id TEXT NOT NULL,
@@ -13337,15 +13283,6 @@ export class RuntimeStateStore {
           updated_at TEXT NOT NULL
       );
 
-      CREATE INDEX IF NOT EXISTS idx_outputs_workspace_created
-          ON outputs (workspace_id, created_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_outputs_workspace_folder_created
-          ON outputs (workspace_id, folder_id, created_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_outputs_session_input_created
-          ON outputs (session_id, input_id, created_at DESC);
-
       CREATE TABLE IF NOT EXISTS app_builds (
           workspace_id TEXT NOT NULL,
           app_id TEXT NOT NULL,
@@ -13454,6 +13391,7 @@ export class RuntimeStateStore {
     this.migrateCronjobInstructions(db);
     this.migrateCronjobTeammates(db);
     this.migrateAppBuildRestartAttempts(db);
+    this.migrateLegacyTeammatesTableSchema(db);
     this.migrateTeammateCapabilityProfiles(db);
     this.migrateTeammateSkillsColumn(db);
   }
@@ -13942,6 +13880,59 @@ export class RuntimeStateStore {
     }
   }
 
+  private migrateLegacyTeammatesTableSchema(db: Database.Database): void {
+    if (!this.tableExists(db, "teammates")) {
+      return;
+    }
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(teammates)").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+    const addedStatusColumn = !columns.has("status");
+    if (!columns.has("kind")) {
+      db.exec("ALTER TABLE teammates ADD COLUMN kind TEXT NOT NULL DEFAULT 'custom';");
+    }
+    if (!columns.has("status")) {
+      db.exec("ALTER TABLE teammates ADD COLUMN status TEXT NOT NULL DEFAULT 'active';");
+    }
+    if (!columns.has("archived_at")) {
+      db.exec("ALTER TABLE teammates ADD COLUMN archived_at TEXT;");
+    }
+    db.prepare(`
+      UPDATE teammates
+      SET kind = CASE
+            WHEN teammate_id = ? THEN 'system'
+            ELSE 'custom'
+          END
+      WHERE lower(trim(coalesce(kind, ''))) NOT IN ('system', 'custom')
+         OR (teammate_id = ? AND lower(trim(coalesce(kind, ''))) != 'system')
+    `).run(GENERAL_TEAMMATE_ID, GENERAL_TEAMMATE_ID);
+    db.prepare(`
+      UPDATE teammates
+      SET status = CASE
+            WHEN teammate_id = ? THEN 'active'
+            WHEN trim(coalesce(archived_at, '')) != '' THEN 'archived'
+            ELSE 'active'
+          END
+      WHERE lower(trim(coalesce(status, ''))) NOT IN ('active', 'archived')
+         OR (teammate_id = ? AND lower(trim(coalesce(status, ''))) != 'active')
+    `).run(GENERAL_TEAMMATE_ID, GENERAL_TEAMMATE_ID);
+    if (addedStatusColumn) {
+      db.prepare(`
+        UPDATE teammates
+        SET status = CASE
+              WHEN teammate_id = ? THEN 'active'
+              WHEN trim(coalesce(archived_at, '')) != '' THEN 'archived'
+              ELSE 'active'
+            END
+      `).run(GENERAL_TEAMMATE_ID);
+    }
+    db.prepare(`
+      UPDATE teammates
+      SET archived_at = NULL
+      WHERE teammate_id = ?
+    `).run(GENERAL_TEAMMATE_ID);
+  }
+
   private migrateTeammateCapabilityProfiles(db: Database.Database): void {
     const columns = new Set<string>(
       (db.prepare("PRAGMA table_info(teammates)").all() as Array<{ name: string }>).map((row) => row.name)
@@ -14235,6 +14226,14 @@ export class RuntimeStateStore {
     if (!columns.has("promoted_at")) {
       db.exec("ALTER TABLE evolve_skill_candidates ADD COLUMN promoted_at TEXT;");
     }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_evolve_skill_candidates_workspace_created
+          ON evolve_skill_candidates (workspace_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_evolve_skill_candidates_workspace_status_created
+          ON evolve_skill_candidates (workspace_id, status, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_evolve_skill_candidates_task_proposal
+          ON evolve_skill_candidates (task_proposal_id);
+    `);
   }
 
   private ensureMemoryUpdateProposalsTableSchema(db: Database.Database): void {
@@ -14279,6 +14278,14 @@ export class RuntimeStateStore {
     if (!columns.has("dismissed_at")) {
       db.exec("ALTER TABLE memory_update_proposals ADD COLUMN dismissed_at TEXT;");
     }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_memory_update_proposals_workspace_created
+          ON memory_update_proposals (workspace_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_memory_update_proposals_session_input_created
+          ON memory_update_proposals (session_id, input_id, created_at ASC);
+      CREATE INDEX IF NOT EXISTS idx_memory_update_proposals_workspace_state_created
+          ON memory_update_proposals (workspace_id, state, created_at DESC);
+    `);
   }
 
   private rebuildTurnResultsWithoutLegacyColumns(db: Database.Database): void {
@@ -14442,6 +14449,14 @@ export class RuntimeStateStore {
     if (!columns.has("input_id")) {
       db.exec("ALTER TABLE outputs ADD COLUMN input_id TEXT;");
     }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_outputs_workspace_created
+          ON outputs (workspace_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_outputs_workspace_folder_created
+          ON outputs (workspace_id, folder_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_outputs_session_input_created
+          ON outputs (session_id, input_id, created_at DESC);
+    `);
   }
 
   private ensureWorkspacesTableSchema(db: Database.Database): void {
