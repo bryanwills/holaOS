@@ -374,6 +374,16 @@ function runtimeToolAvailability(toolId: string): CapabilityAvailabilityRules | 
   ) {
     return { sessionKinds: ["workspace_onboarding"] };
   }
+  if (
+    toolId === "delegate_task" ||
+    toolId === "get_task" ||
+    toolId === "list_tasks" ||
+    toolId === "reply_task" ||
+    toolId === "cancel_task" ||
+    toolId === "rerun_task"
+  ) {
+    return { excludedSessionKinds: ["workspace_onboarding"] };
+  }
   if (toolId === "holaboss_onboarding_complete") {
     return { excludedSessionKinds: ["workspace_onboarding"] };
   }

@@ -98,6 +98,12 @@ test("buildAgentCapabilityManifest keeps workspace-onboarding review mutations o
     sessionKind: "workspace_onboarding",
     browserToolsAvailable: false,
     runtimeToolIds: [
+      "delegate_task",
+      "get_task",
+      "list_tasks",
+      "reply_task",
+      "cancel_task",
+      "rerun_task",
       "holaboss_create_alignment_question",
       "holaboss_create_alignment_report",
       "holaboss_create_verification_report",
@@ -105,6 +111,12 @@ test("buildAgentCapabilityManifest keeps workspace-onboarding review mutations o
     ],
     defaultTools: ["read", "edit"],
     extraTools: [
+      "delegate_task",
+      "get_task",
+      "list_tasks",
+      "reply_task",
+      "cancel_task",
+      "rerun_task",
       "holaboss_create_alignment_question",
       "holaboss_create_alignment_report",
       "holaboss_create_verification_report",
@@ -126,6 +138,23 @@ test("buildAgentCapabilityManifest keeps workspace-onboarding review mutations o
     manifest.capabilities.some(
       (capability) => capability.callable_name === "holaboss_onboarding_complete",
     ),
+    false,
+  );
+  assert.equal(
+    manifest.capabilities.some((capability) => {
+      const callableName = capability.callable_name;
+      return (
+        typeof callableName === "string" &&
+        [
+          "delegate_task",
+          "get_task",
+          "list_tasks",
+          "reply_task",
+          "cancel_task",
+          "rerun_task",
+        ].includes(callableName)
+      );
+    }),
     false,
   );
 });

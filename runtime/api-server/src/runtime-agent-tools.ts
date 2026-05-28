@@ -5793,6 +5793,13 @@ export class RuntimeAgentToolsService {
       throw new RuntimeAgentToolsServiceError(404, "session_not_found", "session not found");
     }
     const kind = normalizedString(session.kind);
+    if (kind === "workspace_onboarding") {
+      throw new RuntimeAgentToolsServiceError(
+        403,
+        "onboarding_delegation_forbidden",
+        "workspace onboarding must execute directly in the onboarding session",
+      );
+    }
     if (kind === "subagent" || kind === "cronjob") {
       throw new RuntimeAgentToolsServiceError(
         403,

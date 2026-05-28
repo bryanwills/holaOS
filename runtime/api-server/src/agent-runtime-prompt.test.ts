@@ -911,13 +911,11 @@ test("composeAgentPrompt gives workspace onboarding its own controller prompt", 
   const capabilityManifest = buildAgentCapabilityManifest({
     defaultTools: ["read", "edit", "bash"],
     extraTools: [
-      "holaboss_delegate_task",
       "holaboss_create_alignment_question",
       "holaboss_create_alignment_report",
       "holaboss_create_verification_report",
     ],
     runtimeToolIds: [
-      "holaboss_delegate_task",
       "holaboss_create_alignment_question",
       "holaboss_create_alignment_report",
       "holaboss_create_verification_report",
@@ -930,7 +928,6 @@ test("composeAgentPrompt gives workspace onboarding its own controller prompt", 
   const prompt = composeAgentPrompt("You are concise.", {
     defaultTools: ["read", "edit", "bash"],
     extraTools: [
-      "holaboss_delegate_task",
       "holaboss_create_alignment_question",
       "holaboss_create_alignment_report",
       "holaboss_create_verification_report",
@@ -945,29 +942,34 @@ test("composeAgentPrompt gives workspace onboarding its own controller prompt", 
 
   assert.match(prompt.systemPrompt, /workspace onboarding controller/);
   assert.match(prompt.systemPrompt, /user-facing architect and builder/);
-  assert.match(prompt.systemPrompt, /cronjobs or recurring work/);
-  assert.match(prompt.systemPrompt, /small app builds or slices to implement/);
-  assert.match(prompt.systemPrompt, /workspace file and folder organization/);
-  assert.match(prompt.systemPrompt, /skills or repeatable workflows/);
-  assert.match(prompt.systemPrompt, /AI manager personality and behavior/);
+  assert.match(prompt.systemPrompt, /user's intended outcome/);
+  assert.match(prompt.systemPrompt, /real work context and systems involved/);
+  assert.match(prompt.systemPrompt, /integrations required to understand or act on that work/);
+  assert.match(prompt.systemPrompt, /teammates to create and how each should behave/);
+  assert.match(prompt.systemPrompt, /workspace rules that belong in `AGENTS\.md`/);
+  assert.match(prompt.systemPrompt, /teammate-owned cronjobs/);
   assert.match(prompt.systemPrompt, /gated design process/);
   assert.match(prompt.systemPrompt, /converse with the user/);
   assert.match(prompt.systemPrompt, /converge those requirements into a concrete design report/);
   assert.match(prompt.systemPrompt, /wait for user confirmation/);
-  assert.match(prompt.systemPrompt, /Delegate implementation to subagents only after the user confirms the design report/);
+  assert.match(prompt.systemPrompt, /execute the approved implementation directly in this same session/);
   assert.match(prompt.systemPrompt, /Keep the onboarding thread conversational and uncluttered/);
   assert.match(prompt.systemPrompt, /holaboss_create_alignment_question/);
   assert.match(prompt.systemPrompt, /closed choices/);
   assert.match(prompt.systemPrompt, /inline answer card/);
+  assert.match(prompt.systemPrompt, /Ground the alignment design in the user's actual work context/);
   assert.match(prompt.systemPrompt, /non-empty `summary` and `markdown` fields/);
-  assert.match(prompt.systemPrompt, /`workspace_structure`, `app_builds`, `skills`, `cronjobs`, `ai_manager_behavior`, `open_questions`, and `implementation_notes`/);
-  assert.match(prompt.systemPrompt, /thin first pass instead of a full product spec/);
-  assert.match(prompt.systemPrompt, /waiting for implementation results before moving to verification/);
+  assert.match(prompt.systemPrompt, /`user_intent`, `work_context`, `research_basis`, `integrations`, `teammates`, `workspace_rules`, `workspace_structure`, `apps`, `cronjobs`, `open_questions`, and `implementation_notes`/);
+  assert.match(prompt.systemPrompt, /Cronjobs should name an owner teammate/);
+  assert.match(prompt.systemPrompt, /focused first pass instead of a full product spec/);
+  assert.match(prompt.systemPrompt, /finishing the implementation work before moving to verification/);
   assert.match(prompt.systemPrompt, /verification report/);
   assert.match(prompt.systemPrompt, /including a concise human-readable `markdown` body/);
   assert.match(prompt.systemPrompt, /verified implementation/);
   assert.match(prompt.systemPrompt, /alignment review card/);
   assert.match(prompt.systemPrompt, /verification review card/);
+  assert.doesNotMatch(prompt.systemPrompt, /Delegate implementation to subagents/);
+  assert.doesNotMatch(prompt.systemPrompt, /delegated workers/);
   assert.doesNotMatch(prompt.systemPrompt, /holaboss_approve_alignment/);
   assert.doesNotMatch(prompt.systemPrompt, /holaboss_onboarding_complete/);
   assert.doesNotMatch(prompt.systemPrompt, /This is an onboarding session\./);

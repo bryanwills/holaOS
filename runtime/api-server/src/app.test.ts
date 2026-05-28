@@ -1156,7 +1156,25 @@ test.skip("workspace onboarding runtime tools persist alignment and verification
             "- Build a thin deal tracker first",
           ].join("\n"),
           summary: "Set up a lightweight CRM workspace",
-          app_builds: ["deal-tracker"],
+          integrations: ["hubspot"],
+          teammates: [
+            {
+              teammate_id: "sales-ops",
+              name: "Sales Ops",
+              remit: "Own pipeline hygiene and follow-up orchestration.",
+              system_prompt: "Keep the pipeline current and actionable.",
+            },
+          ],
+          workspace_rules: {
+            summary: "Keep execution concise and safe.",
+          },
+          apps: ["deal-tracker"],
+          cronjobs: [
+            {
+              name: "weekly pipeline digest",
+              owner_teammate_id: "sales-ops",
+            },
+          ],
         },
       },
     });
@@ -1175,7 +1193,7 @@ test.skip("workspace onboarding runtime tools persist alignment and verification
     );
     assert.equal(
       alignment.json().alignment_report.schema_version,
-      1,
+      2,
     );
     assert.equal(
       alignment.json().alignment_report.markdown,
@@ -1187,12 +1205,54 @@ test.skip("workspace onboarding runtime tools persist alignment and verification
       ].join("\n"),
     );
     assert.deepEqual(
-      alignment.json().alignment_report.app_builds,
+      alignment.json().alignment_report.integrations,
+      [
+        {
+          integration_id: "hubspot",
+          required: true,
+          rationale: null,
+          context_unlocked: [],
+          actions_unlocked: [],
+          consumed_by_teammates: [],
+          setup_notes: [],
+        },
+      ],
+    );
+    assert.deepEqual(
+      alignment.json().alignment_report.teammates,
+      [
+        {
+          teammate_id: "sales-ops",
+          name: "Sales Ops",
+          remit: "Own pipeline hygiene and follow-up orchestration.",
+          jobs_to_be_done: [],
+          boundaries: [],
+          inputs: [],
+          outputs: [],
+          system_prompt: {
+            mission: "Keep the pipeline current and actionable.",
+            operating_rules: [],
+            escalation_rules: [],
+            quality_bar: [],
+            notes: [],
+          },
+          tools: [],
+          skills: [],
+          handoffs: [],
+          notes: [],
+        },
+      ],
+    );
+    assert.deepEqual(
+      alignment.json().alignment_report.apps,
       [
         {
           app_id: "deal-tracker",
-          summary: null,
+          purpose: null,
+          primary_user: null,
+          rationale: null,
           starter_scope: [],
+          data_dependencies: [],
           notes: [],
         },
       ],
@@ -4500,16 +4560,6 @@ test("workspace onboarding starts a source controller session without creating a
     ],
   );
 
-  const onboardingSubagent = store.createSubagentRun({
-    workspaceId: source.id,
-    parentSessionId: createdPayload.session.session_id,
-    originMainSessionId: createdPayload.session.session_id,
-    ownerMainSessionId: createdPayload.session.session_id,
-    childSessionId: "subagent-onboarding-1",
-    title: "Build accepted onboarding design",
-    goal: "Build accepted onboarding design",
-    status: "running",
-  });
   const listedBackgroundTasks = await app.inject({
     method: "GET",
     url:
@@ -4517,15 +4567,8 @@ test("workspace onboarding starts a source controller session without creating a
       `&owner_main_session_id=${encodeURIComponent(createdPayload.session.session_id)}`,
   });
   assert.equal(listedBackgroundTasks.statusCode, 200);
-  assert.equal(listedBackgroundTasks.json().count, 1);
-  assert.equal(
-    listedBackgroundTasks.json().tasks[0].subagent_id,
-    onboardingSubagent.subagentId,
-  );
-  assert.equal(
-    listedBackgroundTasks.json().tasks[0].workspace_id,
-    source.id,
-  );
+  assert.equal(listedBackgroundTasks.json().count, 0);
+  assert.deepEqual(listedBackgroundTasks.json().tasks, []);
 
   const onboardingStatus = await app.inject({
     method: "GET",

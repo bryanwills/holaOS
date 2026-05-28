@@ -792,6 +792,62 @@ test("delegateTask requires an explicit teammate id", async () => {
   }
 });
 
+test("delegateTask forbids workspace onboarding sessions from spawning subagents", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-onboarding-direct-"));
+  const workspaceRoot = path.join(root, "workspace");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceId = "workspace-1";
+  const onboardingSessionId = "workspace-onboarding-1";
+
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+  try {
+    store.createWorkspace({
+      workspaceId,
+      name: "Workspace 1",
+      harness: "pi",
+      status: "active",
+    });
+    store.ensureSession({
+      workspaceId,
+      sessionId: onboardingSessionId,
+      kind: "workspace_onboarding",
+      createdBy: "workspace_user",
+    });
+    const general = store.ensureGeneralTeammate(workspaceId);
+    const parentInput = store.enqueueInput({
+      workspaceId,
+      sessionId: onboardingSessionId,
+      payload: {
+        text: "Build the approved workspace design.",
+      },
+    });
+
+    const service = new RuntimeAgentToolsService(store, { workspaceRoot });
+    assert.throws(
+      () =>
+        service.delegateTask({
+          workspaceId,
+          sessionId: onboardingSessionId,
+          inputId: parentInput.inputId,
+          tasks: [
+            {
+              teammateId: general.teammateId,
+              goal: "Build the approved workspace design.",
+            },
+          ],
+        }),
+      (error: unknown) =>
+        error instanceof RuntimeAgentToolsServiceError &&
+        error.statusCode === 403 &&
+        error.code === "onboarding_delegation_forbidden" &&
+        error.message === "workspace onboarding must execute directly in the onboarding session",
+    );
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("queueIssueReply reopens a completed issue on the same persistent issue session", async () => {
   const root = await mkdtemp(
     path.join(os.tmpdir(), "hb-runtime-agent-tools-issue-reply-"),
