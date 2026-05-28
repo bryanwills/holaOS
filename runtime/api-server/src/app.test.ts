@@ -767,6 +767,9 @@ test("runtime tools capability routes expose local onboarding and cronjob action
     dbPath: path.join(root, "runtime.db"),
     workspaceRoot: path.join(root, "workspace")
   });
+  store.upsertRuntimeUserProfile({
+    timezone: "America/Los_Angeles",
+  });
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
@@ -968,6 +971,7 @@ test("runtime tools capability routes expose local onboarding and cronjob action
     });
     assert.equal(createdJob.json().metadata.model, undefined);
     assert.equal(createdJob.json().metadata.source_session_id, "session-main");
+    assert.equal(createdJob.json().metadata.timezone, "America/Los_Angeles");
 
     const listedJobs = await app.inject({
       method: "GET",
@@ -2067,6 +2071,9 @@ test("runtime web search capability supports paged text windows", async () => {
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
     workspaceRoot: path.join(root, "workspace")
+  });
+  store.upsertRuntimeUserProfile({
+    timezone: "America/Los_Angeles",
   });
   const app = buildTestRuntimeApiServer({ store });
   const originalFetch = globalThis.fetch;
@@ -6294,6 +6301,9 @@ test("cronjobs and session state routes preserve local payload shape", async () 
     dbPath: path.join(root, "runtime.db"),
     workspaceRoot: path.join(root, "workspace")
   });
+  store.upsertRuntimeUserProfile({
+    timezone: "America/Los_Angeles",
+  });
   const app = buildTestRuntimeApiServer({ store });
 
   const workspace = store.createWorkspace({
@@ -6344,6 +6354,7 @@ test("cronjobs and session state routes preserve local payload shape", async () 
   assert.equal(createdJob.statusCode, 200);
   assert.equal(createdJob.json().teammate_id, "general");
   assert.equal(createdJob.json().instruction, "Say hello");
+  assert.equal(createdJob.json().metadata.timezone, "America/Los_Angeles");
   const jobId = createdJob.json().id as string;
 
   const listedJobs = await app.inject({

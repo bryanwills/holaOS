@@ -463,6 +463,7 @@ export type RuntimeUserProfileNameSource = "manual" | "agent" | "auth_fallback";
 export interface RuntimeUserProfileRecord {
   profileId: string;
   name: string | null;
+  timezone: string | null;
   nameSource: RuntimeUserProfileNameSource | null;
   createdAt: string;
   updatedAt: string;
@@ -6398,6 +6399,7 @@ export class RuntimeStateStore {
   upsertRuntimeUserProfile(params: {
     profileId?: string;
     name?: string | null;
+    timezone?: string | null;
     nameSource?: RuntimeUserProfileNameSource | null;
     createdAt?: string;
     updatedAt?: string;
@@ -6407,7 +6409,10 @@ export class RuntimeStateStore {
     const now = params.updatedAt ?? utcNowIso();
     const createdAt = existing?.createdAt ?? params.createdAt ?? now;
     const normalizedName = typeof params.name === "string" ? params.name.trim() : "";
+    const normalizedTimezone =
+      typeof params.timezone === "string" ? params.timezone.trim() : "";
     const resolvedName = normalizedName || null;
+    const resolvedTimezone = normalizedTimezone || null;
     const resolvedNameSource = resolvedName
       ? (params.nameSource ?? existing?.nameSource ?? "manual")
       : null;
@@ -6417,16 +6422,25 @@ export class RuntimeStateStore {
         INSERT INTO runtime_user_profiles (
             profile_id,
             name,
+            timezone,
             name_source,
             created_at,
             updated_at
-        ) VALUES (?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(profile_id) DO UPDATE SET
             name = excluded.name,
+            timezone = excluded.timezone,
             name_source = excluded.name_source,
             updated_at = excluded.updated_at
       `)
-      .run(profileId, resolvedName, resolvedNameSource, createdAt, now);
+      .run(
+        profileId,
+        resolvedName,
+        resolvedTimezone,
+        resolvedNameSource,
+        createdAt,
+        now,
+      );
 
     const record = this.getRuntimeUserProfile({ profileId });
     if (!record) {
@@ -6437,22 +6451,29 @@ export class RuntimeStateStore {
 
   applyRuntimeUserProfileAuthFallback(params: {
     profileId?: string;
-    name: string;
+    name?: string | null;
+    timezone?: string | null;
     updatedAt?: string;
   }): RuntimeUserProfileRecord | null {
     const profileId = (params.profileId ?? "default").trim() || "default";
-    const normalizedName = params.name.trim();
-    if (!normalizedName) {
-      return this.getRuntimeUserProfile({ profileId });
-    }
+    const normalizedName =
+      typeof params.name === "string" ? params.name.trim() : "";
+    const normalizedTimezone =
+      typeof params.timezone === "string" ? params.timezone.trim() : "";
     const existing = this.getRuntimeUserProfile({ profileId });
-    if (existing?.name?.trim()) {
+    const shouldFillName = normalizedName.length > 0 && !(existing?.name?.trim());
+    const shouldFillTimezone =
+      normalizedTimezone.length > 0 && !(existing?.timezone?.trim());
+    if (!shouldFillName && !shouldFillTimezone) {
       return existing;
     }
     return this.upsertRuntimeUserProfile({
       profileId,
-      name: normalizedName,
-      nameSource: "auth_fallback",
+      name: shouldFillName ? normalizedName : existing?.name ?? null,
+      timezone:
+        shouldFillTimezone ? normalizedTimezone : existing?.timezone ?? null,
+      nameSource:
+        shouldFillName ? "auth_fallback" : existing?.nameSource ?? null,
       updatedAt: params.updatedAt,
     });
   }
@@ -11967,15 +11988,17 @@ export class RuntimeStateStore {
         INSERT OR IGNORE INTO runtime_user_profiles (
           profile_id,
           name,
+          timezone,
           name_source,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?)
       `);
       for (const row of rows) {
         statement.run(
           row.profile_id,
           row.name ?? null,
+          row.timezone ?? null,
           row.name_source ?? null,
           row.created_at,
           row.updated_at
@@ -12500,6 +12523,7 @@ export class RuntimeStateStore {
       CREATE TABLE IF NOT EXISTS runtime_user_profiles (
           profile_id TEXT PRIMARY KEY,
           name TEXT,
+          timezone TEXT,
           name_source TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
@@ -12680,6 +12704,16 @@ export class RuntimeStateStore {
             embedding_model TEXT
         );
       `);
+    }
+    const runtimeUserProfileColumns = new Set<string>(
+      (
+        db.prepare("PRAGMA table_info(runtime_user_profiles)").all() as Array<{
+          name: string;
+        }>
+      ).map((row) => row.name),
+    );
+    if (!runtimeUserProfileColumns.has("timezone")) {
+      db.exec("ALTER TABLE runtime_user_profiles ADD COLUMN timezone TEXT;");
     }
     this.migrateIntegrationConnectionIdentityColumns(db);
     this.migrateAppCatalogProviderColumns(db);
@@ -15379,6 +15413,7 @@ export class RuntimeStateStore {
     return {
       profileId: String(row.profile_id),
       name: row.name == null ? null : String(row.name),
+      timezone: row.timezone == null ? null : String(row.timezone),
       nameSource: row.name_source == null ? null : String(row.name_source) as RuntimeUserProfileNameSource,
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),

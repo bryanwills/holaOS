@@ -1225,6 +1225,7 @@ test("composeBaseAgentPrompt includes current user context when provided", () =>
     currentUserContext: {
       profile_id: "default",
       name: "Jeffrey",
+      timezone: "America/Los_Angeles",
       name_source: "manual",
     },
   });
@@ -1242,6 +1243,8 @@ test("composeBaseAgentPrompt includes current user context when provided", () =>
   assert.doesNotMatch(prompt.systemPrompt, /Current user context:/);
   assert.match(prompt.contextMessages.join("\n\n"), /Current user context:/);
   assert.match(prompt.contextMessages.join("\n\n"), /The current operator name is `Jeffrey`\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /The current operator timezone is `America\/Los_Angeles`\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Interpret relative dates and times such as `today`, `tomorrow`/);
   assert.doesNotMatch(prompt.contextMessages.join("\n\n"), /Runtime profile id:/);
   assert.doesNotMatch(prompt.contextMessages.join("\n\n"), /Name source:/);
 });

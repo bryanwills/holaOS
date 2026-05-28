@@ -1228,6 +1228,7 @@ test("runTsRunnerCli loads current user context from the runtime profile", async
   store.upsertRuntimeUserProfile({
     name: "Jeffrey",
     nameSource: "manual",
+    timezone: "America/Los_Angeles",
   });
   store.close();
 
@@ -1298,6 +1299,7 @@ test("runTsRunnerCli loads current user context from the runtime profile", async
     {
       profile_id: "default",
       name: "Jeffrey",
+      timezone: "America/Los_Angeles",
       name_source: "manual",
     },
   );

@@ -390,6 +390,7 @@ declare global {
   interface RuntimeUserProfilePayload {
     profileId: string;
     name: string | null;
+    timezone: string | null;
     nameSource: RuntimeUserProfileNameSource | null;
     createdAt: string | null;
     updatedAt: string | null;
@@ -398,6 +399,7 @@ declare global {
   interface RuntimeUserProfileUpdatePayload {
     profileId?: string | null;
     name?: string | null;
+    timezone?: string | null;
     nameSource?: RuntimeUserProfileNameSource | null;
   }
 

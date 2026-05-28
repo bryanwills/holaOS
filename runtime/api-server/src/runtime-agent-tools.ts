@@ -31,7 +31,11 @@ import {
 
 import { RUNTIME_AGENT_TOOL_DEFINITIONS as RUNTIME_AGENT_TOOL_BASE_DEFINITIONS } from "../../harnesses/src/runtime-agent-tools.js";
 import { buildAppSetupEnv } from "./app-setup-env.js";
-import { cronjobNextRunAt } from "./cron-worker.js";
+import {
+  cronjobMetadataWithResolvedTimezone,
+  cronjobNextRunAt,
+  runtimeUserTimezone,
+} from "./cron-worker.js";
 import { ensureWorkspaceDataDb } from "./ts-runner-session-state.js";
 import { generateWorkspaceImage } from "./image-generation.js";
 import { searchPublicWeb } from "./native-web-search.js";
@@ -2428,6 +2432,7 @@ function metadataWithCronjobDefaults(params: {
   holabossUserId: string | null | undefined;
   selectedModel?: string | null | undefined;
   sourceSessionId?: string | null | undefined;
+  fallbackTimezone?: string | null | undefined;
 }
 ): JsonObject {
   const nextMetadata: JsonObject = { ...((params.metadata ?? {}) as JsonObject) };
@@ -2440,7 +2445,10 @@ function metadataWithCronjobDefaults(params: {
   if (sourceSessionId && typeof nextMetadata.source_session_id !== "string") {
     nextMetadata.source_session_id = sourceSessionId;
   }
-  return nextMetadata;
+  return cronjobMetadataWithResolvedTimezone(
+    nextMetadata,
+    params.fallbackTimezone,
+  ) as JsonObject;
 }
 
 function resolvedInstructionForCronjobUpdate(params: {
@@ -3515,6 +3523,7 @@ export class RuntimeAgentToolsService {
       throw new RuntimeAgentToolsServiceError(400, "cronjob_teammate_required", "teammate_id is required");
     }
     const isDraftLab = workspace.workspaceRole === "draft_lab";
+    const effectiveTimezone = runtimeUserTimezone(this.store);
     const requestedEnabled = params.enabled !== false;
     // Cronjobs inside a draft lab are design context only — the lab is a
     // throwaway scratch space, so its cronjobs must not actually fire.
@@ -3523,12 +3532,13 @@ export class RuntimeAgentToolsService {
     const effectiveEnabled = isDraftLab ? false : requestedEnabled;
     const effectiveNextRunAt = isDraftLab
       ? null
-      : cronjobNextRunAt(cron, new Date());
+      : cronjobNextRunAt(cron, new Date(), effectiveTimezone);
     const baseMetadata = metadataWithCronjobDefaults({
       metadata: params.metadata,
       holabossUserId: params.holabossUserId,
       selectedModel: params.selectedModel,
       sourceSessionId: params.sessionId,
+      fallbackTimezone: effectiveTimezone,
     });
     const metadata: JsonObject = isDraftLab
       ? {
@@ -3644,6 +3654,7 @@ export class RuntimeAgentToolsService {
       throw new RuntimeAgentToolsServiceError(400, "cronjob_teammate_required", "teammate_id is required");
     }
     const isDraftLab = workspace.workspaceRole === "draft_lab";
+    const effectiveTimezone = runtimeUserTimezone(this.store);
     const effectiveEnabled =
       params.enabled === undefined
         ? undefined
@@ -3652,10 +3663,14 @@ export class RuntimeAgentToolsService {
           : params.enabled;
     const baseMetadata =
       params.metadata === undefined
-        ? undefined
+        ? (cronjobMetadataWithResolvedTimezone(
+            existing.metadata,
+            effectiveTimezone,
+          ) as JsonObject)
         : metadataWithCronjobDefaults({
             metadata: params.metadata,
             holabossUserId: null,
+            fallbackTimezone: effectiveTimezone,
           });
     let effectiveMetadata = baseMetadata;
     if (isDraftLab && params.enabled !== undefined) {
@@ -3673,7 +3688,7 @@ export class RuntimeAgentToolsService {
         ? undefined
         : isDraftLab
           ? null
-          : cronjobNextRunAt(cron, new Date());
+          : cronjobNextRunAt(cron, new Date(), effectiveTimezone);
     const updated = this.store.updateCronjob({
       workspaceId,
       jobId: params.jobId,

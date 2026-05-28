@@ -1571,20 +1571,26 @@ test("runtime user profile round trip preserves manual value and auth fallback o
 
   const fallback = store.applyRuntimeUserProfileAuthFallback({
     name: "Jeffrey",
+    timezone: "America/Los_Angeles",
   });
   const updated = store.upsertRuntimeUserProfile({
     name: "Jeff",
+    timezone: "America/New_York",
     nameSource: "manual",
   });
   const preserved = store.applyRuntimeUserProfileAuthFallback({
     name: "Ignored Auth Name",
+    timezone: "Europe/London",
   });
 
   assert.equal(fallback?.name, "Jeffrey");
+  assert.equal(fallback?.timezone, "America/Los_Angeles");
   assert.equal(fallback?.nameSource, "auth_fallback");
   assert.equal(updated.name, "Jeff");
+  assert.equal(updated.timezone, "America/New_York");
   assert.equal(updated.nameSource, "manual");
   assert.equal(preserved?.name, "Jeff");
+  assert.equal(preserved?.timezone, "America/New_York");
   assert.equal(preserved?.nameSource, "manual");
   assert.deepEqual(store.getRuntimeUserProfile(), preserved);
 

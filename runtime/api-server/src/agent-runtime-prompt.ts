@@ -24,6 +24,7 @@ import type {
 export interface AgentCurrentUserContext {
   profile_id?: string | null;
   name?: string | null;
+  timezone?: string | null;
   name_source?: string | null;
 }
 
@@ -374,12 +375,21 @@ function currentUserContextPromptSection(context: AgentCurrentUserContext | null
   }
   const lines = ["Current user context:"];
   const name = nonEmptyText(context.name);
+  const timezone = nonEmptyText(context.timezone);
 
-  if (!name) {
+  if (!name && !timezone) {
     return "";
   }
 
-  lines.push(`The current operator name is \`${name}\`.`);
+  if (name) {
+    lines.push(`The current operator name is \`${name}\`.`);
+  }
+  if (timezone) {
+    lines.push(`The current operator timezone is \`${timezone}\`.`);
+    lines.push(
+      "Interpret relative dates and times such as `today`, `tomorrow`, `this morning`, and `end of day` in that timezone unless the user says otherwise.",
+    );
+  }
 
   return linesSection(lines);
 }

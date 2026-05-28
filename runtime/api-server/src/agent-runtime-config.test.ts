@@ -417,6 +417,7 @@ test("projectAgentRuntimeConfig includes current user context as a context messa
       current_user_context: {
         profile_id: "default",
         name: "Jeffrey",
+        timezone: "America/Los_Angeles",
         name_source: "manual",
       },
       selected_model: null,
@@ -469,6 +470,10 @@ test("projectAgentRuntimeConfig includes current user context as a context messa
     assert.match(
       result.context_messages?.join("\n\n") ?? "",
       /The current operator name is `Jeffrey`\./,
+    );
+    assert.match(
+      result.context_messages?.join("\n\n") ?? "",
+      /The current operator timezone is `America\/Los_Angeles`\./,
     );
   } finally {
     delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;

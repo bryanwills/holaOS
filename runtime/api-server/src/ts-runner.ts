@@ -651,11 +651,20 @@ function loadCurrentUserContext(params: {
   workspaceRoot: string;
   logger?: LoggerLike;
 }): AgentCurrentUserContext | null {
+  const resolvedLocalTimezone = (() => {
+    try {
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone?.trim();
+      return timezone || null;
+    } catch {
+      return null;
+    }
+  })();
   const sandboxRoot = path.dirname(params.workspaceRoot);
   const dbPath = defaultHostStateDbPathForSandbox(sandboxRoot);
   const defaultContext: AgentCurrentUserContext = {
     profile_id: "default",
     name: null,
+    timezone: resolvedLocalTimezone,
     name_source: null,
   };
   if (!fs.existsSync(dbPath)) {
@@ -674,6 +683,7 @@ function loadCurrentUserContext(params: {
     return {
       profile_id: profile.profileId,
       name: profile.name,
+      timezone: profile.timezone ?? resolvedLocalTimezone,
       name_source: profile.nameSource,
     };
   } catch (error) {

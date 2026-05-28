@@ -997,6 +997,7 @@ type RuntimeUserProfileNameSource = "manual" | "agent" | "authFallback";
 interface RuntimeUserProfilePayload {
   profileId: string;
   name: string | null;
+  timezone: string | null;
   nameSource: RuntimeUserProfileNameSource | null;
   createdAt: string | null;
   updatedAt: string | null;
@@ -1005,6 +1006,7 @@ interface RuntimeUserProfilePayload {
 interface RuntimeUserProfileUpdatePayload {
   profileId?: string | null;
   name?: string | null;
+  timezone?: string | null;
   nameSource?: RuntimeUserProfileNameSource | null;
 }
 
@@ -1013,6 +1015,7 @@ interface AuthUserPayload {
   email?: string | null;
   name?: string | null;
   image?: string | null;
+  timezone?: string | null;
   [key: string]: unknown;
 }
 
@@ -8189,19 +8192,29 @@ async function setRuntimeUserProfile(
 async function applyRuntimeUserProfileAuthFallback(
   name: string,
   profileId = "default",
+  timezone?: string | null,
 ): Promise<RuntimeUserProfilePayload> {
-  return localRuntimeUserProfileStore.applyAuthFallback(name, profileId);
+  return localRuntimeUserProfileStore.applyAuthFallback(name, profileId, timezone);
+}
+
+function resolveLocalTimezone(): string | null {
+  try {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone?.trim();
+    return timezone || null;
+  } catch {
+    return null;
+  }
 }
 
 async function syncRuntimeUserProfileFromAuth(
   user: AuthUserPayload,
 ): Promise<void> {
   const name = typeof user.name === "string" ? user.name.trim() : "";
-  if (!name) {
-    return;
-  }
+  const timezone =
+    (typeof user.timezone === "string" ? user.timezone.trim() : "") ||
+    resolveLocalTimezone();
   try {
-    await applyRuntimeUserProfileAuthFallback(name);
+    await applyRuntimeUserProfileAuthFallback(name, "default", timezone);
   } catch (error) {
     appendRuntimeEventLog({
       category: "auth",

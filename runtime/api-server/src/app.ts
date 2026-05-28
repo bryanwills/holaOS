@@ -55,9 +55,11 @@ import {
 } from "./session-checkpoint.js";
 import {
   type CronWorkerLike,
+  cronjobMetadataWithResolvedTimezone,
   executeLocalCronjobDelivery,
   RuntimeCronWorker,
-  cronjobNextRunAt
+  cronjobNextRunAt,
+  runtimeUserTimezone,
 } from "./cron-worker.js";
 import {
   cronjobAuthorRecommendedEnabled,
@@ -675,6 +677,7 @@ function capabilityInputId(params: {
 function cronjobMetadataWithRequestDefaults(params: {
   body: Record<string, unknown>;
   existingMetadata?: Record<string, unknown> | null;
+  fallbackTimezone?: string | null;
 }): Record<string, unknown> {
   const metadata = hasOwn(params.body, "metadata")
     ? { ...(optionalDict(params.body.metadata) ?? {}) }
@@ -695,7 +698,7 @@ function cronjobMetadataWithRequestDefaults(params: {
     }
   }
 
-  return metadata;
+  return cronjobMetadataWithResolvedTimezone(metadata, params.fallbackTimezone);
 }
 
 function requiredCronjobDeliveryInput(value: unknown): {
@@ -2063,10 +2066,17 @@ function copiedCronjobFields(params: {
 
   if (isDraftLabWorkspace(sourceWorkspace)) {
     const recommendedEnabled = cronjobAuthorRecommendedEnabled(params.job);
+    const effectiveTimezone = runtimeUserTimezone(params.store);
     return {
       enabled: recommendedEnabled,
-      metadata: stripLabCronjobExecutionDisabledMetadata(metadata),
-      nextRunAt: recommendedEnabled ? cronjobNextRunAt(params.job.cron, new Date()) : null,
+      metadata: cronjobMetadataWithResolvedTimezone(
+        stripLabCronjobExecutionDisabledMetadata(metadata),
+        effectiveTimezone,
+      ),
+      nextRunAt:
+        recommendedEnabled
+          ? cronjobNextRunAt(params.job.cron, new Date(), effectiveTimezone)
+          : null,
     };
   }
 
@@ -10909,9 +10919,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!workspace) {
       return sendError(reply, 404, "workspace not found");
     }
+    const effectiveTimezone = runtimeUserTimezone(store);
     const requestedEnabled = optionalBoolean(request.body.enabled, true);
     const metadata = cronjobMetadataWithRequestDefaults({
       body: request.body,
+      fallbackTimezone: effectiveTimezone,
     });
     const normalizedCronjobState = isDraftLabWorkspace(workspace)
       ? disableCronjobAutonomyForLab({
@@ -10921,7 +10933,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       : {
           enabled: requestedEnabled,
           metadata,
-          nextRunAt: cronjobNextRunAt(requiredString(request.body.cron, "cron"), new Date()),
+          nextRunAt: cronjobNextRunAt(
+            requiredString(request.body.cron, "cron"),
+            new Date(),
+            effectiveTimezone,
+          ),
         };
     const job = store.createCronjob({
       workspaceId,
@@ -10967,6 +10983,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
 
     const now = new Date();
+    const effectiveTimezone = runtimeUserTimezone(store);
+    const metadataWithTimezone = cronjobMetadataWithResolvedTimezone(
+      job.metadata,
+      effectiveTimezone,
+    );
     try {
       const result = executeLocalCronjobDelivery(
         store,
@@ -10986,7 +11007,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         workspaceId,
         jobId: job.id,
         lastRunAt: now.toISOString(),
-        nextRunAt: cronjobNextRunAt(job.cron, now),
+        metadata: metadataWithTimezone,
+        nextRunAt: cronjobNextRunAt(job.cron, now, effectiveTimezone),
         runCount: job.runCount + 1,
         lastStatus: "success",
         lastError: null,
@@ -11007,7 +11029,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         workspaceId,
         jobId: job.id,
         lastRunAt: now.toISOString(),
-        nextRunAt: cronjobNextRunAt(job.cron, now),
+        metadata: metadataWithTimezone,
+        nextRunAt: cronjobNextRunAt(job.cron, now, effectiveTimezone),
         lastStatus: "failed",
         lastError: message,
       });
@@ -11049,6 +11072,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!workspace) {
       return sendError(reply, 404, "workspace not found");
     }
+    const effectiveTimezone = runtimeUserTimezone(store);
     const requestedEnabled =
       hasOwn(request.body, "enabled")
         ? optionalBoolean(request.body.enabled, false)
@@ -11057,8 +11081,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       ? cronjobMetadataWithRequestDefaults({
           body: request.body,
           existingMetadata: existing.metadata,
+          fallbackTimezone: effectiveTimezone,
         })
-      : existing.metadata;
+      : cronjobMetadataWithResolvedTimezone(
+          existing.metadata,
+          effectiveTimezone,
+        );
     const normalizedCronjobState = isDraftLabWorkspace(workspace)
       ? disableCronjobAutonomyForLab({
           metadata: resolvedMetadata,
@@ -11066,8 +11094,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         })
       : {
           enabled: hasOwn(request.body, "enabled") ? requestedEnabled : null,
-          metadata: metadataProvided ? resolvedMetadata : undefined,
-          nextRunAt: cron == null ? cron : cronjobNextRunAt(cron, new Date()),
+          metadata: resolvedMetadata,
+          nextRunAt:
+            cron == null
+              ? cron
+              : cronjobNextRunAt(cron, new Date(), effectiveTimezone),
         };
     const job = store.updateCronjob({
       workspaceId,
@@ -11196,6 +11227,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         import_key: importKey,
         import_warnings: importWarnings,
       };
+      const effectiveTimezone = runtimeUserTimezone(store);
+      const importedMetadata = cronjobMetadataWithResolvedTimezone(
+        importedMeta,
+        effectiveTimezone,
+      );
 
       let job: CronjobRecord;
       try {
@@ -11209,8 +11245,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
           instruction: entryInstruction,
           enabled: false,
           delivery: entryDelivery,
-          metadata: importedMeta,
-          nextRunAt: cronjobNextRunAt(entryCron, new Date()),
+          metadata: importedMetadata,
+          nextRunAt: cronjobNextRunAt(entryCron, new Date(), effectiveTimezone),
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
