@@ -2922,6 +2922,7 @@ function taskPayload(params: {
   const childTaskIds = params.childTaskIds ?? [];
   return {
     task_id: params.issue.issueId,
+    issue_id: params.issue.issueId,
     workspace_id: params.issue.workspaceId,
     task_number: params.issue.issueNumber,
     session_id: params.issue.sessionId,
