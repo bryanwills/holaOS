@@ -6233,6 +6233,36 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+  app.post("/api/v1/capabilities/runtime-tools/tasks/:taskId/reply", async (request, reply) => {
+    if (request.body != null && !isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { taskId: string };
+    const body = isRecord(request.body) ? request.body : {};
+    try {
+      const workspaceId = requiredCapabilityWorkspaceId({
+        headers: request.headers as Record<string, unknown>,
+        body,
+      });
+      return runtimeAgentToolsService.replyTask({
+        workspaceId,
+        taskId: requiredString(params.taskId, "taskId"),
+        text: requiredString(body.text, "text"),
+        selectedModel: capabilitySelectedModel({
+          headers: request.headers as Record<string, unknown>,
+          body,
+        }),
+        model: nullableString(body.model) ?? undefined,
+        priority: hasOwn(body, "priority") ? optionalInteger(body.priority, 0) : undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime reply task failed");
+    }
+  });
+
   app.post("/api/v1/capabilities/runtime-tools/tasks/:taskId/cancel", async (request, reply) => {
     if (request.body != null && !isRecord(request.body)) {
       return sendError(reply, 400, "request body must be an object");
@@ -6571,6 +6601,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       });
       const result = runtimeAgentToolsService.createTeammate({
         workspaceId,
+        sessionId: sessionId ?? null,
         teammateId: nullableString(request.body.teammate_id) ?? null,
         name: requiredString(request.body.name, "name"),
         instructions: nullableString(request.body.instructions) ?? null,
@@ -6612,6 +6643,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         const params = request.params as { teammateId: string };
         const result = runtimeAgentToolsService.createTeammateSkill({
           workspaceId,
+          sessionId: sessionId ?? null,
           teammateId: requiredString(params.teammateId, "teammateId"),
           skill: requiredTeammateSkillInput(request.body, "skill"),
         });

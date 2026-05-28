@@ -290,7 +290,7 @@ function teammateCreationRequestPrompt(name: string, role: string): string {
     "",
     "Please route this through the built-in HR teammate if it is available.",
     "",
-    "Please follow the create-teammate skill workflow before creating anything:",
+    "Please let HR handle the teammate bootstrap workflow before creating anything:",
     "- inspect the current teammate roster first",
     "- decide whether this is a durable, distinct remit or whether an existing teammate already covers it",
     "- if the remit or boundaries are still unclear, ask only the concrete follow-up questions needed before creating the teammate",

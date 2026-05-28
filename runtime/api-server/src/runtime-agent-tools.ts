@@ -63,7 +63,11 @@ import type { MemoryRetrievalPolicy } from "./memory-hybrid-retrieval.js";
 import { retrieveWorkspaceMemory, type WorkspaceMemoryCategory } from "./workspace-memory.js";
 import type { ComposioMcpManager } from "./composio-mcp-manager.js";
 import { getStoreCatalogEntry } from "./integration-store-catalog.js";
-import { invokeWorkspaceSkill, resolveWorkspaceSkills } from "./workspace-skills.js";
+import {
+  invokeWorkspaceSkill,
+  projectSessionVisibleWorkspaceSkills,
+  resolveWorkspaceSkills,
+} from "./workspace-skills.js";
 import {
   listWorkspaceApplicationPorts,
   listWorkspaceApplications,
@@ -369,6 +373,7 @@ export interface RuntimeAgentToolsCreateCronjobParams {
 
 export interface RuntimeAgentToolsCreateTeammateParams {
   workspaceId: string;
+  sessionId?: string | null;
   teammateId?: string | null;
   name: string;
   instructions?: string | null;
@@ -377,6 +382,7 @@ export interface RuntimeAgentToolsCreateTeammateParams {
 
 export interface RuntimeAgentToolsCreateTeammateSkillParams {
   workspaceId: string;
+  sessionId?: string | null;
   teammateId: string;
   skill: TeammateSkillInput;
 }
@@ -433,6 +439,15 @@ export interface RuntimeAgentToolsListTasksParams {
   inputId?: string | null;
   statuses?: string[] | null;
   limit?: number | null;
+}
+
+export interface RuntimeAgentToolsReplyTaskParams {
+  workspaceId: string;
+  taskId: string;
+  text: string;
+  selectedModel?: string | null;
+  model?: string | null;
+  priority?: number | null;
 }
 
 export interface RuntimeAgentToolsCancelTaskParams {
@@ -1277,6 +1292,12 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     method: "GET",
     path: "/api/v1/capabilities/runtime-tools/tasks",
     description: runtimeToolBaseDefinition("list_tasks").description
+  },
+  {
+    id: runtimeToolBaseDefinition("reply_task").id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/tasks/:taskId/reply",
+    description: runtimeToolBaseDefinition("reply_task").description
   },
   {
     id: runtimeToolBaseDefinition("cancel_task").id,
@@ -2821,6 +2842,7 @@ function issueAttachmentPayload(record: IssueAttachmentRecord): JsonObject {
 
 function subagentRunPayload(state: SyncedSubagentRunState): JsonObject {
   return {
+    task_id: state.run.issueId,
     subagent_id: state.run.subagentId,
     workspace_id: state.run.workspaceId,
     parent_session_id: state.run.parentSessionId,
@@ -2859,6 +2881,12 @@ function subagentRunPayload(state: SyncedSubagentRunState): JsonObject {
     updated_at: state.run.updatedAt,
     live_state: subagentLiveStatePayload(state),
   };
+}
+
+function delegatedTaskManagerPayload(state: SyncedSubagentRunState): JsonObject {
+  const payload = subagentRunPayload(state) as Record<string, JsonValue>;
+  const { subagent_id: _subagentId, ...managerPayload } = payload;
+  return managerPayload;
 }
 
 function taskPayload(params: {
@@ -3567,8 +3595,50 @@ export class RuntimeAgentToolsService {
     return cronjobPayload(created);
   }
 
+  private requireHrTeammateRuntimeToolSession(params: {
+    workspaceId: string;
+    sessionId?: string | null;
+    toolId: "teammates_create" | "teammate_skills_create";
+  }): void {
+    const sessionId = normalizedString(params.sessionId);
+    if (!sessionId) {
+      throw new RuntimeAgentToolsServiceError(
+        403,
+        "hr_teammate_required",
+        `${params.toolId} is only available to the HR teammate`,
+      );
+    }
+    const issue = this.store.getIssueBySessionId({
+      workspaceId: params.workspaceId,
+      sessionId,
+    });
+    const subagentRun =
+      !issue
+        ? this.store.getSubagentRunByChildSession({
+            workspaceId: params.workspaceId,
+            childSessionId: sessionId,
+          })
+        : null;
+    const teammateId =
+      normalizedString(issue?.assigneeTeammateId) ??
+      normalizedString(subagentRun?.teammateId) ??
+      null;
+    if (teammateId !== "hr") {
+      throw new RuntimeAgentToolsServiceError(
+        403,
+        "hr_teammate_required",
+        `${params.toolId} is only available to the HR teammate`,
+      );
+    }
+  }
+
   createTeammate(params: RuntimeAgentToolsCreateTeammateParams): JsonObject {
     this.requireWorkspace(params.workspaceId);
+    this.requireHrTeammateRuntimeToolSession({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      toolId: "teammates_create",
+    });
     const name = normalizedString(params.name);
     if (!name) {
       throw new RuntimeAgentToolsServiceError(
@@ -3595,6 +3665,11 @@ export class RuntimeAgentToolsService {
 
   createTeammateSkill(params: RuntimeAgentToolsCreateTeammateSkillParams): JsonObject {
     this.requireWorkspace(params.workspaceId);
+    this.requireHrTeammateRuntimeToolSession({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      toolId: "teammate_skills_create",
+    });
     const teammateId = normalizedString(params.teammateId);
     if (!teammateId) {
       throw new RuntimeAgentToolsServiceError(
@@ -3922,7 +3997,7 @@ export class RuntimeAgentToolsService {
 
     this.options.queueWorker?.wake();
     return {
-      tasks: createdRuns.map((run) => subagentRunPayload(run)),
+      tasks: createdRuns.map((run) => delegatedTaskManagerPayload(run)),
       count: createdRuns.length,
     };
   }
@@ -4419,6 +4494,25 @@ export class RuntimeAgentToolsService {
       tasks: payloads,
       count: payloads.length,
     };
+  }
+
+  replyTask(params: RuntimeAgentToolsReplyTaskParams): JsonObject {
+    this.requireWorkspace(params.workspaceId);
+    const reply = this.queueIssueReply({
+      workspaceId: params.workspaceId,
+      issueId: params.taskId,
+      text: params.text,
+      selectedModel: params.selectedModel ?? null,
+      model: params.model ?? null,
+      priority:
+        typeof params.priority === "number" && Number.isFinite(params.priority)
+          ? Math.trunc(params.priority)
+          : null,
+    });
+    return taskPayload({
+      issue: reply.issue,
+      latestState: reply.run,
+    });
   }
 
   async cancelTask(params: RuntimeAgentToolsCancelTaskParams): Promise<JsonObject> {
@@ -5335,7 +5429,10 @@ export class RuntimeAgentToolsService {
       const result = invokeWorkspaceSkill({
         requestedName: params.requestedName,
         args: params.args,
-        workspaceSkills: resolveWorkspaceSkills(workspaceDir, { teammateId }),
+        workspaceSkills: projectSessionVisibleWorkspaceSkills({
+          workspaceSkills: resolveWorkspaceSkills(workspaceDir, { teammateId }),
+          teammateId,
+        }),
       });
       return {
         text: result.text,

@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   invokeWorkspaceSkill,
   prepareInstructionWithQuotedWorkspaceSkills,
+  projectSessionVisibleWorkspaceSkills,
   resolveWorkspaceSkills,
 } from "./workspace-skills.js";
 
@@ -107,6 +108,37 @@ test("resolveWorkspaceSkills finds bundled embedded skills when HOLABOSS_RUNTIME
       origin: "embedded",
     }),
   ]);
+});
+
+test("projectSessionVisibleWorkspaceSkills hides HR-only embedded skills outside HR sessions", () => {
+  const embeddedRoot = makeTempDir("hb-embedded-skills-");
+  process.env.HOLABOSS_EMBEDDED_SKILLS_DIR = embeddedRoot;
+  writeSkill(embeddedRoot, "create-teammate");
+  writeSkill(embeddedRoot, "skill-creator");
+  const workspaceDir = makeTempDir("hb-workspace-skill-visibility-");
+  const resolved = resolveWorkspaceSkills(workspaceDir);
+
+  assert.deepEqual(
+    projectSessionVisibleWorkspaceSkills({
+      workspaceSkills: resolved,
+      teammateId: null,
+    }).map((skill) => skill.skill_id),
+    ["skill-creator"],
+  );
+  assert.deepEqual(
+    projectSessionVisibleWorkspaceSkills({
+      workspaceSkills: resolved,
+      teammateId: "general",
+    }).map((skill) => skill.skill_id),
+    ["skill-creator"],
+  );
+  assert.deepEqual(
+    projectSessionVisibleWorkspaceSkills({
+      workspaceSkills: resolved,
+      teammateId: "hr",
+    }).map((skill) => skill.skill_id),
+    ["create-teammate", "skill-creator"],
+  );
 });
 
 test("resolveWorkspaceSkills keeps embedded defaults authoritative when workspace skills reuse the same id", () => {

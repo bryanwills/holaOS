@@ -60,6 +60,7 @@ test("workspace surfaces wire board and dashboard tabs through the shell", async
   assert.match(sidebarSource, /const handleNewIssue = useCallback\(\(\) => \{/);
   assert.match(sidebarSource, /text: "New issue: ",/);
   assert.match(sidebarSource, /mode: "replace",/);
+  assert.match(sidebarSource, /sessionMode: "preserve",/);
   assert.match(sidebarSource, /setFocusMode\(false\);/);
   assert.match(sidebarSource, /onClick=\{handleNewIssue\}/);
   assert.match(

@@ -443,11 +443,13 @@ test("Pi runtime subagent tools normalize delegated task bodies and control rout
   const delegateTool = tools.find((tool) => tool.name === "delegate_task");
   const getTaskTool = tools.find((tool) => tool.name === "get_task");
   const listTasksTool = tools.find((tool) => tool.name === "list_tasks");
+  const replyTaskTool = tools.find((tool) => tool.name === "reply_task");
   const cancelTaskTool = tools.find((tool) => tool.name === "cancel_task");
   const rerunTaskTool = tools.find((tool) => tool.name === "rerun_task");
   assert.ok(delegateTool);
   assert.ok(getTaskTool);
   assert.ok(listTasksTool);
+  assert.ok(replyTaskTool);
   assert.ok(cancelTaskTool);
   assert.ok(rerunTaskTool);
   assert.deepEqual(delegateTool.parameters.required, ["tasks"]);
@@ -486,6 +488,17 @@ test("Pi runtime subagent tools normalize delegated task bodies and control rout
     {
       statuses: ["todo", "blocked"],
       limit: 10,
+    },
+    undefined,
+    undefined,
+    {} as never,
+  );
+  await replyTaskTool.execute(
+    "call-2d",
+    {
+      task_id: "HOL-1",
+      text: "Use the user's answer and continue.",
+      priority: 3,
     },
     undefined,
     undefined,
@@ -541,6 +554,16 @@ test("Pi runtime subagent tools normalize delegated task bodies and control rout
       workspaceId: "workspace-1",
       sessionId: "session-main",
       body: "",
+    },
+    {
+      method: "POST",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/tasks/HOL-1/reply",
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      body: JSON.stringify({
+        text: "Use the user's answer and continue.",
+        priority: 3,
+      }),
     },
     {
       method: "POST",

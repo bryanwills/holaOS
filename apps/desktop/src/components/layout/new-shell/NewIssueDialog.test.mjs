@@ -68,6 +68,7 @@ test("new shell issue creation dialog stages attachments, creates issues, and op
   assert.match(sidebarSource, /const setComposerPrefill = useSetAtom\(chatComposerPrefillAtom\);/);
   assert.match(sidebarSource, /const handleNewIssue = useCallback\(\(\) => \{/);
   assert.match(sidebarSource, /text: "New issue: ",/);
+  assert.match(sidebarSource, /sessionMode: "preserve",/);
   assert.match(sidebarSource, /onClick=\{handleNewIssue\}/);
   assert.match(sidebarSource, />\s*New issue\s*</);
   assert.doesNotMatch(searchDialogSource, /label="New issue"/);

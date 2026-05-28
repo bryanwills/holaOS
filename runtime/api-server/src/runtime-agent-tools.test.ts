@@ -686,8 +686,14 @@ test("delegateTask creates issue-owned runs for an explicitly assigned teammate"
 
     const delegatedTask = result.tasks?.[0];
     assert.ok(delegatedTask);
+    assert.equal(delegatedTask?.task_id, "WOR-1");
     assert.equal(delegatedTask?.issue_id, "WOR-1");
     assert.equal(delegatedTask?.teammate_id, teammate.teammateId);
+    assert.equal(delegatedTask?.subagent_id, undefined);
+    const latestRunSubagentId = String(
+      ((delegatedTask?.latest_run as Record<string, unknown> | null) ?? {})
+        ?.subagent_id ?? "",
+    );
     const issue = store.getIssue({
       workspaceId,
       issueId: String(delegatedTask?.issue_id),
@@ -695,7 +701,7 @@ test("delegateTask creates issue-owned runs for an explicitly assigned teammate"
     assert.ok(issue);
     assert.equal(issue?.status, "todo");
     assert.equal(issue?.assigneeTeammateId, teammate.teammateId);
-    assert.equal(issue?.latestSubagentId, delegatedTask?.subagent_id);
+    assert.equal(issue?.latestSubagentId, latestRunSubagentId);
     assert.equal(issue?.description, [
       "Implement the dashboard cards and charts in React.",
       "",
@@ -926,6 +932,84 @@ test("queueIssueReply reopens a completed issue on the same persistent issue ses
     assert.equal(
       (result.input.payload.context as Record<string, unknown>)?.teammate_id,
       teammate.teammateId,
+    );
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("replyTask returns task-oriented payload when queuing a reply into an existing delegated task", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "hb-runtime-agent-tools-reply-task-"));
+  const workspaceRoot = path.join(root, "workspace");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceId = "workspace-1";
+  const completedAt = utcNowIso();
+
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+  try {
+    store.createWorkspace({
+      workspaceId,
+      name: "Workspace 1",
+      harness: "pi",
+      status: "active",
+    });
+    const teammate = store.ensureGeneralTeammate(workspaceId);
+    const issue = store.createIssue({
+      workspaceId,
+      issueId: "HOL-1",
+      sessionId: "session-issue-1",
+      title: "Ship dashboard",
+      description: "Implement the workspace dashboard surface.",
+      status: "done",
+      assigneeTeammateId: teammate.teammateId,
+      createdBy: "workspace_user",
+    });
+    store.ensureSession({
+      workspaceId,
+      sessionId: issue.sessionId,
+      kind: "subagent",
+      parentSessionId: issue.sessionId,
+      createdBy: "workspace_agent",
+      archivedAt: completedAt,
+    });
+    const staleRun = store.createSubagentRun({
+      workspaceId,
+      parentSessionId: issue.sessionId,
+      originMainSessionId: issue.sessionId,
+      ownerMainSessionId: issue.sessionId,
+      childSessionId: issue.sessionId,
+      goal: issue.description ?? issue.title,
+      issueId: issue.issueId,
+      teammateId: teammate.teammateId,
+      status: "completed",
+      completedAt: utcNowIso(),
+    });
+    store.updateIssue({
+      workspaceId,
+      issueId: issue.issueId,
+      fields: {
+        latestSubagentId: staleRun.subagentId,
+      },
+    });
+
+    const service = new RuntimeAgentToolsService(store, { workspaceRoot });
+    const result = service.replyTask({
+      workspaceId,
+      taskId: issue.issueId,
+      text: "Please tighten the empty state copy.",
+      priority: 3,
+    }) as Record<string, unknown>;
+
+    assert.equal(result.task_id, issue.issueId);
+    assert.equal(result.status, "todo");
+    assert.equal(
+      ((result.latest_run as Record<string, unknown> | null) ?? {})?.task_id,
+      issue.issueId,
+    );
+    assert.equal(
+      ((result.latest_run as Record<string, unknown> | null) ?? {})?.subagent_id,
+      staleRun.subagentId,
     );
   } finally {
     store.close();
@@ -2218,10 +2302,21 @@ test("createTeammate persists teammate metadata without bundling filesystem skil
       harness: "pi",
       status: "active",
     });
+    const hr = store.ensureHrTeammate(workspace.id);
+    const hrIssue = store.createIssue({
+      workspaceId: workspace.id,
+      sessionId: "session-hr-1",
+      title: "Create teammate",
+      description: "Bootstrap a teammate.",
+      status: "todo",
+      assigneeTeammateId: hr.teammateId,
+      createdBy: "workspace_user",
+    });
 
     const service = new RuntimeAgentToolsService(store, { workspaceRoot });
     const result = service.createTeammate({
       workspaceId: workspace.id,
+      sessionId: hrIssue.sessionId,
       name: "Researcher",
       instructions: "Own research work.",
       capabilityProfile: {
@@ -2266,6 +2361,16 @@ test("createTeammateSkill persists one teammate-local filesystem skill bundle", 
       harness: "pi",
       status: "active",
     });
+    const hr = store.ensureHrTeammate(workspace.id);
+    const hrIssue = store.createIssue({
+      workspaceId: workspace.id,
+      sessionId: "session-hr-1",
+      title: "Create teammate skill",
+      description: "Bootstrap a teammate skill.",
+      status: "todo",
+      assigneeTeammateId: hr.teammateId,
+      createdBy: "workspace_user",
+    });
     const teammate = store.createTeammate({
       workspaceId: workspace.id,
       name: "Researcher",
@@ -2275,6 +2380,7 @@ test("createTeammateSkill persists one teammate-local filesystem skill bundle", 
     const service = new RuntimeAgentToolsService(store, { workspaceRoot });
     const result = service.createTeammateSkill({
       workspaceId: workspace.id,
+      sessionId: hrIssue.sessionId,
       teammateId: teammate.teammateId,
       skill: {
         skillId: "research-playbook",

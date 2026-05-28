@@ -1463,6 +1463,12 @@ export function renderCapabilityToolRoutingPromptSection(
     lines.push("Only surface a hard capability limitation to the user when neither the current run nor delegated subagents can actually carry out the request.");
     lines.push("Do not simulate waiting on a delegated task by repeatedly calling `get_task` or `list_tasks` in the same turn after you just spawned it.");
   }
+  if (manifest.runtime_tools.some((capability) => capability.id === "reply_task")) {
+    ensureHeading();
+    lines.push("Blocked-task continuation: when a delegated task is waiting on user input and the user is answering that task's question, use `reply_task` to send the answer back into the existing task thread.");
+    lines.push("Do not treat the user's answer to a blocked delegated task as a brand-new independent request if the existing task should continue.");
+    lines.push("Use `reply_task` for that continuation, not `rerun_task`, unless the user explicitly wants a full retry from the saved brief.");
+  }
   if (manifest.runtime_tools.some((capability) => capability.id === "terminal_session_start")) {
     ensureHeading();
     lines.push("Background terminal routing: prefer `terminal_session_start` for long-running, interactive, or revisitable shell work such as dev servers, watch mode, and background jobs.");

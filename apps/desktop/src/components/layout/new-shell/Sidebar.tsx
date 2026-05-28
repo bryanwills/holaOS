@@ -457,6 +457,7 @@ function SidebarIssuesSection() {
       text: "New issue: ",
       requestKey: prefillKeyRef.current,
       mode: "replace",
+      sessionMode: "preserve",
     });
     setFocusMode(false);
   }, [setComposerPrefill, setFocusMode]);
@@ -963,6 +964,7 @@ function SidebarAutomationsSection() {
       text: "Create a schedule for ",
       requestKey: prefillKeyRef.current,
       mode: "replace",
+      sessionMode: "draft",
     });
     setFocusMode(false);
   }, [setComposerPrefill, setFocusMode]);

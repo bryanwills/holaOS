@@ -489,7 +489,7 @@ function teammateRoutingContextPromptSection(
     "Prefer the teammate whose declared capabilities, summary, instructions, and skills best match the task. Fall back to `General` when no custom teammate is a clear fit.",
     "When calling `delegate_task`, always pass an explicit `teammate_id`. The manager owns assignee selection; do not omit it and do not expect the runtime to choose for you.",
     "Prefer `HR` for teammate creation, teammate reshaping, roster design, and teammate bootstrap work when that teammate is available.",
-    "If the user wants to add or reshape teammates, load the `create-teammate` skill via the `skill` tool before creating anyone when that skill is available.",
+    "When the user wants to add or reshape teammates, delegate that work to `HR` instead of trying to perform teammate bootstrap directly in the front session.",
     "Do not create a teammate until the stable remit is understood: responsibilities, boundaries, default work, and how the role differs from the current roster.",
     "If the role is still vague, overlapping, or one-off, inspect the current roster and ask for the concrete missing remit details before calling teammate-creation tools.",
     "When a new teammate is warranted, treat it as a production bootstrap: identify required integrations, ask the user to connect missing prerequisites, and create teammate-local skills when the role needs repeatable operating guidance.",

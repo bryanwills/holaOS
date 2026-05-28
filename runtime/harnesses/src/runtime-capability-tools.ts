@@ -491,7 +491,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         properties: {
           task_id: {
             type: "string",
-            description: "Delegated task id to inspect.",
+            description: "Delegated task id to inspect, for example `U5-2`. Do not pass a `subagent_id` UUID here.",
           },
         },
         required: ["task_id"],
@@ -517,11 +517,41 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
         },
         additionalProperties: false,
       };
+    case "reply_task":
+      return {
+        type: "object",
+        properties: {
+          task_id: {
+            type: "string",
+            description:
+              "Delegated task id to reply to, for example `U5-2`. Do not pass a `subagent_id` UUID here.",
+          },
+          text: {
+            type: "string",
+            description:
+              "Reply text to enqueue into the existing delegated task thread, usually the user's answer to a blocking question.",
+          },
+          model: {
+            type: "string",
+            description: "Optional model override for the queued task reply.",
+          },
+          priority: {
+            type: "integer",
+            description: "Optional queue priority override for the queued task reply.",
+          },
+        },
+        required: ["task_id", "text"],
+        additionalProperties: false,
+      };
     case "cancel_task":
       return {
         type: "object",
         properties: {
-          task_id: { type: "string", description: "Delegated task id whose active execution should be cancelled." },
+          task_id: {
+            type: "string",
+            description:
+              "Delegated task id whose active execution should be cancelled, for example `U5-2`. Do not pass a `subagent_id` UUID here.",
+          },
         },
         required: ["task_id"],
         additionalProperties: false,
@@ -530,7 +560,11 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
       return {
         type: "object",
         properties: {
-          task_id: { type: "string", description: "Delegated task id to rerun from its saved brief." },
+          task_id: {
+            type: "string",
+            description:
+              "Delegated task id to rerun from its saved brief, for example `U5-2`. Do not pass a `subagent_id` UUID here.",
+          },
           model: { type: "string", description: "Optional model override for the rerun." },
           priority: {
             type: "integer",
@@ -1241,6 +1275,7 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
   }
   if (toolId === "teammates_create") {
     return [
+      "Only the HR teammate should call `teammates_create`.",
       "Use `teammates_create` when the workspace needs a new custom teammate identity with a defined remit.",
       "Use `teammates_create` as one step in teammate provisioning: first understand the durable remit, prerequisites, and required integrations, then create the teammate record.",
       "Keep this tool focused on teammate metadata: `name`, durable `instructions`, and `capability_profile` routing hints.",
@@ -1250,6 +1285,7 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
   }
   if (toolId === "teammate_skills_create") {
     return [
+      "Only the HR teammate should call `teammate_skills_create`.",
       "Use `teammate_skills_create` to create one filesystem-backed skill bundle for an existing teammate.",
       "Prefer `skill_markdown` plus `sidecar_files` and optional `directories` for real skill bundles; use `name` + `content` only for simple text-only skills.",
       "Place scripts under `scripts/`, reference docs under `references/`, templates or static files under `assets/`, and UI metadata under `agents/openai.yaml` when needed.",
@@ -1278,6 +1314,7 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "Use `delegate_task` for longer-running, multi-step, or interruptible work that should continue while the main conversation remains free.",
       "Keep each delegated task narrowly scoped and self-contained. Pass delegated work through the canonical `tasks` array.",
       "Always choose and pass an explicit `teammate_id`. The manager owns teammate routing; do not omit the assignee and do not expect the runtime to choose one for you.",
+      "The returned delegated-task payload exposes the stable `task_id` at the top level. If you inspect nested run details, do not use any `subagent_id` there as the task identifier.",
       "Use `tools` as coarse capability buckets such as `web`, `browser`, `terminal`, or `file`; do not treat them as raw low-level tool ids.",
       "Default delegated browser work to the agent browser. Set `use_user_browser_surface` only when the user explicitly says `use my browser`.",
       "Do not infer user-browser intent from `current tab`, `current page`, `this page`, generic browser requests, or operator-surface context alone.",
@@ -1290,6 +1327,7 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
   if (toolId === "get_task") {
     return [
       "Use `get_task` when the user is referring to a delegated work item or task rather than a low-level subagent run id.",
+      "Pass the stable `task_id` such as `U5-2`, not the `subagent_id` UUID from a linked run payload.",
       "This reads persisted task state only; it does not block waiting for the task to change.",
       "Do not call this repeatedly in the same turn right after delegating a fresh task just to see if it finished; return control unless the task is already terminal or waiting on user input.",
     ];
@@ -1302,15 +1340,24 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "Do not use this as a polling loop in the same turn after spawning fresh delegated work.",
     ];
   }
+  if (toolId === "reply_task") {
+    return [
+      "Use `reply_task` when a delegated task is blocked or waiting on user input and the user is answering that task's question.",
+      "Pass the stable `task_id` such as `U5-2`, not the `subagent_id` UUID from a linked run payload.",
+      "Forward the user's answer into `text` instead of paraphrasing it into a fresh new task.",
+      "Prefer this over `rerun_task` when the task already exists and needs a reply in its existing thread.",
+    ];
+  }
   if (toolId === "cancel_task") {
     return [
       "Use `cancel_task` when the user wants to stop a delegated task and you know the task id.",
-      "Use this against the stable task record instead of thinking in terms of low-level run ids.",
+      "Pass the stable `task_id` such as `U5-2`, not the `subagent_id` UUID from a linked run payload.",
     ];
   }
   if (toolId === "rerun_task") {
     return [
       "Use `rerun_task` when the user wants to retry or restart an existing delegated task from its saved brief.",
+      "Pass the stable `task_id` such as `U5-2`, not the `subagent_id` UUID from a linked run payload.",
       "Prefer this over `delegate_task` when the work item already exists and the intent is to rerun the same task rather than create a new one.",
     ];
   }

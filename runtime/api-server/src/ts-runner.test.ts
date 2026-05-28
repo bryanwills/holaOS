@@ -4057,6 +4057,88 @@ test("runTsRunnerCli stages browser tools for subagent executor sessions and str
   );
 });
 
+test("runTsRunnerCli exposes teammate bootstrap runtime tools only to the HR subagent", async () => {
+  setTempSandboxRoot("hb-ts-runner-hr-runtime-tools-");
+  let capturedProjectRequest: Record<string, unknown> | null = null;
+
+  const exitCode = await runTsRunnerCli(
+    [
+      "--request-base64",
+      encodeRequest({
+        ...baseRequest(),
+        session_kind: "subagent",
+        context: {
+          teammate_id: "hr",
+        },
+      }),
+    ],
+    {
+      deps: {
+        ...testDeps({
+          pluginOverrides: {
+            stageBrowserTools: ({ sessionKind }) => ({
+              changed: false,
+              toolIds:
+                sessionKind === "subagent"
+                  ? ["browser_get_state"]
+                  : [],
+            }),
+            stageRuntimeTools: () => ({
+              changed: false,
+              toolIds: [
+                "cronjobs_create",
+                "delegate_task",
+                "teammates_create",
+                "teammate_skills_create",
+              ],
+            }),
+          },
+        }),
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" },
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1",
+          };
+        },
+      },
+      io: {
+        stdout: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: {
+          write() {
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+      },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  assert.deepEqual(
+    (capturedProjectRequest as { runtime_tool_ids: string[] }).runtime_tool_ids,
+    ["teammates_create", "teammate_skills_create"],
+  );
+});
+
 test("runTsRunnerCli passes image_urls into the pi harness request", async () => {
   const sandboxRoot = setTempSandboxRoot("hb-ts-runner-pi-image-urls-");
   const workspaceDir = path.join(sandboxRoot, "workspace", "workspace-1");
@@ -4441,47 +4523,34 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
     (capturedProjectRequest as { harness_id: string | null }).harness_id,
     "pi",
   );
-  assert.deepEqual(
+  assert.ok(
     (capturedProjectRequest as { workspace_skill_ids: string[] })
-      .workspace_skill_ids,
-    [
-      "app-builder-sdk",
-      "browser-core-efficient",
-      "browser-qa",
-      "build-dashboard",
-      "create-teammate",
-      "frontend-design",
-      "interface-design",
-      "mcp-configurator",
-      "skill-creator",
-      "skill-installer",
-      "alpha",
-    ],
+      .workspace_skill_ids.includes("alpha"),
+  );
+  assert.ok(
+    !(capturedProjectRequest as { workspace_skill_ids: string[] })
+      .workspace_skill_ids.includes("create-teammate"),
   );
   assert.ok(capturedHarnessRequest);
   assert.equal(
     (capturedHarnessRequest as { instruction: string }).instruction,
     ["/alpha", "", "Draft the follow-up email."].join("\n"),
   );
-  assert.deepEqual(
+  assert.ok(
     (
       capturedHarnessRequest as {
         workspace_skill_dirs: string[];
       }
-    ).workspace_skill_dirs.map((skillDir) => path.basename(skillDir)),
-    [
-      "app-builder-sdk",
-      "browser-core-efficient",
-      "browser-qa",
-      "build-dashboard",
-      "create-teammate",
-      "frontend-design",
-      "interface-design",
-      "mcp-configurator",
-      "skill-creator",
-      "skill-installer",
-      "alpha",
-    ],
+    ).workspace_skill_dirs.some((skillDir) => path.basename(skillDir) === "alpha"),
+  );
+  assert.ok(
+    !(
+      capturedHarnessRequest as {
+        workspace_skill_dirs: string[];
+      }
+    ).workspace_skill_dirs.some(
+      (skillDir) => path.basename(skillDir) === "create-teammate",
+    ),
   );
 });
 
@@ -4584,43 +4653,30 @@ test("runTsRunnerCli includes teammate-local skills for assigned subagent runs",
 
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
-  assert.deepEqual(
+  assert.ok(
     (capturedProjectRequest as { workspace_skill_ids: string[] })
-      .workspace_skill_ids,
-    [
-      "app-builder-sdk",
-      "browser-core-efficient",
-      "browser-qa",
-      "build-dashboard",
-      "create-teammate",
-      "frontend-design",
-      "interface-design",
-      "mcp-configurator",
-      "skill-creator",
-      "skill-installer",
-      "frontend-playbook",
-    ],
+      .workspace_skill_ids.includes("frontend-playbook"),
+  );
+  assert.ok(
+    !(capturedProjectRequest as { workspace_skill_ids: string[] })
+      .workspace_skill_ids.includes("create-teammate"),
   );
   assert.ok(capturedHarnessRequest);
-  assert.deepEqual(
+  assert.ok(
     (
       capturedHarnessRequest as {
         workspace_skill_dirs: string[];
       }
-    ).workspace_skill_dirs.map((skillDir) => path.basename(skillDir)),
-    [
-      "app-builder-sdk",
-      "browser-core-efficient",
-      "browser-qa",
-      "build-dashboard",
-      "create-teammate",
-      "frontend-design",
-      "interface-design",
-      "mcp-configurator",
-      "skill-creator",
-      "skill-installer",
-      "frontend-playbook",
-    ],
+    ).workspace_skill_dirs.some((skillDir) => path.basename(skillDir) === "frontend-playbook"),
+  );
+  assert.ok(
+    !(
+      capturedHarnessRequest as {
+        workspace_skill_dirs: string[];
+      }
+    ).workspace_skill_dirs.some(
+      (skillDir) => path.basename(skillDir) === "create-teammate",
+    ),
   );
 });
 

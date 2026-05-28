@@ -348,6 +348,17 @@ function createRerunTaskBody(toolParams: unknown): Record<string, unknown> {
   };
 }
 
+function createReplyTaskBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    text: String(params.text ?? ""),
+    ...(optionalString(params.model) ? { model: optionalString(params.model) } : {}),
+    ...(typeof params.priority === "number" && Number.isFinite(params.priority)
+      ? { priority: Math.trunc(params.priority) }
+      : {}),
+  };
+}
+
 function createDownloadUrlBody(toolParams: unknown): Record<string, unknown> {
   const params = isRecord(toolParams) ? toolParams : {};
   return {
@@ -767,6 +778,12 @@ function requestPlan(
       return {
         method: "GET",
         requestPath: listTasksPath(toolParams),
+      };
+    case "reply_task":
+      return {
+        method: "POST",
+        requestPath: `${taskPath(isRecord(toolParams) ? toolParams.task_id : undefined)}/reply`,
+        body: createReplyTaskBody(toolParams),
       };
     case "cancel_task":
       return {

@@ -1315,7 +1315,7 @@ test("composeBaseAgentPrompt includes teammate routing context when provided", (
   assert.match(prompt.contextMessages.join("\n\n"), /Fall back to `General` when no custom teammate is a clear fit\./);
   assert.match(prompt.contextMessages.join("\n\n"), /always pass an explicit `teammate_id`/i);
   assert.match(prompt.contextMessages.join("\n\n"), /Prefer `HR` for teammate creation, teammate reshaping, roster design, and teammate bootstrap work when that teammate is available\./);
-  assert.match(prompt.contextMessages.join("\n\n"), /load the `create-teammate` skill via the `skill` tool before creating anyone/i);
+  assert.match(prompt.contextMessages.join("\n\n"), /delegate that work to `HR` instead of trying to perform teammate bootstrap directly in the front session/i);
   assert.match(prompt.contextMessages.join("\n\n"), /Do not create a teammate until the stable remit is understood/i);
   assert.match(prompt.contextMessages.join("\n\n"), /ask for the concrete missing remit details before calling teammate-creation tools/i);
   assert.match(prompt.contextMessages.join("\n\n"), /identify required integrations, ask the user to connect missing prerequisites, and create teammate-local skills/i);

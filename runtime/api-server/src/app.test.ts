@@ -905,6 +905,11 @@ test("runtime tools capability routes expose local onboarding and cronjob action
     assert.ok(
       capabilityStatus
         .json()
+        .tools.some((tool: { id: string }) => tool.id === "reply_task")
+    );
+    assert.ok(
+      capabilityStatus
+        .json()
         .tools.some((tool: { id: string }) => tool.id === "cancel_task")
     );
     assert.ok(
@@ -1897,14 +1902,17 @@ test("runtime task capability routes create, inspect, rerun, and cancel delegate
   assert.equal(created.statusCode, 200);
   assert.equal(created.json().count, 1);
   const task = created.json().tasks[0];
+  const latestRunSubagentId = String(task.latest_run?.subagent_id ?? "");
+  assert.equal(task.task_id, task.issue_id);
   assert.equal(task.origin_main_session_id, "session-main");
   assert.equal(task.owner_main_session_id, "session-main");
   assert.equal(task.status, "queued");
   assert.deepEqual(task.tool_profile, {
     requested_tools: ["web", "browser"],
   });
+  assert.equal(task.subagent_id, undefined);
 
-  const run = store.getSubagentRun({ workspaceId: workspace.id, subagentId: task.subagent_id });
+  const run = store.getSubagentRun({ workspaceId: workspace.id, subagentId: latestRunSubagentId });
   assert.ok(run);
   assert.equal(run?.parentSessionId, "session-main");
   assert.equal(run?.parentInputId, parentInput.inputId);
@@ -1929,7 +1937,7 @@ test("runtime task capability routes create, inspect, rerun, and cancel delegate
   assert.deepEqual(childInput?.payload.image_urls, parentInput.payload.image_urls);
   const childContext = (childInput?.payload.context ?? {}) as Record<string, unknown>;
   assert.equal(childContext.source, "issue_bootstrap");
-  assert.equal(childContext.subagent_id, task.subagent_id);
+  assert.equal(childContext.subagent_id, latestRunSubagentId);
   assert.equal(childContext.forwarded_attachment_count, 1);
   assert.deepEqual(childContext.forwarded_quoted_skill_ids, [
     "skill-creator",
@@ -1942,7 +1950,7 @@ test("runtime task capability routes create, inspect, rerun, and cancel delegate
   });
   assert.equal(listed.statusCode, 200);
   assert.equal(listed.json().count, 1);
-  assert.equal(listed.json().tasks[0].subagent_id, task.subagent_id);
+  assert.equal(listed.json().tasks[0].subagent_id, latestRunSubagentId);
 
   const listedTasksViaCapability = await app.inject({
     method: "GET",
@@ -1966,7 +1974,7 @@ test("runtime task capability routes create, inspect, rerun, and cancel delegate
   });
   assert.equal(fetchedTaskViaCapability.statusCode, 200);
   assert.equal(fetchedTaskViaCapability.json().task_id, task.issue_id);
-  assert.equal(fetchedTaskViaCapability.json().latest_run.subagent_id, task.subagent_id);
+  assert.equal(fetchedTaskViaCapability.json().latest_run.subagent_id, latestRunSubagentId);
 
   const blockedSameTurnTaskFetch = await app.inject({
     method: "GET",
@@ -2012,7 +2020,7 @@ test("runtime task capability routes create, inspect, rerun, and cancel delegate
   assert.equal(cancelledTask.json().status, "blocked");
   assert.equal(cancelledTask.json().latest_run.status, "cancelled");
 
-  const cancelledRun = store.getSubagentRun({ workspaceId: workspace.id, subagentId: task.subagent_id });
+  const cancelledRun = store.getSubagentRun({ workspaceId: workspace.id, subagentId: latestRunSubagentId });
   assert.equal(cancelledRun?.status, "cancelled");
   const cancelledInput = run?.currentChildInputId
     ? store.getInput({ workspaceId: workspace.id, inputId: run.currentChildInputId })
@@ -2049,7 +2057,7 @@ test("runtime task capability routes create, inspect, rerun, and cancel delegate
 
   const archived = await app.inject({
     method: "POST",
-    url: `/api/v1/background-tasks/${encodeURIComponent(task.subagent_id)}/archive`,
+    url: `/api/v1/background-tasks/${encodeURIComponent(latestRunSubagentId)}/archive`,
     payload: {
       workspace_id: workspace.id,
     },
@@ -2117,7 +2125,8 @@ test("delegated subagents use the configured global subagent model instead of re
 
   assert.equal(created.statusCode, 200);
   const task = created.json().tasks[0];
-  const run = store.getSubagentRun({ workspaceId: workspace.id, subagentId: task.subagent_id });
+  const latestRunSubagentId = String(task.latest_run?.subagent_id ?? "");
+  const run = store.getSubagentRun({ workspaceId: workspace.id, subagentId: latestRunSubagentId });
   const childInput = run?.currentChildInputId
     ? store.getInput({ workspaceId: workspace.id, inputId: run.currentChildInputId })
     : null;
@@ -2261,6 +2270,88 @@ test("runtime skill tool resolves a workspace skill through shared runtime state
   }
 });
 
+test("runtime skill tool hides create-teammate from the main session", async () => {
+  const root = makeTempDir("hb-runtime-api-skill-tool-main-hidden-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/skill",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+      },
+      payload: {
+        name: "create-teammate",
+      },
+    });
+
+    assert.equal(response.statusCode, 404);
+    assert.match(response.body, /Skill "create-teammate" was not found/i);
+    assert.doesNotMatch(response.body, /Available skills:[\s\S]*create-teammate/i);
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
+test("runtime skill tool exposes create-teammate to HR-owned sessions", async () => {
+  const root = makeTempDir("hb-runtime-api-skill-tool-hr-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const hr = store.ensureHrTeammate(workspace.id);
+  const issue = store.createIssue({
+    workspaceId: workspace.id,
+    sessionId: "session-issue-hr",
+    title: "Create teammate",
+    description: "Bootstrap a new teammate.",
+    status: "todo",
+    assigneeTeammateId: hr.teammateId,
+    createdBy: "workspace_user",
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/skill",
+      headers: {
+        "x-holaboss-workspace-id": workspace.id,
+        "x-holaboss-session-id": issue.sessionId,
+      },
+      payload: {
+        name: "create-teammate",
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().skill_id, "create-teammate");
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
 test("runtime skill tool resolves teammate-local skills through the assigned issue session", async () => {
   const root = makeTempDir("hb-runtime-api-skill-tool-teammate-");
   const workspaceRoot = path.join(root, "workspace");
@@ -2353,6 +2444,16 @@ test("runtime teammates_create tool creates a teammate without bundling skills i
     harness: "pi",
     status: "active",
   });
+  const hr = store.ensureHrTeammate(workspace.id);
+  const hrIssue = store.createIssue({
+    workspaceId: workspace.id,
+    sessionId: "session-hr-1",
+    title: "Create teammate",
+    description: "Bootstrap a teammate.",
+    status: "todo",
+    assigneeTeammateId: hr.teammateId,
+    createdBy: "workspace_user",
+  });
   const app = buildTestRuntimeApiServer({ store });
 
   try {
@@ -2361,6 +2462,7 @@ test("runtime teammates_create tool creates a teammate without bundling skills i
       url: "/api/v1/capabilities/runtime-tools/teammates",
       headers: {
         "x-holaboss-workspace-id": workspace.id,
+        "x-holaboss-session-id": hrIssue.sessionId,
       },
       payload: {
         name: "Researcher",
@@ -2402,6 +2504,16 @@ test("runtime teammate_skills_create tool creates a teammate-local skill bundle"
     harness: "pi",
     status: "active",
   });
+  const hr = store.ensureHrTeammate(workspace.id);
+  const hrIssue = store.createIssue({
+    workspaceId: workspace.id,
+    sessionId: "session-hr-1",
+    title: "Create teammate skill",
+    description: "Bootstrap a teammate skill.",
+    status: "todo",
+    assigneeTeammateId: hr.teammateId,
+    createdBy: "workspace_user",
+  });
   const teammate = store.createTeammate({
     workspaceId: workspace.id,
     name: "Researcher",
@@ -2415,6 +2527,7 @@ test("runtime teammate_skills_create tool creates a teammate-local skill bundle"
       url: `/api/v1/capabilities/runtime-tools/teammates/${teammate.teammateId}/skills`,
       headers: {
         "x-holaboss-workspace-id": workspace.id,
+        "x-holaboss-session-id": hrIssue.sessionId,
       },
       payload: {
         skill_id: "research-playbook",
@@ -2465,6 +2578,48 @@ test("runtime teammate_skills_create tool creates a teammate-local skill bundle"
       String(response.json().skill.file_path ?? ""),
       /teammates\/.*\/skills\/research-playbook\/SKILL\.md$/,
     );
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
+test("runtime teammates_create tool rejects non-HR sessions", async () => {
+  const root = makeTempDir("hb-runtime-api-teammates-create-forbidden-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    kind: "main_session",
+    createdBy: "workspace_user",
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/teammates",
+      headers: {
+        "x-holaboss-workspace-id": workspace.id,
+        "x-holaboss-session-id": "session-main",
+      },
+      payload: {
+        name: "Researcher",
+      },
+    });
+
+    assert.equal(response.statusCode, 403);
+    assert.match(response.body, /only available to the HR teammate/i);
   } finally {
     await app.close();
     store.close();
