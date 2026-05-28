@@ -2304,7 +2304,6 @@ test("runtime teammates_create tool creates a teammate without bundling skills i
         capability_profile: {
           summary: "Best for research and synthesis tasks.",
           capabilities: ["research", "synthesis"],
-          preferred_tools: ["web_search", "browser"],
         },
       },
     });
@@ -2318,7 +2317,6 @@ test("runtime teammates_create tool creates a teammate without bundling skills i
       {
         summary: "Best for research and synthesis tasks.",
         capabilities: ["research", "synthesis"],
-        preferred_tools: ["web_search", "browser"],
       },
     );
   } finally {
@@ -6470,7 +6468,6 @@ test("teammate and issue routes preserve local payload shape", async () => {
       capability_profile: {
         summary: "Best for implementation, refactors, and shipping code changes.",
         capabilities: ["implementation", "frontend", "react"],
-        preferred_tools: ["edit", "bash"],
       }
     }
   });
@@ -6508,19 +6505,16 @@ test("teammate and issue routes preserve local payload shape", async () => {
     createdTeammate.json().teammate.capability_profile.summary,
     "Best for implementation, refactors, and shipping code changes.",
   );
-  assert.deepEqual(
-    createdTeammate.json().teammate.capability_profile.preferred_tools,
-    ["edit", "bash"],
-  );
 
   const listedTeammates = await app.inject({
     method: "GET",
     url: `/api/v1/teammates?workspace_id=${workspace.id}`
   });
   assert.equal(listedTeammates.statusCode, 200);
-  assert.equal(listedTeammates.json().count, 2);
+  assert.equal(listedTeammates.json().count, 3);
   assert.equal(listedTeammates.json().teammates[0]?.teammate_id, "general");
-  assert.equal(listedTeammates.json().teammates[1]?.skills.length, 1);
+  assert.equal(listedTeammates.json().teammates[1]?.teammate_id, "hr");
+  assert.equal(listedTeammates.json().teammates[2]?.skills.length, 1);
   assert.match(
     listedTeammates.json().teammates[0]?.capability_profile.summary ?? "",
     /Fallback executor/i,
@@ -6623,7 +6617,7 @@ test("teammate and issue routes preserve local payload shape", async () => {
     url: `/api/v1/teammates?workspace_id=${workspace.id}`
   });
   assert.equal(visibleTeammates.statusCode, 200);
-  assert.equal(visibleTeammates.json().count, 1);
+  assert.equal(visibleTeammates.json().count, 2);
   assert.equal(visibleTeammates.json().teammates[0]?.teammate_id, "general");
 
   await app.close();

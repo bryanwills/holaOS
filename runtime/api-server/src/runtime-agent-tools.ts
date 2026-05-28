@@ -2749,7 +2749,6 @@ function teammateCapabilityProfilePayload(
   return {
     summary: record.summary,
     capabilities: [...record.capabilities],
-    preferred_tools: [...record.preferredTools],
   };
 }
 

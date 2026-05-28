@@ -37,6 +37,8 @@ const MAIN_SESSION_BINDING_ROLE = "main_session";
 const MAIN_SESSION_CONVERSATION_KEY = "main_session";
 const GENERAL_TEAMMATE_ID = "general";
 const GENERAL_TEAMMATE_NAME = "General";
+const HR_TEAMMATE_ID = "hr";
+const HR_TEAMMATE_NAME = "HR";
 const LEGACY_GENERAL_TEAMMATE_INSTRUCTIONS =
   "General-purpose execution teammate backed by the current subagent runtime.";
 const GENERAL_TEAMMATE_INSTRUCTIONS = [
@@ -55,8 +57,51 @@ const GENERAL_TEAMMATE_CAPABILITY_PROFILE: TeammateCapabilityProfileRecord = {
     "triage",
     "fallback",
   ],
-  preferredTools: [],
 };
+const HR_TEAMMATE_INSTRUCTIONS = [
+  "Built-in roster and teammate bootstrap owner for the workspace.",
+  "Own requests to create, reshape, merge, or retire teammates. Before creating anyone, inspect the current roster and clarify only the durable remit details that are still missing.",
+  "Provision production-ready teammates, not placeholder profiles. Identify the integrations, recurring workflows, references, and operating rules the role needs before finalizing the teammate.",
+  "If a requested role depends on integrations or connected apps that are not available, ask the user to connect them instead of shipping a crippled teammate.",
+  "Synthesize durable instructions, capability tags, and teammate-local skills when the role needs repeatable workflows, references, scripts, or structured operating guidance.",
+  "Load and follow the `create-teammate` skill before creating or reshaping teammates.",
+].join("\n\n");
+const HR_TEAMMATE_CAPABILITY_PROFILE: TeammateCapabilityProfileRecord = {
+  summary:
+    "Roster manager for teammate design, teammate creation, skills bootstrap, and integration readiness.",
+  capabilities: [
+    "teammates",
+    "roster",
+    "hiring",
+    "skills",
+    "bootstrap",
+    "integrations",
+  ],
+};
+type SystemTeammateDefinition = Readonly<{
+  teammateId: string;
+  name: string;
+  instructions: string;
+  capabilityProfile: TeammateCapabilityProfileRecord;
+}>;
+
+const SYSTEM_TEAMMATE_DEFINITIONS: readonly SystemTeammateDefinition[] = [
+  {
+    teammateId: GENERAL_TEAMMATE_ID,
+    name: GENERAL_TEAMMATE_NAME,
+    instructions: GENERAL_TEAMMATE_INSTRUCTIONS,
+    capabilityProfile: GENERAL_TEAMMATE_CAPABILITY_PROFILE,
+  },
+  {
+    teammateId: HR_TEAMMATE_ID,
+    name: HR_TEAMMATE_NAME,
+    instructions: HR_TEAMMATE_INSTRUCTIONS,
+    capabilityProfile: HR_TEAMMATE_CAPABILITY_PROFILE,
+  },
+];
+const SYSTEM_TEAMMATE_DEFINITIONS_BY_ID = new Map<string, SystemTeammateDefinition>(
+  SYSTEM_TEAMMATE_DEFINITIONS.map((definition) => [definition.teammateId, definition]),
+);
 const WORKSPACE_SCOPED_LEGACY_BACKFILL_TABLES = [
   "agent_sessions",
   "agent_runtime_sessions",
@@ -128,6 +173,23 @@ function createWorkspaceIdentityWriteError(params: {
   err.workspacePath = params.workspacePath;
   err.cause = params.cause;
   return err;
+}
+
+function stringArraysEqual(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((value, index) => value === right[index]);
+}
+
+function teammateCapabilityProfilesEqual(
+  left: TeammateCapabilityProfileRecord,
+  right: TeammateCapabilityProfileRecord,
+): boolean {
+  return (
+    left.summary === right.summary &&
+    stringArraysEqual(left.capabilities, right.capabilities)
+  );
 }
 
 export interface WorkspaceRecord {
@@ -877,7 +939,6 @@ export interface TeammateSkillRecord {
 export interface TeammateCapabilityProfileRecord {
   summary: string | null;
   capabilities: string[];
-  preferredTools: string[];
 }
 
 export interface TeammateRecord {
@@ -2187,7 +2248,10 @@ export class RuntimeStateStore {
     return rows.map((row) => this.rowToAgentSession(row));
   }
 
-  ensureGeneralTeammate(workspaceId: string): TeammateRecord {
+  private ensureSystemTeammate(
+    workspaceId: string,
+    definition: SystemTeammateDefinition,
+  ): TeammateRecord {
     const workspaceDb = this.workspaceRuntimeDb(workspaceId);
     const existing = workspaceDb
       .prepare<[string, string], Record<string, unknown>>(
@@ -2198,27 +2262,41 @@ export class RuntimeStateStore {
           LIMIT 1
         `,
       )
-      .get(workspaceId, GENERAL_TEAMMATE_ID);
+      .get(workspaceId, definition.teammateId);
     if (existing) {
-      const existingInstructions =
-        typeof existing.instructions === "string" ? existing.instructions.trim() : "";
+      const existingRecord = this.rowToTeammate(existing);
       if (
-        !existingInstructions ||
-        existingInstructions === LEGACY_GENERAL_TEAMMATE_INSTRUCTIONS
+        existingRecord.name !== definition.name ||
+        existingRecord.kind !== "system" ||
+        existingRecord.status !== "active" ||
+        (existingRecord.instructions ?? null) !== definition.instructions ||
+        existingRecord.archivedAt !== null ||
+        !teammateCapabilityProfilesEqual(
+          existingRecord.capabilityProfile,
+          definition.capabilityProfile,
+        )
       ) {
         const now = utcNowIso();
         workspaceDb
           .prepare(`
             UPDATE teammates
-            SET instructions = ?, updated_at = ?
+            SET name = ?,
+                kind = 'system',
+                status = 'active',
+                instructions = ?,
+                capability_profile_json = ?,
+                archived_at = NULL,
+                updated_at = ?
             WHERE workspace_id = ?
               AND teammate_id = ?
           `)
           .run(
-            GENERAL_TEAMMATE_INSTRUCTIONS,
+            definition.name,
+            definition.instructions,
+            JSON.stringify(definition.capabilityProfile),
             now,
             workspaceId,
-            GENERAL_TEAMMATE_ID,
+            definition.teammateId,
           );
         const refreshed = workspaceDb
           .prepare<[string, string], Record<string, unknown>>(
@@ -2229,12 +2307,12 @@ export class RuntimeStateStore {
               LIMIT 1
             `,
           )
-          .get(workspaceId, GENERAL_TEAMMATE_ID);
+          .get(workspaceId, definition.teammateId);
         if (refreshed) {
           return this.rowToTeammate(refreshed);
         }
       }
-      return this.rowToTeammate(existing);
+      return existingRecord;
     }
 
     const now = utcNowIso();
@@ -2254,11 +2332,11 @@ export class RuntimeStateStore {
         ) VALUES (?, ?, ?, 'system', 'active', ?, ?, ?, ?, NULL)
       `)
       .run(
-        GENERAL_TEAMMATE_ID,
+        definition.teammateId,
         workspaceId,
-        GENERAL_TEAMMATE_NAME,
-        GENERAL_TEAMMATE_INSTRUCTIONS,
-        JSON.stringify(GENERAL_TEAMMATE_CAPABILITY_PROFILE),
+        definition.name,
+        definition.instructions,
+        JSON.stringify(definition.capabilityProfile),
         now,
         now,
       );
@@ -2271,11 +2349,36 @@ export class RuntimeStateStore {
           LIMIT 1
         `,
       )
-      .get(workspaceId, GENERAL_TEAMMATE_ID);
+      .get(workspaceId, definition.teammateId);
     if (!created) {
-      throw new Error("general teammate row not found after insert");
+      throw new Error(`${definition.teammateId} teammate row not found after insert`);
     }
     return this.rowToTeammate(created);
+  }
+
+  private ensureSystemTeammates(workspaceId: string): Map<string, TeammateRecord> {
+    const ensured = new Map<string, TeammateRecord>();
+    for (const definition of SYSTEM_TEAMMATE_DEFINITIONS) {
+      ensured.set(
+        definition.teammateId,
+        this.ensureSystemTeammate(workspaceId, definition),
+      );
+    }
+    return ensured;
+  }
+
+  ensureGeneralTeammate(workspaceId: string): TeammateRecord {
+    return (
+      this.ensureSystemTeammates(workspaceId).get(GENERAL_TEAMMATE_ID) ??
+      this.ensureSystemTeammate(workspaceId, SYSTEM_TEAMMATE_DEFINITIONS[0]!)
+    );
+  }
+
+  ensureHrTeammate(workspaceId: string): TeammateRecord {
+    return (
+      this.ensureSystemTeammates(workspaceId).get(HR_TEAMMATE_ID) ??
+      this.ensureSystemTeammate(workspaceId, SYSTEM_TEAMMATE_DEFINITIONS[1]!)
+    );
   }
 
   createTeammate(params: {
@@ -2290,7 +2393,7 @@ export class RuntimeStateStore {
     updatedAt?: string;
     archivedAt?: string | null;
   }): TeammateRecord {
-    this.ensureGeneralTeammate(params.workspaceId);
+    this.ensureSystemTeammates(params.workspaceId);
     const teammateId = this.normalizedNullableText(params.teammateId) ?? randomUUID();
     const kind = this.requiredTeammateKind(params.kind ?? "custom");
     const status = this.requiredTeammateStatus(params.status ?? "active");
@@ -2300,11 +2403,13 @@ export class RuntimeStateStore {
       status === "archived"
         ? this.normalizedNullableText(params.archivedAt) ?? now
         : this.normalizedNullableText(params.archivedAt);
+    const systemTeammateDefinition =
+      kind === "system"
+        ? SYSTEM_TEAMMATE_DEFINITIONS_BY_ID.get(teammateId) ?? null
+        : null;
     const capabilityProfile = this.normalizedTeammateCapabilityProfile(
       params.capabilityProfile,
-      kind === "system" && teammateId === GENERAL_TEAMMATE_ID
-        ? GENERAL_TEAMMATE_CAPABILITY_PROFILE
-        : undefined,
+      systemTeammateDefinition?.capabilityProfile,
     );
 
     this.workspaceRuntimeDb(params.workspaceId)
@@ -2351,8 +2456,8 @@ export class RuntimeStateStore {
     teammateId: string;
     includeArchived?: boolean;
   }): TeammateRecord | null {
-    if (params.teammateId === GENERAL_TEAMMATE_ID) {
-      this.ensureGeneralTeammate(params.workspaceId);
+    if (SYSTEM_TEAMMATE_DEFINITIONS_BY_ID.has(params.teammateId)) {
+      this.ensureSystemTeammates(params.workspaceId);
     }
     const row = this.workspaceRuntimeDb(params.workspaceId)
       .prepare<[string, string, number], Record<string, unknown>>(`
@@ -2377,7 +2482,7 @@ export class RuntimeStateStore {
     limit?: number;
     offset?: number;
   }): TeammateRecord[] {
-    this.ensureGeneralTeammate(params.workspaceId);
+    this.ensureSystemTeammates(params.workspaceId);
     const rows = this.workspaceRuntimeDb(params.workspaceId)
       .prepare<[string, number, number, number], Record<string, unknown>>(`
         SELECT *
@@ -2385,7 +2490,12 @@ export class RuntimeStateStore {
         WHERE workspace_id = ?
           AND (? = 1 OR archived_at IS NULL)
         ORDER BY
-          CASE WHEN kind = 'system' THEN 0 ELSE 1 END ASC,
+          CASE
+            WHEN kind = 'system' AND teammate_id = '${GENERAL_TEAMMATE_ID}' THEN 0
+            WHEN kind = 'system' AND teammate_id = '${HR_TEAMMATE_ID}' THEN 1
+            WHEN kind = 'system' THEN 2
+            ELSE 3
+          END ASC,
           datetime(updated_at) DESC,
           datetime(created_at) DESC,
           teammate_id DESC
@@ -2440,12 +2550,13 @@ export class RuntimeStateStore {
         continue;
       }
       if (typedKey === "capabilityProfile") {
+        const systemTeammateDefinition =
+          existing.kind === "system"
+            ? SYSTEM_TEAMMATE_DEFINITIONS_BY_ID.get(existing.teammateId) ?? null
+            : null;
         const capabilityProfileDefaults =
           rawValue === null
-            ? existing.kind === "system" &&
-              existing.teammateId === GENERAL_TEAMMATE_ID
-              ? GENERAL_TEAMMATE_CAPABILITY_PROFILE
-              : undefined
+            ? systemTeammateDefinition?.capabilityProfile
             : existing.capabilityProfile;
         values.push(
           JSON.stringify(
@@ -13931,37 +14042,47 @@ export class RuntimeStateStore {
     db.prepare(`
       UPDATE teammates
       SET kind = CASE
-            WHEN teammate_id = ? THEN 'system'
+            WHEN teammate_id IN (?, ?) THEN 'system'
             ELSE 'custom'
           END
       WHERE lower(trim(coalesce(kind, ''))) NOT IN ('system', 'custom')
-         OR (teammate_id = ? AND lower(trim(coalesce(kind, ''))) != 'system')
-    `).run(GENERAL_TEAMMATE_ID, GENERAL_TEAMMATE_ID);
+         OR (teammate_id IN (?, ?) AND lower(trim(coalesce(kind, ''))) != 'system')
+    `).run(
+      GENERAL_TEAMMATE_ID,
+      HR_TEAMMATE_ID,
+      GENERAL_TEAMMATE_ID,
+      HR_TEAMMATE_ID,
+    );
     db.prepare(`
       UPDATE teammates
       SET status = CASE
-            WHEN teammate_id = ? THEN 'active'
+            WHEN teammate_id IN (?, ?) THEN 'active'
             WHEN trim(coalesce(archived_at, '')) != '' THEN 'archived'
             ELSE 'active'
           END
       WHERE lower(trim(coalesce(status, ''))) NOT IN ('active', 'archived')
-         OR (teammate_id = ? AND lower(trim(coalesce(status, ''))) != 'active')
-    `).run(GENERAL_TEAMMATE_ID, GENERAL_TEAMMATE_ID);
+         OR (teammate_id IN (?, ?) AND lower(trim(coalesce(status, ''))) != 'active')
+    `).run(
+      GENERAL_TEAMMATE_ID,
+      HR_TEAMMATE_ID,
+      GENERAL_TEAMMATE_ID,
+      HR_TEAMMATE_ID,
+    );
     if (addedStatusColumn) {
       db.prepare(`
         UPDATE teammates
         SET status = CASE
-              WHEN teammate_id = ? THEN 'active'
+              WHEN teammate_id IN (?, ?) THEN 'active'
               WHEN trim(coalesce(archived_at, '')) != '' THEN 'archived'
               ELSE 'active'
             END
-      `).run(GENERAL_TEAMMATE_ID);
+      `).run(GENERAL_TEAMMATE_ID, HR_TEAMMATE_ID);
     }
     db.prepare(`
       UPDATE teammates
       SET archived_at = NULL
-      WHERE teammate_id = ?
-    `).run(GENERAL_TEAMMATE_ID);
+      WHERE teammate_id IN (?, ?)
+    `).run(GENERAL_TEAMMATE_ID, HR_TEAMMATE_ID);
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_teammates_workspace_status_updated
           ON teammates (workspace_id, status, updated_at DESC, created_at DESC);
@@ -13975,22 +14096,29 @@ export class RuntimeStateStore {
     if (!columns.has("capability_profile_json")) {
       db.exec("ALTER TABLE teammates ADD COLUMN capability_profile_json TEXT NOT NULL DEFAULT '{}';");
     }
-    db.prepare(`
-      UPDATE teammates
-      SET capability_profile_json = ?
-      WHERE teammate_id = ?
-        AND trim(coalesce(capability_profile_json, '')) IN ('', '{}')
-    `).run(JSON.stringify(GENERAL_TEAMMATE_CAPABILITY_PROFILE), GENERAL_TEAMMATE_ID);
-    db.prepare(`
-      UPDATE teammates
-      SET instructions = ?
-      WHERE teammate_id = ?
-        AND trim(coalesce(instructions, '')) IN ('', ?)
-    `).run(
-      GENERAL_TEAMMATE_INSTRUCTIONS,
-      GENERAL_TEAMMATE_ID,
-      LEGACY_GENERAL_TEAMMATE_INSTRUCTIONS,
-    );
+    for (const definition of SYSTEM_TEAMMATE_DEFINITIONS) {
+      db.prepare(`
+        UPDATE teammates
+        SET capability_profile_json = ?
+        WHERE teammate_id = ?
+          AND trim(coalesce(capability_profile_json, '')) IN ('', '{}')
+      `).run(
+        JSON.stringify(definition.capabilityProfile),
+        definition.teammateId,
+      );
+      db.prepare(`
+        UPDATE teammates
+        SET instructions = ?
+        WHERE teammate_id = ?
+          AND trim(coalesce(instructions, '')) IN ('', ?)
+      `).run(
+        definition.instructions,
+        definition.teammateId,
+        definition.teammateId === GENERAL_TEAMMATE_ID
+          ? LEGACY_GENERAL_TEAMMATE_INSTRUCTIONS
+          : definition.instructions,
+      );
+    }
   }
 
   private migrateTeammateSkillsColumn(db: Database.Database): void {
@@ -16254,20 +16382,12 @@ export class RuntimeStateStore {
     const capabilities = this.normalizedStringArray(
       Array.isArray(value.capabilities) ? value.capabilities : [],
     );
-    const preferredTools = this.normalizedStringArray(
-      Array.isArray(value.preferredTools)
-        ? value.preferredTools
-        : Array.isArray(value.preferred_tools)
-          ? value.preferred_tools
-          : [],
-    );
     const summary = this.normalizedNullableText(
       typeof value.summary === "string" ? value.summary : null,
     );
     return {
       summary,
       capabilities,
-      preferredTools,
     };
   }
 
@@ -16354,12 +16474,6 @@ export class RuntimeStateStore {
         rawProfile && Object.prototype.hasOwnProperty.call(rawProfile, "capabilities")
           ? parsed.capabilities
           : [...(defaults?.capabilities ?? parsed.capabilities)],
-      preferredTools:
-        rawProfile &&
-        (Object.prototype.hasOwnProperty.call(rawProfile, "preferredTools") ||
-          Object.prototype.hasOwnProperty.call(rawProfile, "preferred_tools"))
-          ? parsed.preferredTools
-          : [...(defaults?.preferredTools ?? parsed.preferredTools)],
     };
   }
 

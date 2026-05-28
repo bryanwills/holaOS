@@ -64,7 +64,6 @@ export interface AgentTeammateRoutingContext {
     status: string;
     summary?: string | null;
     capabilities?: string[] | null;
-    preferred_tools?: string[] | null;
     skills?: Array<{
       name: string;
       description?: string | null;
@@ -487,10 +486,12 @@ function teammateRoutingContextPromptSection(
   const lines = [
     "Teammate routing roster:",
     "Use this roster to choose who should receive delegated work. These are routing profiles for teammate selection, not direct authority grants for the current front session.",
-    "Prefer the teammate whose declared capabilities and preferred tools best match the task. Fall back to `General` when no custom teammate is a clear fit.",
+    "Prefer the teammate whose declared capabilities, summary, instructions, and skills best match the task. Fall back to `General` when no custom teammate is a clear fit.",
+    "Prefer `HR` for teammate creation, teammate reshaping, roster design, and teammate bootstrap work when that teammate is available.",
     "If the user wants to add or reshape teammates, load the `create-teammate` skill via the `skill` tool before creating anyone when that skill is available.",
     "Do not create a teammate until the stable remit is understood: responsibilities, boundaries, default work, and how the role differs from the current roster.",
     "If the role is still vague, overlapping, or one-off, inspect the current roster and ask for the concrete missing remit details before calling teammate-creation tools.",
+    "When a new teammate is warranted, treat it as a production bootstrap: identify required integrations, ask the user to connect missing prerequisites, and create teammate-local skills when the role needs repeatable operating guidance.",
   ];
 
   for (const teammate of teammates) {

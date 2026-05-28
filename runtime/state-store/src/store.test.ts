@@ -4131,7 +4131,6 @@ test("teammate capability profiles persist and update cleanly", () => {
     capabilityProfile: {
       summary: "Best for live research, comparisons, and vendor analysis.",
       capabilities: ["research", "comparison", "vendors"],
-      preferredTools: ["web_search", "browser_get_state"],
     },
   });
   const updated = store.updateTeammate({
@@ -4141,7 +4140,6 @@ test("teammate capability profiles persist and update cleanly", () => {
       capabilityProfile: {
         summary: "Best for live research, vendor analysis, and sourcing.",
         capabilities: ["research", "vendors", "sourcing"],
-        preferredTools: ["web_search"],
       },
     },
   });
@@ -4163,10 +4161,6 @@ test("teammate capability profiles persist and update cleanly", () => {
     "comparison",
     "vendors",
   ]);
-  assert.deepEqual(teammate.capabilityProfile.preferredTools, [
-    "web_search",
-    "browser_get_state",
-  ]);
   assert.equal(
     updated?.capabilityProfile.summary,
     "Best for live research, vendor analysis, and sourcing.",
@@ -4176,7 +4170,9 @@ test("teammate capability profiles persist and update cleanly", () => {
     "vendors",
     "sourcing",
   ]);
-  assert.deepEqual(updated?.capabilityProfile.preferredTools, ["web_search"]);
+  const hr = store.ensureHrTeammate("workspace-1");
+  assert.match(hr.capabilityProfile.summary ?? "", /Roster manager/i);
+  assert.match(hr.instructions ?? "", /Load and follow the `create-teammate` skill/i);
   store.close();
 });
 
@@ -4259,17 +4255,16 @@ test("legacy teammate tables migrate missing kind and status columns", () => {
     includeArchived: true,
   });
 
-  assert.equal(teammates.length, 2);
+  assert.equal(teammates.length, 3);
   assert.equal(teammates[0]?.teammateId, "general");
   assert.equal(teammates[0]?.kind, "system");
   assert.equal(teammates[0]?.status, "active");
-  assert.deepEqual(
-    teammates[0]?.capabilityProfile.preferredTools,
-    [],
-  );
-  assert.equal(teammates[1]?.teammateId, "teammate-1");
-  assert.equal(teammates[1]?.kind, "custom");
+  assert.equal(teammates[1]?.teammateId, "hr");
+  assert.equal(teammates[1]?.kind, "system");
   assert.equal(teammates[1]?.status, "active");
+  assert.equal(teammates[2]?.teammateId, "teammate-1");
+  assert.equal(teammates[2]?.kind, "custom");
+  assert.equal(teammates[2]?.status, "active");
 
   const migratedDb = new Database(runtimeDbPath, { readonly: true });
   const teammateColumns = new Set<string>(
@@ -4294,7 +4289,7 @@ test("legacy teammate tables migrate missing kind and status columns", () => {
   assert.ok(generalRow);
   assert.equal(generalRow.kind, "system");
   assert.equal(generalRow.status, "active");
-  assert.match(generalRow.capability_profile_json, /preferredTools/i);
+  assert.doesNotMatch(generalRow.capability_profile_json, /preferredTools/i);
   reopened.close();
 });
 

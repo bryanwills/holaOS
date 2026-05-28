@@ -313,11 +313,6 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
                 description: "Short capability tags such as frontend, research, or implementation.",
                 items: { type: "string" },
               },
-              preferred_tools: {
-                type: "array",
-                description: "Preferred tool ids or buckets for this teammate.",
-                items: { type: "string" },
-              },
             },
             additionalProperties: false,
           },
@@ -1236,8 +1231,9 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
   if (toolId === "teammates_create") {
     return [
       "Use `teammates_create` when the workspace needs a new custom teammate identity with a defined remit.",
+      "Use `teammates_create` as one step in teammate provisioning: first understand the durable remit, prerequisites, and required integrations, then create the teammate record.",
       "Keep this tool focused on teammate metadata: `name`, durable `instructions`, and `capability_profile` routing hints.",
-      "Do not overload teammate creation with skill bundle authoring; create teammate-local skills with `teammate_skills_create` after the teammate exists.",
+      "If the role needs repeatable workflows, references, scripts, or structured operating rules, follow `teammates_create` with `teammate_skills_create` in the same bootstrap flow.",
       "Prefer short, stable capability tags in `capability_profile.capabilities` so future delegation matching stays predictable.",
     ];
   }

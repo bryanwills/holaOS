@@ -508,7 +508,6 @@ test("projectAgentRuntimeConfig includes teammate routing context as a context m
             summary:
               "Fallback executor for general implementation and research work.",
             capabilities: ["generalist", "implementation", "research"],
-            preferred_tools: [],
             skills: [],
             skill_names: [],
           },
@@ -520,7 +519,6 @@ test("projectAgentRuntimeConfig includes teammate routing context as a context m
             summary:
               "Best for React dashboard implementation and UI refactors.",
             capabilities: ["frontend", "react", "dashboard"],
-            preferred_tools: ["edit", "bash"],
             skills: [
               {
                 name: "Dashboard UI",

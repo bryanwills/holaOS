@@ -1030,17 +1030,6 @@ function requiredTeammateCapabilityProfileInput(
     capabilities: hasOwn(value, "capabilities")
       ? optionalTrimmedStringArray(value.capabilities, `${fieldName}.capabilities`)
       : undefined,
-    preferredTools: hasOwn(value, "preferred_tools")
-      ? optionalTrimmedStringArray(
-          value.preferred_tools,
-          `${fieldName}.preferred_tools`,
-        )
-      : hasOwn(value, "preferredTools")
-        ? optionalTrimmedStringArray(
-            value.preferredTools,
-            `${fieldName}.preferredTools`,
-          )
-        : undefined,
   };
 }
 
@@ -1538,7 +1527,6 @@ function teammateCapabilityProfilePayload(
   return {
     summary: record.summary,
     capabilities: [...record.capabilities],
-    preferred_tools: [...record.preferredTools],
   };
 }
 

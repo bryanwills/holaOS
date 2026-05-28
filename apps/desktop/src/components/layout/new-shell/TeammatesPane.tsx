@@ -60,7 +60,6 @@ type DraftState = {
   instructions: string;
   capabilitySummary: string;
   capabilityTags: string;
-  preferredTools: string;
   skills: SkillDraft[];
   status: TeammateStatusPayload;
   kind: TeammateKindPayload;
@@ -77,7 +76,6 @@ function emptyDraft(): DraftState {
     instructions: "",
     capabilitySummary: "",
     capabilityTags: "",
-    preferredTools: "",
     skills: [],
     status: "active",
     kind: "custom",
@@ -91,7 +89,6 @@ function draftFromTeammate(teammate: TeammateRecordPayload): DraftState {
     instructions: teammate.instructions ?? "",
     capabilitySummary: teammate.capability_profile.summary ?? "",
     capabilityTags: teammate.capability_profile.capabilities.join(", "),
-    preferredTools: teammate.capability_profile.preferred_tools.join(", "),
     skills: teammate.skills.map((skill) => ({
       localId: skill.skill_id || makeDraftSkillId(),
       skillId: skill.skill_id,
@@ -180,14 +177,12 @@ function normalizedCapabilityProfileInput(
 ): Partial<TeammateCapabilityProfilePayload> | null {
   const summary = draft.capabilitySummary.trim();
   const capabilities = normalizedCommaSeparatedValues(draft.capabilityTags);
-  const preferredTools = normalizedCommaSeparatedValues(draft.preferredTools);
-  if (!summary && capabilities.length === 0 && preferredTools.length === 0) {
+  if (!summary && capabilities.length === 0) {
     return null;
   }
   return {
     summary: summary || null,
     capabilities,
-    preferred_tools: preferredTools,
   };
 }
 
@@ -278,6 +273,9 @@ function teammateSummary(teammate: TeammateRecordPayload): string {
   if (summary) {
     return summary;
   }
+  if (teammate.kind === "system" && teammate.teammate_id === "hr") {
+    return "The built-in HR teammate owns teammate design, bootstrap quality, and roster changes.";
+  }
   return teammate.kind === "system"
     ? "The built-in General teammate picks up work when no custom teammate is a stronger routing match."
     : "No routing instructions yet.";
@@ -290,13 +288,17 @@ function teammateCreationRequestPrompt(name: string, role: string): string {
     `Requested name: ${name}`,
     `Requested role: ${role}`,
     "",
+    "Please route this through the built-in HR teammate if it is available.",
+    "",
     "Please follow the create-teammate skill workflow before creating anything:",
     "- inspect the current teammate roster first",
     "- decide whether this is a durable, distinct remit or whether an existing teammate already covers it",
     "- if the remit or boundaries are still unclear, ask only the concrete follow-up questions needed before creating the teammate",
-    "- if the remit is already clear enough, create the teammate with durable instructions and a capability profile",
+    "- identify the integrations, connected apps, references, and recurring workflows this role needs",
+    "- if a required integration is missing, ask me to connect it before finalizing the teammate",
+    "- if the remit is already clear enough, create the teammate with durable instructions, capability tags, and teammate-local skills when the role needs repeatable workflow guidance",
     "",
-    "Do not create a teammate from the role label alone if the stable remit is still vague.",
+    "Do not create a teammate from the role label alone if the stable remit is still vague, and do not stop at a thin profile if the role needs a production-ready playbook.",
   ].join("\n");
 }
 
@@ -1365,26 +1367,6 @@ export function TeammatesPane({ workspaceId }: { workspaceId: string }) {
                             </div>
                             <div>
                               <div className="mb-2 text-xs font-medium uppercase tracking-[0.16em] text-foreground/42">
-                                Preferred tools
-                              </div>
-                              <Input
-                                value={draft.preferredTools}
-                                onChange={(event) =>
-                                  setDraft((current) => ({
-                                    ...current,
-                                    preferredTools: event.target.value,
-                                  }))
-                                }
-                                placeholder="edit, bash, web_search"
-                                disabled={draftLocked}
-                                className="h-11 bg-background/75"
-                              />
-                              <div className="mt-2 text-xs text-foreground/45">
-                                Optional comma-separated tool ids that are strong fits for this teammate.
-                              </div>
-                            </div>
-                            <div>
-                              <div className="mb-2 text-xs font-medium uppercase tracking-[0.16em] text-foreground/42">
                                 Instructions
                               </div>
                               <Textarea
@@ -1641,7 +1623,7 @@ export function TeammatesPane({ workspaceId }: { workspaceId: string }) {
                     className="min-h-[120px] resize-y bg-background/75"
                   />
                   <div className="mt-2 text-xs text-foreground/45">
-                    The main session will review the roster first and ask any follow-up questions before creating the teammate if the remit is still unclear.
+                    The main session will route this through the roster workflow, ask any follow-up questions it still needs, and provision a stronger teammate when the remit is clear enough.
                   </div>
                 </div>
                 {createError ? (

@@ -193,13 +193,6 @@ function createTeammateBody(toolParams: unknown): Record<string, unknown> {
               ),
             }
           : {}),
-        ...(optionalStringArray(params.capability_profile.preferred_tools)
-          ? {
-              preferred_tools: optionalStringArray(
-                params.capability_profile.preferred_tools,
-              ),
-            }
-          : {}),
       }
     : undefined;
   return {

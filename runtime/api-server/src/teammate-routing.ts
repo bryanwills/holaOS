@@ -17,7 +17,6 @@ export interface TeammateRoutingRosterEntry {
   status: string;
   summary: string | null;
   capabilities: string[];
-  preferred_tools: string[];
   skills: Array<{
     name: string;
     description: string | null;
@@ -140,7 +139,6 @@ export function buildTeammateRoutingRosterEntry(
     status: teammate.status,
     summary: fallbackCapabilitySummaryWithSkills({ teammate, skills }),
     capabilities,
-    preferred_tools: uniqueStringsInOrder(teammate.capabilityProfile.preferredTools),
     skills: skillMetadata,
     skill_names: uniqueStringsInOrder(skillMetadata.map((skill) => skill.name)),
   };
@@ -156,7 +154,6 @@ function teammateRoutingCorpusTokens(
     ...routingTokens(teammate.name),
     ...routingTokens(entry.summary),
     ...entry.capabilities.flatMap((value) => routingTokens(value)),
-    ...entry.preferred_tools.flatMap((value) => routingTokens(value)),
     ...entry.skills.flatMap((skill) => [
       ...routingTokens(skill.name),
       ...routingTokens(skill.description),
@@ -217,18 +214,9 @@ export function selectDelegatedTaskTeammateByCapability(params: {
       score += 8;
     }
 
-    const preferredTools = new Set(entry.preferred_tools.map((value) => value.toLowerCase()));
-    for (const tool of queryTools) {
-      const normalizedTool = tool.toLowerCase();
-      if (preferredTools.has(normalizedTool)) {
-        score += 10;
-      }
-    }
-
-    const capabilityTokens = new Set([
-      ...entry.capabilities.flatMap((value) => routingTokens(value)),
-      ...entry.preferred_tools.flatMap((value) => routingTokens(value)),
-    ]);
+    const capabilityTokens = new Set(
+      entry.capabilities.flatMap((value) => routingTokens(value)),
+    );
     const summaryTokens = new Set(routingTokens(entry.summary));
     for (const token of queryTokens) {
       if (capabilityTokens.has(token)) {

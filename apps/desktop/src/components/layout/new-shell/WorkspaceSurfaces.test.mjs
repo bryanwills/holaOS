@@ -187,10 +187,12 @@ test("workspace surfaces wire board and dashboard tabs through the shell", async
   assert.match(teammatesPaneSource, /placeholder="Search teammates\.\.\."/);
   assert.match(teammatesPaneSource, /Back to teammates/);
   assert.match(teammatesPaneSource, /Send a teammate creation request to the main session\./);
+  assert.match(teammatesPaneSource, /Please route this through the built-in HR teammate if it is available\./);
   assert.match(teammatesPaneSource, /TabsTrigger\s+value="activity"/);
   assert.match(teammatesPaneSource, /TabsTrigger\s+value="issues"/);
   assert.match(teammatesPaneSource, /TabsTrigger\s+value="instructions"/);
   assert.match(teammatesPaneSource, /TabsTrigger\s+value="skills"/);
+  assert.doesNotMatch(teammatesPaneSource, /Preferred tools/);
   assert.doesNotMatch(teammatesPaneSource, /<span>Agent Team<\/span>/);
   assert.match(teammatesPaneSource, />\s*Teammate\s*</);
   assert.doesNotMatch(teammatesPaneSource, /Creating a new teammate/);

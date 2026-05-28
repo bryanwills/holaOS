@@ -31,7 +31,6 @@ function teammate(overrides: Partial<TeammateRecord> = {}): TeammateRecord {
     capabilityProfile: {
       summary: null,
       capabilities: [],
-      preferredTools: [],
     },
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
@@ -98,7 +97,6 @@ test("selectDelegatedTaskTeammateByCapability scores teammate-local filesystem s
     capabilityProfile: {
       summary: null,
       capabilities: [],
-      preferredTools: [],
     },
   });
   writeTeammateSkills({

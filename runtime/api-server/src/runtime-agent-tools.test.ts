@@ -763,7 +763,6 @@ test("delegateTask prefers explicit teammate capability profiles when choosing a
       capabilityProfile: {
         summary: "Best for UI implementation and shipping frontend work.",
         capabilities: ["frontend", "react", "dashboard"],
-        preferredTools: ["edit", "bash"],
       },
     });
     const researcher = store.createTeammate({
@@ -773,7 +772,6 @@ test("delegateTask prefers explicit teammate capability profiles when choosing a
       capabilityProfile: {
         summary: "Best for live research, sourcing, and vendor comparisons.",
         capabilities: ["research", "comparison", "vendors"],
-        preferredTools: ["web_search", "browser_get_state"],
       },
     });
     const parentInput = store.enqueueInput({
@@ -2180,7 +2178,6 @@ test("createTeammate persists teammate metadata without bundling filesystem skil
       capabilityProfile: {
         summary: "Best for research and synthesis.",
         capabilities: ["research", "synthesis"],
-        preferredTools: ["web_search", "browser"],
       },
     }) as {
       name: string;
@@ -2188,7 +2185,6 @@ test("createTeammate persists teammate metadata without bundling filesystem skil
       capability_profile: {
         summary: string | null;
         capabilities: string[];
-        preferred_tools: string[];
       };
       skills: Array<unknown>;
     };
@@ -2202,10 +2198,6 @@ test("createTeammate persists teammate metadata without bundling filesystem skil
     assert.deepEqual(result.capability_profile.capabilities, [
       "research",
       "synthesis",
-    ]);
-    assert.deepEqual(result.capability_profile.preferred_tools, [
-      "web_search",
-      "browser",
     ]);
   } finally {
     store.close();

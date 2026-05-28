@@ -741,7 +741,6 @@ interface RuntimeNotificationListOptionsPayload {
   interface TeammateCapabilityProfilePayload {
     summary: string | null;
     capabilities: string[];
-    preferred_tools: string[];
   }
 
   interface TeammateRecordPayload {
