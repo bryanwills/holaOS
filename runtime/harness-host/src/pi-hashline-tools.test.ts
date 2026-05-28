@@ -175,3 +175,84 @@ test("hashline edit preflights multi-file patches before writing", async () => {
     assert.equal(await fs.readFile(firstPath, "utf-8"), "const first = 1;\n");
   });
 });
+
+test("hashline edit tolerates unified-diff replacement rows in the body", async () => {
+  await withTempWorkspace(async (workspaceDir) => {
+    const filePath = path.join(workspaceDir, "news.html");
+    await fs.writeFile(
+      filePath,
+      "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Old News</title></head><body></body></html>\n",
+      "utf-8",
+    );
+
+    const [readTool, editTool] = createPiHashlineToolDefinitions(workspaceDir);
+    const header = extractHashlineHeader(firstTextBlock(await readTool.execute(
+      "call-1",
+      { path: "news.html" },
+      undefined,
+      undefined,
+      {} as never,
+    )));
+
+    await editTool.execute(
+      "call-2",
+      {
+        input: [
+          header,
+          "1 1",
+          "-<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Old News</title></head><body></body></html>",
+          "+<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Latest Major News Today - May 28, 2026</title></head><body></body></html>",
+        ].join("\n"),
+      },
+      undefined,
+      undefined,
+      {} as never,
+    );
+
+    assert.equal(
+      await fs.readFile(filePath, "utf-8"),
+      "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Latest Major News Today - May 28, 2026</title></head><body></body></html>\n",
+    );
+  });
+});
+
+test("hashline edit retroactively strips unified-diff context prefixes", async () => {
+  await withTempWorkspace(async (workspaceDir) => {
+    const filePath = path.join(workspaceDir, "snippet.txt");
+    await fs.writeFile(
+      filePath,
+      "alpha\nold section\nstale tail\nomega\n",
+      "utf-8",
+    );
+
+    const [readTool, editTool] = createPiHashlineToolDefinitions(workspaceDir);
+    const header = extractHashlineHeader(firstTextBlock(await readTool.execute(
+      "call-1",
+      { path: "snippet.txt" },
+      undefined,
+      undefined,
+      {} as never,
+    )));
+
+    await editTool.execute(
+      "call-2",
+      {
+        input: [
+          header,
+          "2 3",
+          " keep this line",
+          "+fresh tail",
+          "-stale tail",
+        ].join("\n"),
+      },
+      undefined,
+      undefined,
+      {} as never,
+    );
+
+    assert.equal(
+      await fs.readFile(filePath, "utf-8"),
+      "alpha\nkeep this line\nfresh tail\nomega\n",
+    );
+  });
+});

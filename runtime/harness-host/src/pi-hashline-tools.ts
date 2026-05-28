@@ -179,11 +179,25 @@ function parseHashlineSections(input: string): HashlineSection[] {
   const sections: HashlineSection[] = [];
   let currentSection: HashlineSection | null = null;
   let currentHunk: HashlineHunk | null = null;
+  let currentHunkUnifiedDiffMode = false;
 
   const pushHunk = () => {
     if (currentSection && currentHunk) {
       currentSection.hunks.push(currentHunk);
       currentHunk = null;
+    }
+    currentHunkUnifiedDiffMode = false;
+  };
+
+  const enterUnifiedDiffMode = () => {
+    if (!currentHunk || currentHunkUnifiedDiffMode) {
+      return;
+    }
+    currentHunkUnifiedDiffMode = true;
+    for (const row of currentHunk.body) {
+      if (row.kind === "add" && row.text.startsWith(" ")) {
+        row.text = row.text.slice(1);
+      }
     }
   };
 
@@ -247,9 +261,15 @@ function parseHashlineSections(input: string): HashlineSection[] {
       currentHunk.body.push(parseHashlineKeepRow(line));
       continue;
     }
-    throw new Error(
-      `Invalid hashline body row ${JSON.stringify(line)}. Use +text or &N / &A..B.`,
-    );
+    if (line.startsWith("-")) {
+      enterUnifiedDiffMode();
+      continue;
+    }
+    if (currentHunkUnifiedDiffMode && line.startsWith(" ")) {
+      currentHunk.body.push({ kind: "add", text: line.slice(1) });
+      continue;
+    }
+    currentHunk.body.push({ kind: "add", text: line });
   }
 
   pushSection();
