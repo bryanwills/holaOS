@@ -59,6 +59,7 @@ export function resolveRuntimeBundleState(desktopRoot = process.cwd()) {
       path.join(repoRoot, "runtime", "deploy", "prune_packaged_tree.mjs"),
       path.join(repoRoot, "runtime", "deploy", "prune_packaged_tree.sh"),
       path.join(repoRoot, "runtime", "deploy", "stage_python_runtime.mjs"),
+      path.join(repoRoot, "shared"),
       localPackagerPath,
     ],
     canPrepareLocalRuntime: Boolean(localPackagerPath),

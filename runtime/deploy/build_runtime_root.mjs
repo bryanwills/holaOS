@@ -78,6 +78,13 @@ function copyIfPresent(sourcePath, destinationPath) {
   cpSync(sourcePath, destinationPath, { recursive: true });
 }
 
+function stageSharedContracts(outputRoot) {
+  // The staged runtime API server builds from <bundle>/runtime/api-server/src
+  // and resolves repo-level contracts via ../../../shared/*. Mirror that
+  // shared tree into <bundle>/shared before running the staged build.
+  copyIfPresent(path.join(repoRoot, "shared"), path.join(outputRoot, "..", "shared"));
+}
+
 export function runCommand(command, args, options = {}) {
   execFileSync(command, args, {
     stdio: "inherit",
@@ -309,6 +316,7 @@ export function buildRuntimeRoot(outputRootArg = path.join(repoRoot, "out", "run
 
   rmSync(outputRoot, { recursive: true, force: true });
   mkdirSync(outputRoot, { recursive: true });
+  stageSharedContracts(outputRoot);
 
   stageSourcePackage(outputRoot, path.join(runtimeRoot, "harnesses"), "harnesses");
   stageNodePackage(outputRoot, path.join(runtimeRoot, "harness-host"), "harness-host");

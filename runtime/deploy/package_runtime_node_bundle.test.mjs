@@ -88,6 +88,10 @@ test("build_runtime_root stages package-local scripts before dependency installs
 
   assert.match(
     source,
+    /copyIfPresent\(path\.join\(repoRoot, "shared"\), path\.join\(outputRoot, "\.\.", "shared"\)\);/,
+  );
+  assert.match(
+    source,
     /copyIfPresent\(path\.join\(packageDir, "scripts"\), path\.join\(targetDir, "scripts"\)\);/,
   );
   assert.match(source, /function runPackageManagerCommand/);
@@ -97,6 +101,12 @@ test("build_runtime_root stages package-local scripts before dependency installs
     source,
     /process\.platform === "win32" \? \["install", "--omit=dev"\] : \["install", "--production"\]/,
   );
+});
+
+test("package_macos_runtime cache key includes shared contract inputs", async () => {
+  const source = await readFile(macosPackagerPath, "utf8");
+
+  assert.match(source, /"\$\{REPO_ROOT\}\/shared"/);
 });
 
 test("startWindowsRuntime prefers the packaged node-runtime bin layout on Windows bundles", async () => {

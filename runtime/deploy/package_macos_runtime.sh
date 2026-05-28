@@ -52,6 +52,7 @@ compute_cache_key() {
            "${RUNTIME_ROOT}/state-store/src" \
            "${RUNTIME_ROOT}/harness-host/src" \
            "${RUNTIME_ROOT}/harnesses/src" \
+           "${REPO_ROOT}/shared" \
            -type f 2>/dev/null
       ls "${RUNTIME_ROOT}/api-server/package.json" \
          "${RUNTIME_ROOT}/state-store/package.json" \
