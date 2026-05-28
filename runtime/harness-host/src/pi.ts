@@ -93,6 +93,7 @@ import {
   harnessGenAiSpanAttributes,
   type HarnessGenAiUsageMetrics,
 } from "./harness-ai-monitoring.js";
+import { createPiHashlineToolDefinitions } from "./pi-hashline-tools.js";
 import { resolvePiWebSearchToolDefinitions } from "./pi-web-search.js";
 
 export type PiMappedEvent = {
@@ -1879,6 +1880,10 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
   const webSearchTools = toolEnabledForPiRequest(request, "web_search")
     ? await resolvePiWebSearchToolDefinitions()
     : [];
+  const hashlineTools = filterPiToolDefinitionsForRequest(
+    request,
+    createPiHashlineToolDefinitions(request.workspace_dir),
+  );
   const baseTools = filterPiToolDefinitionsForRequest(request, [
     ...createCodingTools(request.workspace_dir),
     createGrepTool(request.workspace_dir),
@@ -1886,6 +1891,7 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     createLsTool(request.workspace_dir),
   ]);
   const nonSkillCustomTools: ToolDefinition[] = [
+    ...hashlineTools,
     ...todoTools,
     ...(browserTools as unknown as ToolDefinition[]),
     ...(runtimeToolsForHost as unknown as ToolDefinition[]),

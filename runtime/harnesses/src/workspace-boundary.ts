@@ -10,6 +10,7 @@ export interface HarnessWorkspaceBoundaryPolicy {
 const WORKSPACE_PATH_KEY_PATTERN =
   /(?:^|_)(?:path|file|filepath|filename|target|source|destination|cwd|dir|directory|root)$/i;
 const TOOL_COMMAND_KEY_PATTERN = /^(?:command|cmd|script)$/i;
+const HASHLINE_HEADER_PATTERN = /^¶(.+?)(?:#([0-9A-Fa-f]{3}))?$/;
 const WORKSPACE_LOCAL_TOOL_NAMES = new Set([
   "read",
   "edit",
@@ -231,6 +232,27 @@ function workspacePathViolationForValue(
   return null;
 }
 
+function hashlinePathsFromInput(input: string): string[] {
+  const paths: string[] = [];
+  for (const rawLine of input.split(/\r?\n/)) {
+    const trimmed = rawLine.trim();
+    const match = HASHLINE_HEADER_PATTERN.exec(trimmed);
+    if (!match) {
+      continue;
+    }
+    const rawPath = (match[1] ?? "").trim();
+    if (!rawPath) {
+      continue;
+    }
+    const unquotedPath = rawPath.length >= 2
+      && ((rawPath.startsWith("\"") && rawPath.endsWith("\"")) || (rawPath.startsWith("'") && rawPath.endsWith("'")))
+      ? rawPath.slice(1, -1)
+      : rawPath;
+    paths.push(unquotedPath);
+  }
+  return paths;
+}
+
 export function createHarnessWorkspaceBoundaryPolicy(
   workspaceDir: string,
   overrideRequested: boolean,
@@ -298,6 +320,26 @@ export function workspaceBoundaryViolationForToolCall(params: {
   }
   if (!isRecord(params.toolParams)) {
     return null;
+  }
+  if (normalizedToolName === "edit") {
+    const hashlineInput =
+      typeof params.toolParams.input === "string"
+        ? params.toolParams.input
+        : typeof params.toolParams._input === "string"
+          ? params.toolParams._input
+          : null;
+    if (hashlineInput) {
+      for (const [index, hashlinePath] of hashlinePathsFromInput(hashlineInput).entries()) {
+        const violation = workspacePathViolationForValue(
+          hashlinePath,
+          `params.input.section[${index}]`,
+          params.policy,
+        );
+        if (violation) {
+          return violation;
+        }
+      }
+    }
   }
 
   const queue: Array<{ value: unknown; ref: string }> = [{ value: params.toolParams, ref: "params" }];
