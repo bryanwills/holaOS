@@ -1912,10 +1912,11 @@ test("runtime task capability routes create, inspect, rerun, and cancel delegate
   const task = created.json().tasks[0];
   const latestRunSubagentId = String(task.latest_run?.subagent_id ?? "");
   assert.equal(task.task_id, task.issue_id);
-  assert.equal(task.origin_main_session_id, "session-main");
-  assert.equal(task.owner_main_session_id, "session-main");
-  assert.equal(task.status, "queued");
-  assert.deepEqual(task.tool_profile, {
+  assert.equal(task.status, "todo");
+  assert.equal(task.latest_run.origin_main_session_id, "session-main");
+  assert.equal(task.latest_run.owner_main_session_id, "session-main");
+  assert.equal(task.latest_run.status, "queued");
+  assert.deepEqual(task.latest_run.tool_profile, {
     requested_tools: ["web", "browser"],
   });
   assert.equal(task.subagent_id, undefined);
@@ -1929,7 +1930,7 @@ test("runtime task capability routes create, inspect, rerun, and cancel delegate
 
   const childSession = store.getSession({
     workspaceId: workspace.id,
-    sessionId: String(task.child_session_id),
+    sessionId: String(task.latest_run.child_session_id),
   });
   assert.equal(childSession?.kind, "subagent");
 
@@ -2075,7 +2076,7 @@ test("runtime task capability routes create, inspect, rerun, and cancel delegate
 
   const archivedChildSession = store.getSession({
     workspaceId: workspace.id,
-    sessionId: String(task.child_session_id),
+    sessionId: String(task.latest_run.child_session_id),
   });
   assert.ok(archivedChildSession?.archivedAt);
 
