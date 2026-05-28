@@ -9949,6 +9949,7 @@ async function createIssue(
       path: "/api/v1/issues",
       payload: {
         workspace_id: payload.workspace_id,
+        parent_issue_id: payload.parent_issue_id ?? null,
         title: payload.title,
         description: payload.description ?? null,
         status: payload.status,
@@ -9977,6 +9978,7 @@ async function updateIssue(
     path: `/api/v1/issues/${encodeURIComponent(issueId)}`,
       payload: {
         workspace_id: workspaceId,
+        parent_issue_id: payload.parent_issue_id ?? undefined,
         title: payload.title ?? undefined,
         description: payload.description ?? undefined,
         status: payload.status ?? undefined,

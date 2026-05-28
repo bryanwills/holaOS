@@ -297,6 +297,9 @@ function normalizeDelegateTask(taskParams: unknown): Record<string, unknown> {
   const teammateId = optionalString(params.teammate_id);
   return {
     ...(teammateId ? { teammate_id: teammateId } : {}),
+    ...(optionalString(params.parent_task_id)
+      ? { parent_task_id: optionalString(params.parent_task_id) }
+      : {}),
     ...(optionalString(params.title) ? { title: optionalString(params.title) } : {}),
     ...(goal ? { goal } : {}),
     ...(optionalString(params.context) ? { context: optionalString(params.context) } : {}),

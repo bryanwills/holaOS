@@ -727,6 +727,7 @@ function optionalCronjobDeliveryInput(value: unknown): {
 
 function parseDelegateTaskInput(value: unknown): {
   teammateId?: string | null;
+  parentTaskId?: string | null;
   title?: string | null;
   goal: string;
   context?: string | null;
@@ -744,6 +745,7 @@ function parseDelegateTaskInput(value: unknown): {
   }
   return {
     teammateId: nullableString(value.teammate_id) ?? null,
+    parentTaskId: nullableString(value.parent_task_id) ?? null,
     title: nullableString(value.title) ?? null,
     goal,
     context: nullableString(value.context) ?? null,
@@ -759,6 +761,7 @@ function parseDelegateTaskInput(value: unknown): {
 
 function requiredDelegateTaskInputs(body: Record<string, unknown>): Array<{
   teammateId?: string | null;
+  parentTaskId?: string | null;
   title?: string | null;
   goal: string;
   context?: string | null;
@@ -1576,6 +1579,7 @@ function issuePayload(record: IssueRecord): Record<string, unknown> {
     workspace_id: record.workspaceId,
     issue_number: record.issueNumber,
     session_id: record.sessionId,
+    parent_issue_id: record.parentIssueId,
     title: record.title,
     description: record.description,
     status: record.status,
@@ -11705,6 +11709,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         issueId: nullableString(request.body.issue_id) ?? undefined,
         workspaceId,
         sessionId: nullableString(request.body.session_id) ?? undefined,
+        parentIssueId: nullableString(request.body.parent_issue_id) ?? null,
         title: requiredString(request.body.title, "title"),
         description: nullableString(request.body.description) ?? null,
         status: requiredString(request.body.status, "status") as IssueRecord["status"],
@@ -11769,6 +11774,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         "status",
         "priority",
         "assignee_teammate_id",
+        "parent_issue_id",
         "blocker_reason",
         "attachments",
       ].some((key) => hasOwn(body, key));
@@ -11784,6 +11790,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         issueId: requiredString(params.issueId, "issueId"),
         fields: {
           title: hasOwn(body, "title") ? requiredString(body.title, "title") : undefined,
+          parentIssueId: hasOwn(body, "parent_issue_id")
+            ? (nullableString(body.parent_issue_id) ?? null)
+            : undefined,
           description: hasOwn(body, "description")
             ? (nullableString(body.description) ?? null)
             : undefined,

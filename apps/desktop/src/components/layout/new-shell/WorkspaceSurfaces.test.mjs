@@ -162,6 +162,10 @@ test("workspace surfaces wire board and dashboard tabs through the shell", async
   assert.match(issueDetailPaneSource, /window\.electronAPI\.workspace\.stageSessionAttachments/);
   assert.match(issueDetailPaneSource, /workspaceSurfaceTab\("issues_board"/);
   assert.match(issueDetailPaneSource, /Back to board/);
+  assert.match(issueDetailPaneSource, /Related issues/);
+  assert.match(issueDetailPaneSource, /Create sub-issue/);
+  assert.match(issueDetailPaneSource, /parent_issue_id: issue\.issue_id/);
+  assert.match(issueDetailPaneSource, /Sub-issue of/);
   assert.match(issueDetailPaneSource, /attachments: nextIssueAttachments/);
   assert.doesNotMatch(issueDetailPaneSource, /title="Properties"/);
   assert.match(issueDetailPaneSource, /Activity/);

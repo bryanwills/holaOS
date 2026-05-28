@@ -464,6 +464,11 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
                   description:
                     "Required teammate id for the delegated worker. Choose the assignee explicitly; do not rely on runtime auto-routing.",
                 },
+                parent_task_id: {
+                  type: "string",
+                  description:
+                    "Optional parent task id when this delegated task should be created as a sub-task of an existing task.",
+                },
                 title: { type: "string", description: "Optional short task title." },
                 goal: { type: "string", description: "Required task goal or instruction." },
                 context: { type: "string", description: "Optional supporting context for this task." },
@@ -492,6 +497,11 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId): Record<string, unkno
             type: "string",
             description:
               "Singleton alias: required teammate id for the delegated worker.",
+          },
+          parent_task_id: {
+            type: "string",
+            description:
+              "Singleton alias: optional parent task id when creating a sub-task.",
           },
           title: { type: "string", description: "Singleton alias: optional short task title." },
           goal: { type: "string", description: "Singleton alias: task goal or instruction." },
@@ -1360,6 +1370,7 @@ function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
       "Use `delegate_task` for longer-running, multi-step, or interruptible work that should continue while the main conversation remains free.",
       "Keep each delegated task narrowly scoped and self-contained. Pass delegated work through the canonical `tasks` array.",
       "Always choose and pass an explicit `teammate_id`. The manager owns teammate routing; do not omit the assignee and do not expect the runtime to choose one for you.",
+      "When the work is intentionally a sub-task of an existing delegated task, pass its stable `parent_task_id` such as `U5-2` so the runtime records the hierarchy.",
       "The returned delegated-task payload exposes the stable `task_id` at the top level. If you inspect nested run details, do not use any `subagent_id` there as the task identifier.",
       "Use `tools` as coarse capability buckets such as `web`, `browser`, `terminal`, or `file`; do not treat them as raw low-level tool ids.",
       "Default delegated browser work to the agent browser. Set `use_user_browser_surface` only when the user explicitly says `use my browser`.",

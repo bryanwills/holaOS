@@ -841,6 +841,7 @@ interface RuntimeNotificationListOptionsPayload {
     workspace_id: string;
     issue_number: number;
     session_id: string;
+    parent_issue_id: string | null;
     title: string;
     description: string | null;
     status: IssueStatusPayload;
@@ -863,6 +864,7 @@ interface RuntimeNotificationListOptionsPayload {
 
   interface CreateIssuePayload {
     workspace_id: string;
+    parent_issue_id?: string | null;
     title: string;
     description?: string | null;
     status: IssueStatusPayload;
@@ -879,6 +881,7 @@ interface RuntimeNotificationListOptionsPayload {
 
   interface UpdateIssuePayload {
     workspace_id: string;
+    parent_issue_id?: string | null;
     title?: string | null;
     description?: string | null;
     status?: IssueStatusPayload;

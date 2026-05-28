@@ -681,6 +681,11 @@ function IssueListRow({
           <div className="truncate text-xs font-medium text-foreground">
             {issue.title || "Untitled issue"}
           </div>
+          {issue.parent_issue_id ? (
+            <div className="mt-0.5 text-[10.5px] uppercase tracking-[0.14em] text-foreground/35">
+              Sub-issue of {issue.parent_issue_id}
+            </div>
+          ) : null}
           <div className="mt-0.5 flex items-center gap-1.5 text-[10.5px] text-foreground/45">
             <span>{issue.issue_id}</span>
             <span aria-hidden>•</span>

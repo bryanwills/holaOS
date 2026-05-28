@@ -1012,6 +1012,7 @@ export interface IssueRecord {
   workspaceId: string;
   issueNumber: number;
   sessionId: string;
+  parentIssueId: string | null;
   title: string;
   description: string | null;
   status: IssueStatus;
@@ -1237,6 +1238,7 @@ type TeammateUpdateFields = Partial<{
 
 type IssueUpdateFields = Partial<{
   sessionId: string;
+  parentIssueId: string | null;
   title: string;
   description: string | null;
   status: IssueStatus;
@@ -2732,10 +2734,47 @@ export class RuntimeStateStore {
     });
   }
 
+  private normalizedIssueParentId(params: {
+    workspaceId: string;
+    parentIssueId?: string | null;
+    issueId: string;
+  }): string | null {
+    const parentIssueId = this.normalizedNullableText(params.parentIssueId);
+    if (!parentIssueId) {
+      return null;
+    }
+    if (parentIssueId === params.issueId) {
+      throw new Error("issue cannot be its own parent");
+    }
+    const parentIssue = this.getIssue({
+      workspaceId: params.workspaceId,
+      issueId: parentIssueId,
+    });
+    if (!parentIssue) {
+      throw new Error(`parent issue ${parentIssueId} not found`);
+    }
+    const seen = new Set<string>([params.issueId]);
+    let cursor: IssueRecord | null = parentIssue;
+    while (cursor) {
+      if (seen.has(cursor.issueId)) {
+        throw new Error("issue parent chain cannot contain cycles");
+      }
+      seen.add(cursor.issueId);
+      cursor = cursor.parentIssueId
+        ? this.getIssue({
+            workspaceId: params.workspaceId,
+            issueId: cursor.parentIssueId,
+          })
+        : null;
+    }
+    return parentIssueId;
+  }
+
   createIssue(params: {
     issueId?: string;
     workspaceId: string;
     sessionId?: string;
+    parentIssueId?: string | null;
     title: string;
     description?: string | null;
     status: IssueStatus;
@@ -2800,6 +2839,11 @@ export class RuntimeStateStore {
     if (this.getSession({ workspaceId: params.workspaceId, sessionId })) {
       throw new Error(`session ${sessionId} already exists`);
     }
+    const parentIssueId = this.normalizedIssueParentId({
+      workspaceId: params.workspaceId,
+      parentIssueId: params.parentIssueId,
+      issueId,
+    });
 
     const now = params.updatedAt ?? utcNowIso();
     const createdAt = params.createdAt ?? now;
@@ -2833,6 +2877,7 @@ export class RuntimeStateStore {
             workspace_id,
             issue_number,
             session_id,
+            parent_issue_id,
             title,
             description,
             status,
@@ -2846,13 +2891,14 @@ export class RuntimeStateStore {
             created_at,
             updated_at,
             completed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         issueId,
         params.workspaceId,
         nextIssueNumber,
         session.sessionId,
+        parentIssueId,
         this.requiredNormalizedText(params.title, "title"),
         this.normalizedNullableText(params.description),
         status,
@@ -2905,12 +2951,22 @@ export class RuntimeStateStore {
   listIssues(params: {
     workspaceId: string;
     statuses?: IssueStatus[] | null;
+    parentIssueId?: string | null;
     limit?: number;
     offset?: number;
   }): IssueRecord[] {
     const statuses = Array.from(new Set((params.statuses ?? []).filter((status): status is IssueStatus => !!status)));
     const whereClauses = ["workspace_id = ?"];
     const values: unknown[] = [params.workspaceId];
+    if (params.parentIssueId !== undefined) {
+      const normalizedParentIssueId = this.normalizedNullableText(params.parentIssueId);
+      if (normalizedParentIssueId) {
+        whereClauses.push("parent_issue_id = ?");
+        values.push(normalizedParentIssueId);
+      } else {
+        whereClauses.push("parent_issue_id IS NULL");
+      }
+    }
     if (statuses.length > 0) {
       whereClauses.push(`status IN (${statuses.map(() => "?").join(", ")})`);
       values.push(...statuses);
@@ -3001,9 +3057,18 @@ export class RuntimeStateStore {
         { touchExisting: false },
       );
     }
+    const nextParentIssueId =
+      params.fields.parentIssueId === undefined
+        ? existing.parentIssueId
+        : this.normalizedIssueParentId({
+            workspaceId: params.workspaceId,
+            parentIssueId: params.fields.parentIssueId,
+            issueId: existing.issueId,
+          });
 
     const columnMap: Record<keyof IssueUpdateFields, string> = {
       sessionId: "session_id",
+      parentIssueId: "parent_issue_id",
       title: "title",
       description: "description",
       status: "status",
@@ -3039,6 +3104,10 @@ export class RuntimeStateStore {
       }
       if (typedKey === "status") {
         values.push(nextStatus);
+        continue;
+      }
+      if (typedKey === "parentIssueId") {
+        values.push(nextParentIssueId);
         continue;
       }
       if (typedKey === "priority") {
@@ -13209,6 +13278,7 @@ export class RuntimeStateStore {
           workspace_id TEXT NOT NULL,
           issue_number INTEGER NOT NULL,
           session_id TEXT NOT NULL,
+          parent_issue_id TEXT,
           title TEXT NOT NULL,
           description TEXT,
           status TEXT NOT NULL,
@@ -13577,6 +13647,7 @@ export class RuntimeStateStore {
         );
       `);
     }
+    this.ensureIssuesTableSchema(db);
     this.ensureSubagentRunsTableSchema(db);
     this.ensureSessionRuntimeStateTableSchema(db);
     this.ensureTurnArtifactsSchema(db);
@@ -13866,6 +13937,33 @@ export class RuntimeStateStore {
       }
     });
     migrate();
+  }
+
+  private ensureIssuesTableSchema(db: Database.Database): void {
+    const tableNames = new Set<string>(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(
+        (row) => row.name,
+      ),
+    );
+    if (!tableNames.has("issues")) {
+      return;
+    }
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(issues)").all() as Array<{ name: string }>).map(
+        (row) => row.name,
+      ),
+    );
+    if (!columns.has("parent_issue_id")) {
+      db.exec("ALTER TABLE issues ADD COLUMN parent_issue_id TEXT;");
+    }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_issues_workspace_status_updated
+          ON issues (workspace_id, status, updated_at DESC, issue_number DESC);
+      CREATE INDEX IF NOT EXISTS idx_issues_workspace_assignee_status_updated
+          ON issues (workspace_id, assignee_teammate_id, status, updated_at DESC, issue_number DESC);
+      CREATE INDEX IF NOT EXISTS idx_issues_workspace_parent_updated
+          ON issues (workspace_id, parent_issue_id, updated_at DESC, issue_number DESC);
+    `);
   }
 
   private ensureSubagentRunsTableSchema(db: Database.Database): void {
@@ -16118,6 +16216,7 @@ export class RuntimeStateStore {
       workspaceId: String(row.workspace_id),
       issueNumber: Number(row.issue_number),
       sessionId: String(row.session_id),
+      parentIssueId: row.parent_issue_id == null ? null : String(row.parent_issue_id),
       title: String(row.title),
       description: row.description == null ? null : String(row.description),
       status: this.requiredIssueStatus(row.status == null ? null : String(row.status)),

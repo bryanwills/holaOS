@@ -416,6 +416,7 @@ export interface RuntimeAgentToolsUpdateCronjobParams {
 
 export interface RuntimeAgentToolsDelegateTaskItem {
   teammateId?: string | null;
+  parentTaskId?: string | null;
   title?: string | null;
   goal: string;
   context?: string | null;
@@ -2916,12 +2917,15 @@ function taskPayload(params: {
   issue: IssueRecord;
   activeState?: SyncedSubagentRunState | null;
   latestState?: SyncedSubagentRunState | null;
+  childTaskIds?: string[] | null;
 }): JsonObject {
+  const childTaskIds = params.childTaskIds ?? [];
   return {
     task_id: params.issue.issueId,
     workspace_id: params.issue.workspaceId,
     task_number: params.issue.issueNumber,
     session_id: params.issue.sessionId,
+    parent_task_id: params.issue.parentIssueId,
     title: params.issue.title,
     description: params.issue.description,
     status: params.issue.status,
@@ -2935,6 +2939,8 @@ function taskPayload(params: {
     created_at: params.issue.createdAt,
     updated_at: params.issue.updatedAt,
     completed_at: params.issue.completedAt,
+    child_task_count: childTaskIds.length,
+    child_task_ids: childTaskIds,
     active_run: params.activeState ? subagentRunPayload(params.activeState) : null,
     latest_run: params.latestState ? subagentRunPayload(params.latestState) : null,
   };
@@ -3907,6 +3913,7 @@ export class RuntimeAgentToolsService {
     const requestedTasks = params.tasks
       .map((task) => ({
         teammateId: normalizedString(task.teammateId),
+        parentTaskId: normalizedString(task.parentTaskId),
         title: normalizedString(task.title),
         goal: normalizedString(task.goal),
         context: normalizedString(task.context),
@@ -3975,6 +3982,7 @@ export class RuntimeAgentToolsService {
       );
       const issue = this.store.createIssue({
         workspaceId: params.workspaceId,
+        parentIssueId: task.parentTaskId || null,
         title,
         description: delegatedIssueDescription(task),
         status: "todo",
@@ -4540,6 +4548,13 @@ export class RuntimeAgentToolsService {
       workspaceId: params.workspaceId,
       taskId: params.taskId,
     });
+    const childTaskIds = this.store
+      .listIssues({
+        workspaceId: params.workspaceId,
+        parentIssueId: issue.issueId,
+        limit: 1000,
+      })
+      .map((childIssue) => childIssue.issueId);
     const states = this.taskRunStatesForIssue(issue);
     this.assertSameTurnDelegationPollingAllowed({
       workspaceId: params.workspaceId,
@@ -4550,6 +4565,7 @@ export class RuntimeAgentToolsService {
     });
     return taskPayload({
       issue,
+      childTaskIds,
       activeState: states.activeState,
       latestState: states.latestState,
     });
@@ -4570,10 +4586,18 @@ export class RuntimeAgentToolsService {
     const payloads: JsonObject[] = [];
     const pollingStates: SyncedSubagentRunState[] = [];
     for (const issue of issues) {
+      const childTaskIds = this.store
+        .listIssues({
+          workspaceId: params.workspaceId,
+          parentIssueId: issue.issueId,
+          limit: 1000,
+        })
+        .map((childIssue) => childIssue.issueId);
       const states = this.taskRunStatesForIssue(issue);
       payloads.push(
         taskPayload({
           issue,
+          childTaskIds,
           activeState: states.activeState,
           latestState: states.latestState,
         }),

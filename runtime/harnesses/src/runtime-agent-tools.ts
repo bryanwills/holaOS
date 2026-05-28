@@ -76,7 +76,7 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
   {
     id: "delegate_task",
     description:
-      "Delegate one or more background tasks to hidden subagents for the current workspace session while keeping the main conversation free. Each delegated task must include an explicit teammate_id chosen by the manager. Follow-up task tools use the returned task_id, not the subagent_id.",
+      "Delegate one or more background tasks to hidden subagents for the current workspace session while keeping the main conversation free. Each delegated task must include an explicit teammate_id chosen by the manager and may optionally include a parent task id when creating a sub-task. Follow-up task tools use the returned task_id, not the subagent_id.",
     policy: "coordinate"
   },
   {

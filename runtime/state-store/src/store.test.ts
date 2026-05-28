@@ -4013,7 +4013,17 @@ test("issues round trip creates persistent sessions with a workspace-derived pre
     title: "Instrument homepage metrics",
     status: "backlog",
   });
+  const child = store.createIssue({
+    workspaceId: "workspace-1",
+    parentIssueId: first.issueId,
+    title: "Implement KPI strip",
+    status: "todo",
+  });
   const listed = store.listIssues({ workspaceId: "workspace-1" });
+  const children = store.listIssues({
+    workspaceId: "workspace-1",
+    parentIssueId: first.issueId,
+  });
   const fetchedBySession = store.getIssueBySessionId({
     workspaceId: "workspace-1",
     sessionId: first.sessionId,
@@ -4039,12 +4049,25 @@ test("issues round trip creates persistent sessions with a workspace-derived pre
   assert.equal(first.attachments.length, 1);
   assert.equal(second.issueId, "ISS-2");
   assert.equal(second.issueNumber, 2);
-  assert.equal(listed.length, 2);
+  assert.equal(child.parentIssueId, first.issueId);
+  assert.equal(listed.length, 3);
+  assert.deepEqual(children.map((issue) => issue.issueId), [child.issueId]);
   assert.equal(fetchedBySession?.issueId, first.issueId);
   assert.equal(updated?.status, "done");
   assert.equal(updated?.priority, "critical");
   assert.ok(updated?.completedAt);
   assert.equal(updatedSession?.title, "Implement workspace dashboard");
+  assert.throws(
+    () =>
+      store.updateIssue({
+        workspaceId: "workspace-1",
+        issueId: first.issueId,
+        fields: {
+          parentIssueId: child.issueId,
+        },
+      }),
+    /cycles/,
+  );
   store.close();
 });
 
