@@ -5,6 +5,7 @@ export interface HarnessWorkspaceBoundaryPolicy {
   workspaceDir: string;
   workspaceRealDir: string;
   overrideRequested: boolean;
+  allowedExternalDirs: string[];
 }
 
 const WORKSPACE_PATH_KEY_PATTERN =
@@ -43,14 +44,38 @@ function normalizedWorkspaceDir(workspaceDir: string): { resolved: string; real:
   }
 }
 
-function isPathInsideWorkspaceRoot(workspaceRealDir: string, candidatePath: string): boolean {
-  const normalizedRoot = path.resolve(workspaceRealDir);
+function isPathInsideRoot(rootDir: string, candidatePath: string): boolean {
+  const normalizedRoot = path.resolve(rootDir);
   const normalizedCandidate = path.resolve(candidatePath);
   if (normalizedCandidate === normalizedRoot) {
     return true;
   }
   const relative = path.relative(normalizedRoot, normalizedCandidate);
   return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function normalizedAllowedExternalDirs(allowedExternalDirs: readonly string[]): string[] {
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  for (const rawDir of allowedExternalDirs) {
+    const trimmed = rawDir.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const resolved = path.resolve(trimmed);
+    let canonical = resolved;
+    try {
+      canonical = fs.realpathSync(resolved);
+    } catch {
+      canonical = resolved;
+    }
+    if (seen.has(canonical)) {
+      continue;
+    }
+    seen.add(canonical);
+    ordered.push(canonical);
+  }
+  return ordered;
 }
 
 function commandTokens(command: string): string[] {
@@ -256,17 +281,24 @@ function hashlinePathsFromInput(input: string): string[] {
 export function createHarnessWorkspaceBoundaryPolicy(
   workspaceDir: string,
   overrideRequested: boolean,
+  options: { allowedExternalDirs?: readonly string[] } = {},
 ): HarnessWorkspaceBoundaryPolicy {
   const normalized = normalizedWorkspaceDir(workspaceDir);
   return {
     workspaceDir: normalized.resolved,
     workspaceRealDir: normalized.real,
     overrideRequested,
+    allowedExternalDirs: normalizedAllowedExternalDirs(
+      options.allowedExternalDirs ?? [],
+    ),
   };
 }
 
 export function resolvePathWithinHarnessWorkspace(
-  policy: Pick<HarnessWorkspaceBoundaryPolicy, "workspaceDir" | "workspaceRealDir">,
+  policy: Pick<
+    HarnessWorkspaceBoundaryPolicy,
+    "workspaceDir" | "workspaceRealDir" | "allowedExternalDirs"
+  >,
   candidate: string,
 ): string | null {
   const raw = candidate.trim();
@@ -280,7 +312,15 @@ export function resolvePathWithinHarnessWorkspace(
   } catch {
     canonical = resolved;
   }
-  return isPathInsideWorkspaceRoot(policy.workspaceRealDir, canonical) ? canonical : null;
+  if (isPathInsideRoot(policy.workspaceRealDir, canonical)) {
+    return canonical;
+  }
+  for (const allowedDir of policy.allowedExternalDirs) {
+    if (isPathInsideRoot(allowedDir, canonical)) {
+      return canonical;
+    }
+  }
+  return null;
 }
 
 export function workspaceBoundaryOverrideRequested(instruction: string): boolean {

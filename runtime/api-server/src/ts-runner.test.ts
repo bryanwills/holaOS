@@ -5038,6 +5038,149 @@ test("runTsRunnerCli includes teammate-local skills for assigned subagent runs",
   );
 });
 
+test("runTsRunnerCli resolves HR-owned embedded skills from the assigned issue even when context teammate_id is stale", async () => {
+  const sandboxRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-hr-issue-skills-"),
+  );
+  const embeddedSkillsRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "hb-ts-runner-hr-embedded-"),
+  );
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  process.env.HOLABOSS_EMBEDDED_SKILLS_DIR = embeddedSkillsRoot;
+  for (const skillId of [
+    "create-teammate",
+    "app-builder-sdk",
+    "build-dashboard",
+    "skill-creator",
+  ]) {
+    const skillDir = path.join(embeddedSkillsRoot, skillId);
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, "SKILL.md"),
+      `---\nname: ${skillId}\ndescription: ${skillId}\n---\n# ${skillId}\n`,
+      "utf8",
+    );
+  }
+
+  const workspaceRoot = path.join(sandboxRoot, "workspace");
+  const store = new RuntimeStateStore({
+    workspaceRoot,
+    sandboxRoot,
+    dbPath: path.join(sandboxRoot, "state", "host-state.db"),
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const hr = store.ensureHrTeammate(workspace.id);
+  store.ensureAppBuilderTeammate(workspace.id);
+  const issue = store.createIssue({
+    workspaceId: workspace.id,
+    sessionId: "session-issue-hr",
+    title: "Create teammate",
+    description: "Bootstrap a new teammate.",
+    status: "todo",
+    assigneeTeammateId: hr.teammateId,
+    createdBy: "workspace_user",
+  });
+
+  let capturedProjectRequest: Record<string, unknown> | null = null;
+  let capturedHarnessRequest: Record<string, unknown> | null = null;
+
+  try {
+    const exitCode = await runTsRunnerCli(
+      [
+        "--request-base64",
+        encodeRequest({
+          ...baseRequest(),
+          session_id: issue.sessionId,
+          session_kind: "subagent",
+          context: {
+            issue_id: issue.issueId,
+            teammate_id: "app_builder",
+            _sandbox_runtime_exec_v1: {
+              harness: "pi",
+            },
+          },
+        }),
+      ],
+      {
+        deps: {
+          ...testDeps(),
+          projectAgentRuntimeConfig: (request) => {
+            capturedProjectRequest = request as unknown as Record<string, unknown>;
+            return {
+              provider_id: "openai",
+              model_id: "gpt-5.4",
+              mode: "code",
+              system_prompt: "You are concise.",
+              model_client: {
+                model_proxy_provider: "openai_compatible",
+                api_key: "token",
+                base_url: "http://127.0.0.1:4000/openai/v1",
+                default_headers: { "X-Test": "1" },
+              },
+              tools: { read: true, skill: true },
+              workspace_tool_ids: [],
+              workspace_skill_ids: [
+                "create-teammate",
+                "app-builder-sdk",
+                "build-dashboard",
+                "skill-creator",
+              ],
+              output_schema_member_id: null,
+              output_format: null,
+              workspace_config_checksum: "checksum-1",
+            };
+          },
+          runHarnessHost: async ({ requestPayload }) => {
+            capturedHarnessRequest = requestPayload;
+            return {
+              exitCode: 0,
+              stderr: "",
+              sawEvent: false,
+              terminalEmitted: false,
+              lastSequence: 0,
+            };
+          },
+        },
+        io: {
+          stdout: {
+            write() {
+              return true;
+            },
+          } as unknown as NodeJS.WritableStream,
+          stderr: {
+            write() {
+              return true;
+            },
+          } as unknown as NodeJS.WritableStream,
+        },
+      },
+    );
+
+    assert.equal(exitCode, 0);
+    assert.ok(capturedProjectRequest);
+    assert.deepEqual(
+      (capturedProjectRequest as { workspace_skill_ids: string[] }).workspace_skill_ids,
+      ["create-teammate", "skill-creator"],
+    );
+    assert.ok(capturedHarnessRequest);
+    assert.deepEqual(
+      (
+        capturedHarnessRequest as {
+          workspace_skill_dirs: string[];
+        }
+      ).workspace_skill_dirs.map((skillDir) => path.basename(skillDir)).sort(),
+      ["create-teammate", "skill-creator"],
+    );
+  } finally {
+    store.close();
+  }
+});
+
 test("runTsRunnerCli includes App Builder embedded skills only for the App Builder subagent", async () => {
   const sandboxRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "hb-ts-runner-app-builder-skills-"),

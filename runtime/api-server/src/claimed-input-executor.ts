@@ -1477,7 +1477,7 @@ function instructionWithIssueAssignmentContext(params: {
     return params.baseInstruction;
   }
   const effectiveTeammateId =
-    teammateId || (issue.assigneeTeammateId ?? "").trim();
+    (issue.assigneeTeammateId ?? "").trim() || teammateId;
   if (!effectiveTeammateId) {
     return params.baseInstruction;
   }

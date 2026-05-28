@@ -37,3 +37,25 @@ test("workspace boundary allows in-workspace hashline edit section headers", () 
 
   assert.equal(violation, null);
 });
+
+test("workspace boundary allows approved external skill-local paths", () => {
+  const workspaceDir = path.join(os.tmpdir(), "workspace-boundary-fixture");
+  const externalSkillDir = path.join(
+    os.tmpdir(),
+    "workspace-boundary-embedded-skill",
+    "create-teammate",
+  );
+  const policy = createHarnessWorkspaceBoundaryPolicy(workspaceDir, false, {
+    allowedExternalDirs: [externalSkillDir],
+  });
+
+  const violation = workspaceBoundaryViolationForToolCall({
+    toolName: "read",
+    toolParams: {
+      path: path.join(externalSkillDir, "SKILL.md"),
+    },
+    policy,
+  });
+
+  assert.equal(violation, null);
+});

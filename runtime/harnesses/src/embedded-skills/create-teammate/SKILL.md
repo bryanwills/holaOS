@@ -1,3 +1,4 @@
+---
 name: create-teammate
 description: Provision a production-ready teammate only after its stable responsibilities, prerequisites, and reusable operating guidance are understood.
 ---

@@ -150,6 +150,24 @@ test("projectSessionVisibleWorkspaceSkills scopes owner-bound embedded skills to
   );
 });
 
+test("resolveWorkspaceSkills exposes the real embedded HR skill to the HR teammate", () => {
+  delete process.env.HOLABOSS_EMBEDDED_SKILLS_DIR;
+  const runtimeRoot = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+  );
+  process.env.HOLABOSS_RUNTIME_ROOT = runtimeRoot;
+  const workspaceDir = makeTempDir("hb-workspace-real-embedded-hr-skill-");
+
+  const projected = projectSessionVisibleWorkspaceSkills({
+    workspaceSkills: resolveWorkspaceSkills(workspaceDir, { teammateId: "hr" }),
+    teammateId: "hr",
+  }).map((skill) => skill.skill_id);
+
+  assert.ok(projected.includes("create-teammate"));
+});
+
 test("resolveWorkspaceSkills keeps embedded defaults authoritative when workspace skills reuse the same id", () => {
   const embeddedRoot = makeTempDir("hb-embedded-skills-");
   process.env.HOLABOSS_EMBEDDED_SKILLS_DIR = embeddedRoot;

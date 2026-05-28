@@ -1428,11 +1428,57 @@ function explicitHolabossUserId(request: TsRunnerRequest): string | undefined {
   );
 }
 
-function teammateSkillContextId(request: TsRunnerRequest): string | undefined {
-  if (normalizedSessionKindValue(request.session_kind) !== "subagent") {
-    return undefined;
+function teammateSkillContextId(
+  request: TsRunnerRequest,
+  options: { logger?: LoggerLike } = {},
+): string | undefined {
+  const workspaceRoot = managedWorkspaceRoot();
+  const sandboxRoot = path.dirname(workspaceRoot);
+  const dbPath = defaultHostStateDbPathForSandbox(sandboxRoot);
+  if (!fs.existsSync(dbPath)) {
+    return firstNonEmptyString(request.context.teammate_id) ?? undefined;
   }
-  return firstNonEmptyString(request.context.teammate_id) ?? undefined;
+
+  const store = new RuntimeStateStore({
+    workspaceRoot,
+    sandboxRoot,
+    dbPath,
+  });
+  try {
+    const issueId = firstNonEmptyString(request.context.issue_id) ?? null;
+    const issue =
+      (issueId
+        ? store.getIssue({
+            workspaceId: request.workspace_id,
+            issueId,
+          })
+        : null) ??
+      store.getIssueBySessionId({
+        workspaceId: request.workspace_id,
+        sessionId: request.session_id,
+      });
+    const subagentRun =
+      !issue
+        ? store.getSubagentRunByChildSession({
+            workspaceId: request.workspace_id,
+            childSessionId: request.session_id,
+          })
+        : null;
+    return (
+      firstNonEmptyString(
+        issue?.assigneeTeammateId,
+        subagentRun?.teammateId,
+        request.context.teammate_id,
+      ) ?? undefined
+    );
+  } catch (error) {
+    options.logger?.warn?.(
+      `Failed to resolve teammate skill context workspace_id=${request.workspace_id} session_id=${request.session_id}: ${errorMessage(error)}`,
+    );
+    return firstNonEmptyString(request.context.teammate_id) ?? undefined;
+  } finally {
+    store.close();
+  }
 }
 
 function bootstrapStartedPayload(params: {
@@ -2371,7 +2417,7 @@ export async function executeTsRunnerRequest(
       bootstrapStageTimingsMs,
       "resolve_workspace_skills",
       () => {
-        const teammateId = teammateSkillContextId(request) ?? null;
+        const teammateId = teammateSkillContextId(request, { logger }) ?? null;
         return projectSessionVisibleWorkspaceSkills({
           workspaceSkills: resolveWorkspaceSkills(bootstrap.workspaceDir, {
             teammateId,

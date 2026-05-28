@@ -1465,7 +1465,7 @@ test("resolvePiSkillDirs returns existing source skill directories in order", ()
   }
 });
 
-test("resolvePiSkillDirs prepends embedded skill directories when the request omits them", () => {
+test("resolvePiSkillDirs does not auto-prepend embedded skill directories when the request omits them", () => {
   const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-skills-workspace-"));
   const embeddedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-embedded-skills-"));
   const skillAlphaDir = path.join(workspaceDir, "skills", "alpha");
@@ -1493,7 +1493,7 @@ test("resolvePiSkillDirs prepends embedded skill directories when the request om
     process.env.HOLABOSS_EMBEDDED_SKILLS_DIR = embeddedRoot;
     assert.deepEqual(
       resolvePiSkillDirs(request).map((skillDir) => path.basename(skillDir)),
-      ["skill-creator", "skill-installer", "alpha"],
+      ["alpha"],
     );
   } finally {
     if (previousEmbeddedSkillsDir === undefined) {
@@ -1547,14 +1547,15 @@ test("resolvePiSkillDirs discovers workspace skill directories created after the
   }
 });
 
-test("buildPiPromptPayload recovers quoted embedded skills when request skill dirs are empty", async () => {
+test("buildPiPromptPayload resolves quoted embedded skills only when the request explicitly grants the skill dir", async () => {
   const embeddedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-embedded-quoted-skills-"));
   const previousEmbeddedSkillsDir = process.env.HOLABOSS_EMBEDDED_SKILLS_DIR;
+  const skillCreatorDir = path.join(embeddedRoot, "skill-creator");
 
   try {
-    fs.mkdirSync(path.join(embeddedRoot, "skill-creator"), { recursive: true });
+    fs.mkdirSync(skillCreatorDir, { recursive: true });
     fs.writeFileSync(
-      path.join(embeddedRoot, "skill-creator", "SKILL.md"),
+      path.join(skillCreatorDir, "SKILL.md"),
       "---\nname: skill-creator\ndescription: Skill creator\n---\n# Skill Creator\nUse the canonical skill format.\n",
       "utf8",
     );
@@ -1563,7 +1564,7 @@ test("buildPiPromptPayload recovers quoted embedded skills when request skill di
     const prompt = await buildPiPromptPayload({
       ...baseRequest(),
       instruction: ["/skill-creator", "", "Use it to define the new skill."].join("\n"),
-      workspace_skill_dirs: [],
+      workspace_skill_dirs: [skillCreatorDir],
     });
 
     assert.match(prompt.text, /Quoted workspace skills:/);
@@ -1691,6 +1692,7 @@ test("workspaceBoundaryViolationForToolCall blocks outside-workspace paths and a
     workspaceDir,
     workspaceRealDir: fs.realpathSync(workspaceDir),
     overrideRequested: false,
+    allowedExternalDirs: [],
   };
   const overridePolicy = { ...policy, overrideRequested: true };
 

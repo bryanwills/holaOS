@@ -283,22 +283,10 @@ function teammateSummary(teammate: TeammateRecordPayload): string {
 
 function teammateCreationRequestPrompt(name: string, role: string): string {
   return [
-    "I want to create a new teammate for this workspace.",
+    "Please ask the built-in HR teammate to create this teammate.",
     "",
-    `Requested name: ${name}`,
-    `Requested role: ${role}`,
-    "",
-    "Please route this through the built-in HR teammate if it is available.",
-    "",
-    "Please let HR handle the teammate bootstrap workflow before creating anything:",
-    "- inspect the current teammate roster first",
-    "- decide whether this is a durable, distinct remit or whether an existing teammate already covers it",
-    "- if the remit or boundaries are still unclear, ask only the concrete follow-up questions needed before creating the teammate",
-    "- identify the integrations, connected apps, references, and recurring workflows this role needs",
-    "- if a required integration is missing, ask me to connect it before finalizing the teammate",
-    "- if the remit is already clear enough, create the teammate with durable instructions, capability tags, and teammate-local skills when the role needs repeatable workflow guidance",
-    "",
-    "Do not create a teammate from the role label alone if the stable remit is still vague, and do not stop at a thin profile if the role needs a production-ready playbook.",
+    `Teammate name: ${name}`,
+    `Teammate role: ${role}`,
   ].join("\n");
 }
 
