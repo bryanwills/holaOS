@@ -6,6 +6,7 @@ import { useWorkspaceBrowser } from "@/components/panes/useWorkspaceBrowser";
 import { PublishScreen } from "@/components/publish/PublishScreen";
 import { WorkspaceOnboardingSurface } from "@/features/workspace-onboarding/WorkspaceOnboardingSurface";
 import { DesktopBillingProvider } from "@/lib/billing/useDesktopBilling";
+import { StoplightProvider } from "@/lib/StoplightContext";
 import { cn } from "@/lib/utils";
 import {
   useWorkspaceDesktop,
@@ -41,7 +42,9 @@ export function NewAppShell() {
     <WorkspaceSelectionProvider>
       <WorkspaceDesktopProvider>
         <DesktopBillingProvider>
-          <NewAppShellContent />
+          <StoplightProvider value={true}>
+            <NewAppShellContent />
+          </StoplightProvider>
         </DesktopBillingProvider>
       </WorkspaceDesktopProvider>
     </WorkspaceSelectionProvider>
@@ -67,6 +70,7 @@ function NewAppShellContent() {
   const totalTabs = browserState.tabs.length + internalTabs.length;
   const prevTotalTabsRef = useRef(totalTabs);
   const seededMainViewWorkspaceIdRef = useRef<string | null>(null);
+  const prevSelectedWorkspaceIdRef = useRef<string | null>(selectedWorkspaceId);
   const desktopPlatform = window.electronAPI?.platform ?? null;
   const isWindowsTitleBar = desktopPlatform === "win32";
 
@@ -92,13 +96,20 @@ function NewAppShellContent() {
 
   // Auto-exit focus when a new tab appears (⌘T, chat link, sidebar app).
   // Opening a tab is an explicit "show me this" signal; staying hidden
-  // would be confusing.
+  // would be confusing. Re-baseline on workspace switch — a cross-workspace
+  // tab-count comparison would falsely trip auto-exit on any newly-created
+  // chat-mode workspace whose tab list differs from the previous one.
   useEffect(() => {
+    if (prevSelectedWorkspaceIdRef.current !== selectedWorkspaceId) {
+      prevSelectedWorkspaceIdRef.current = selectedWorkspaceId;
+      prevTotalTabsRef.current = totalTabs;
+      return;
+    }
     if (focusMode && totalTabs > prevTotalTabsRef.current) {
       setFocusMode(false);
     }
     prevTotalTabsRef.current = totalTabs;
-  }, [focusMode, totalTabs, setFocusMode]);
+  }, [focusMode, totalTabs, selectedWorkspaceId, setFocusMode]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
