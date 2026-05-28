@@ -26,6 +26,7 @@ import {
 } from "@/components/panes/ChatPane/ArtifactBrowserModal";
 import type { ArtifactBrowserFilter } from "@/components/panes/ChatPane/types";
 import { FileTypeIcon } from "@/lib/fileIcon";
+import { useStoplightCompensation } from "@/lib/StoplightContext";
 import { useIntegrationBinding } from "@/lib/useIntegrationBinding";
 import { cn } from "@/lib/utils";
 import type { WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
@@ -1934,8 +1935,8 @@ const MAC_WORKSPACE_POPOVER_LEFT_INSET = 72;
 
 function WorkspaceSwitcher() {
   const sidebarWidth = useAtomValue(sidebarWidthAtom);
-  const isMacDesktop = window.electronAPI?.platform === "darwin";
-  const workspacePopoverAlignOffset = isMacDesktop
+  const reserveStoplightGutter = useStoplightCompensation();
+  const workspacePopoverAlignOffset = reserveStoplightGutter
     ? -MAC_WORKSPACE_POPOVER_LEFT_INSET
     : 0;
   const { selectedWorkspaceId, setSelectedWorkspaceId } =
@@ -1978,7 +1979,7 @@ function WorkspaceSwitcher() {
     <div
       className={cn(
         "window-drag flex h-10 shrink-0 items-center pr-2",
-        isMacDesktop ? "pl-20" : "pl-2",
+        reserveStoplightGutter ? "pl-20" : "pl-2",
       )}
     >
       <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>

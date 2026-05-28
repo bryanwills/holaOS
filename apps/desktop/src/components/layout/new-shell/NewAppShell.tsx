@@ -6,6 +6,7 @@ import { useWorkspaceBrowser } from "@/components/panes/useWorkspaceBrowser";
 import { PublishScreen } from "@/components/publish/PublishScreen";
 import { WorkspaceOnboardingSurface } from "@/features/workspace-onboarding/WorkspaceOnboardingSurface";
 import { DesktopBillingProvider } from "@/lib/billing/useDesktopBilling";
+import { StoplightProvider } from "@/lib/StoplightContext";
 import { cn } from "@/lib/utils";
 import {
   useWorkspaceDesktop,
@@ -41,7 +42,9 @@ export function NewAppShell() {
     <WorkspaceSelectionProvider>
       <WorkspaceDesktopProvider>
         <DesktopBillingProvider>
-          <NewAppShellContent />
+          <StoplightProvider value={true}>
+            <NewAppShellContent />
+          </StoplightProvider>
         </DesktopBillingProvider>
       </WorkspaceDesktopProvider>
     </WorkspaceSelectionProvider>
