@@ -85,7 +85,7 @@ A high level overview over core dimensions that impacts agent usage:
 | Agent Position | ✅General Agent | ✅General Agent | ✅Personal Agent | 🔥Working Agent |
 | Simple to start | ⚠️ Terminal-first | ⚠️ Terminal-first | ⚠️ Basic UI | ✅Production Grade UI |
 | Memory | ⚠️ Plugin-reliant | ⚠️ Self-learning | ✅Memory Tree + Obsidian vault, optional agentmemory backend | 🔥Business level Memory Mechanism: Memory Tree + Semantic Embedding + RAG |
-| Integrations | 🚫BYOK | 🚫BYOK | ✅118+ via OAuth | 🔥200 + via OAuth + Stable for Working |
+| Integrations | 🚫BYOK | 🚫BYOK | ✅118+ via OAuth | 🔥1000 + via OAuth + Stable for Working |
 | Cost | 🚫BYO Model | 🚫BYO Model | ✅Token Juicy | 🔥Per Native Tool token optimizer |
 | API sprawl | 🚫BYOK | ⚠️ Multi-vendor | ✅one-account, single account per integration | ✅one-account + multi account  per integrations |
 | Auto-fetch | 🚫None | 🚫None | ✅20-min sync into memory | ✅30-min sync into memory |
