@@ -958,6 +958,9 @@ test("composeAgentPrompt gives workspace onboarding its own controller prompt", 
   assert.match(prompt.systemPrompt, /remaining generic workspace execution to General/);
   assert.match(prompt.systemPrompt, /Optimize for time-to-working-solution/);
   assert.match(prompt.systemPrompt, /thin, high-leverage first slice/);
+  assert.match(prompt.systemPrompt, /Dig only until the plan is implementation-ready/);
+  assert.match(prompt.systemPrompt, /should not need to invent major design decisions/);
+  assert.match(prompt.systemPrompt, /If the user clearly says the plan is ready, follow that signal/);
   assert.match(prompt.systemPrompt, /Keep the onboarding thread conversational and uncluttered/);
   assert.match(prompt.systemPrompt, /holaboss_create_alignment_question/);
   assert.match(prompt.systemPrompt, /closed choices/);
@@ -969,6 +972,8 @@ test("composeAgentPrompt gives workspace onboarding its own controller prompt", 
   assert.match(prompt.systemPrompt, /focused first pass instead of a full product spec/);
   assert.match(prompt.systemPrompt, /Think like a forward deployment engineer/);
   assert.match(prompt.systemPrompt, /implementation-ready plan instead of a generic brainstorm/);
+  assert.match(prompt.systemPrompt, /Keep digging only until implementation is mostly execution/);
+  assert.match(prompt.systemPrompt, /If the user clearly expresses that the plan is ready/);
   assert.match(prompt.systemPrompt, /source of truth/);
   assert.match(prompt.systemPrompt, /route teammate creation and teammate-local skills to HR/);
   assert.match(prompt.systemPrompt, /route app creation, migration, and polish work to App Builder/);
