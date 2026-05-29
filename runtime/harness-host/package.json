@@ -27,6 +27,7 @@
     "@mariozechner/pi-ai": "0.66.0",
     "@mariozechner/pi-coding-agent": "0.66.0",
     "@napi-rs/canvas": "^0.1.100",
+    "@oh-my-pi/pi-natives": "15.5.10",
     "@sentry/node": "^10.48.0",
     "@sinclair/typebox": "^0.34.41",
     "jszip": "^3.10.1",

@@ -103,16 +103,16 @@ const RECALLED_MEMORY_PREFETCH_WAIT_MS = 150;
 const WORKSPACE_ONBOARDING_IMPLEMENTING_STATE = "implementing";
 const MAIN_SESSION_DEFAULT_TOOLS = [
   "read",
-  "ripgrep",
-  "glob",
+  "search",
+  "find",
   "list",
   "question",
   "skill",
 ];
 const ONBOARDING_DEFAULT_TOOLS = [
   "read",
-  "ripgrep",
-  "glob",
+  "search",
+  "find",
   "list",
   "question",
   "skill",
@@ -121,8 +121,8 @@ const SUBAGENT_DEFAULT_TOOLS = [
   "read",
   "edit",
   "bash",
-  "ripgrep",
-  "glob",
+  "search",
+  "find",
   "list",
   "question",
   "todowrite",

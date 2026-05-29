@@ -518,6 +518,19 @@ async function generateTurnPrefixSummary(messages, model, reserveTokens, apiKey,
   },
 ]);
 
+patchFile("node_modules/@oh-my-pi/pi-natives/native/loader-state.js", [
+  {
+    verify: 'import { fileURLToPath } from "node:url";',
+    match: 'import * as zlib from "node:zlib";\n',
+    replace: 'import * as zlib from "node:zlib";\nimport { fileURLToPath } from "node:url";\n',
+  },
+  {
+    verify: "const nativeDir = path.join(fileURLToPath(new URL('.', import.meta.url)), '..', 'native');",
+    match: 'const nativeDir = path.join(import.meta.dir, "..", "native");',
+    replace: "const nativeDir = path.join(fileURLToPath(new URL('.', import.meta.url)), '..', 'native');",
+  },
+]);
+
 patchFile("node_modules/@mariozechner/pi-coding-agent/dist/core/compaction/compaction.d.ts", [
   {
     verify: "previousSummary?: string, sessionId?: string",
