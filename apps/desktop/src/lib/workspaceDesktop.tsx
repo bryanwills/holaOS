@@ -94,8 +94,31 @@ export class IntegrationConnectCancelled extends Error {
   }
 }
 
+/**
+ * Thrown when the OAuth poll loop infers the user closed the authorization
+ * window before completing. Distinct from the generic timeout error so the
+ * UI can swap "we're still waiting" for an actionable "click to reconnect."
+ *
+ * Heuristic that produces this: the desktop window regained focus, then
+ * stayed focused for several seconds while the connected_account status
+ * stayed in INITIATED. Composio doesn't emit any webhook for stale
+ * INITIATED connections (verified empirically — `connected_account.expired`
+ * is only fired for ACTIVE tokens that expire), so polling is the only
+ * signal available and this is its best inferential exit.
+ */
+export class IntegrationConnectAbandoned extends Error {
+  constructor() {
+    super("Integration connect abandoned — OAuth window appears closed");
+    this.name = "IntegrationConnectAbandoned";
+  }
+}
+
 export const COMPOSIO_POLL_INTERVAL_MS = 3000;
-export const COMPOSIO_POLL_MAX_TICKS = 100;
+// 30 ticks × 3s = 90s hard cap. Was 100 (5min); OAuth completes in
+// 5-30s in practice, and the abandoned-detection heuristic below now
+// gives sub-20s feedback for the common "user closed the tab" case,
+// so a long absolute timeout no longer earns its keep.
+export const COMPOSIO_POLL_MAX_TICKS = 30;
 export const COMPOSIO_POLL_TIMEOUT_MS =
   COMPOSIO_POLL_INTERVAL_MS * COMPOSIO_POLL_MAX_TICKS;
 
@@ -104,6 +127,19 @@ export const COMPOSIO_POLL_TIMEOUT_MS =
 // completions, then back off to the steady 3s baseline. Total tick
 // count still respects COMPOSIO_POLL_MAX_TICKS.
 const COMPOSIO_POLL_INTERVAL_PROGRESSION_MS = [800, 1200, 1800, 2400] as const;
+
+// Abandoned-OAuth heuristic thresholds. Tilt toward false negatives
+// (slow to abandon) over false positives (kill a legit slow OAuth) —
+// the recovery cost is asymmetric: a missed abandon costs 90s of wait;
+// a false-positive abandon costs the user a full OAuth redo.
+//
+//   * MIN_ELAPSED: status must have stayed INITIATED for 15s overall.
+//     Fast OAuth (8-12s) wouldn't trip even on instant focus return.
+//   * FOCUS_GRACE: once focus returns, allow 12s for Composio to flip
+//     INITIATED → ACTIVE. Their typical flip latency is 1-5s; 12s is
+//     ~3x safety margin.
+const OAUTH_ABANDON_MIN_ELAPSED_MS = 15_000;
+const OAUTH_ABANDON_FOCUS_GRACE_MS = 12_000;
 function composioPollIntervalForTick(tick: number): number {
   return (
     COMPOSIO_POLL_INTERVAL_PROGRESSION_MS[tick] ?? COMPOSIO_POLL_INTERVAL_MS
@@ -1320,6 +1356,10 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       Array.from(inFlightConnectsRef.current.values()),
     );
 
+    // Hoisted so the finally block can unregister even if the try body
+    // throws before the listener was installed.
+    let onFocusBack: (() => void) | null = null;
+
     try {
     // Parallelize the two independent pre-OAuth round-trips. Before this
     // was serial — getConfig → snapshot → composioConnect — adding ~300-800ms
@@ -1345,6 +1385,21 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     throwIfAborted();
 
     await window.electronAPI.ui.openExternalUrl(link.redirect_url);
+
+    // Abandoned-OAuth detection: Composio doesn't emit any webhook for
+    // INITIATED connections that never complete (verified — `expired`
+    // only fires for ACTIVE tokens), so the only signal that the user
+    // closed the browser is the desktop window regaining focus while
+    // status is still INITIATED. Track the first focus-back event for
+    // the lifetime of this connect; we'll consult it inside the loop.
+    const oauthStartedAt = Date.now();
+    let firstFocusBackAt: number | null = null;
+    onFocusBack = () => {
+      if (firstFocusBackAt === null) {
+        firstFocusBackAt = Date.now();
+      }
+    };
+    window.addEventListener("focus", onFocusBack);
 
     // Once we've found the new connection id, skip the full list call on
     // subsequent ticks — we only need to poll its status. Halves per-tick
@@ -1439,7 +1494,23 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
             `Authorization for ${provider} ${status.toLowerCase()}. Please try again.`,
           );
         }
-        // INITIATED / INITIATING / anything else — keep polling.
+        // INITIATED / INITIATING — apply the abandoned heuristic:
+        //   * window has regained focus at least once (user came back)
+        //   * focus has been on us for OAUTH_ABANDON_FOCUS_GRACE_MS
+        //     (8s — gives the user time to glance back at chat and
+        //     return to the browser before we give up)
+        //   * total elapsed is OAUTH_ABANDON_MIN_ELAPSED_MS (12s — guards
+        //     against firing during fast OAuths that complete during the
+        //     window's first focus-back)
+        // All three together is a high-confidence signal the user closed
+        // the OAuth tab without completing.
+        if (
+          firstFocusBackAt !== null &&
+          Date.now() - firstFocusBackAt > OAUTH_ABANDON_FOCUS_GRACE_MS &&
+          Date.now() - oauthStartedAt > OAUTH_ABANDON_MIN_ELAPSED_MS
+        ) {
+          throw new IntegrationConnectAbandoned();
+        }
       }
     }
     throw new Error(
@@ -1448,6 +1519,9 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       }s. Please try again.`,
     );
     } finally {
+      if (onFocusBack) {
+        window.removeEventListener("focus", onFocusBack);
+      }
       // Always pop — success, throw, and cancel paths all land here so the
       // chat composer can't get stuck in a "Connecting…" disabled state
       // after the connect resolves.

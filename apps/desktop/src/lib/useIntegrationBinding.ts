@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { subscribeComposioConnectionInvalidated } from "@/lib/composioConnectionEvents";
+import { toolkitDisplayName } from "@/lib/toolkitDisplay";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
@@ -38,10 +39,19 @@ export type IntegrationBindingVerifyOutcome =
   | { ok: true; at: number; changed: boolean }
   | { ok: false; at: number; reason: string };
 
+/**
+ * Discriminator for the last connect/verify failure so the UI can pick
+ * between a passive error banner and an actionable affordance.
+ *   - "abandoned": heuristic detected the user closed the OAuth window
+ *   - "generic": anything else (timeout, network, provider rejection)
+ */
+export type IntegrationBindingErrorKind = "abandoned" | "generic" | null;
+
 export interface UseIntegrationBindingResult {
   state: IntegrationBindingState;
   busy: IntegrationBindingBusy;
   errorMessage: string;
+  errorKind: IntegrationBindingErrorKind;
   /** Last `verify()` result. Null until the user clicks the action. */
   lastVerify: IntegrationBindingVerifyOutcome | null;
   refresh: () => Promise<void>;
@@ -100,6 +110,8 @@ export function useIntegrationBinding({
   const [state, setState] = useState<IntegrationBindingState>({ kind: "loading" });
   const [busy, setBusy] = useState<IntegrationBindingBusy>(null);
   const [errorMessage, setErrorMessage] = useState<string>("");
+  const [errorKind, setErrorKind] =
+    useState<IntegrationBindingErrorKind>(null);
   const [lastVerify, setLastVerify] =
     useState<IntegrationBindingVerifyOutcome | null>(null);
   const connectAbortRef = useRef<AbortController | null>(null);
@@ -259,6 +271,7 @@ export function useIntegrationBinding({
 
     setBusy("connecting");
     setErrorMessage("");
+    setErrorKind(null);
     try {
       const { connectionId } = await connectIntegrationProvider({
         provider: trimmedProvider,
@@ -291,8 +304,19 @@ export function useIntegrationBinding({
       const aborted =
         controller.signal.aborted ||
         (error instanceof Error && error.name === "IntegrationConnectCancelled");
-      if (!aborted) {
+      const abandoned =
+        error instanceof Error && error.name === "IntegrationConnectAbandoned";
+      if (abandoned) {
+        // Surface a copy that matches user mental model ("I closed the
+        // window") rather than the raw exception string. UI keys off
+        // errorKind to render a Reconnect button instead of a banner.
+        setErrorMessage(
+          `Looks like you closed the ${toolkitDisplayName(trimmedProvider)} authorization window. Click Reconnect to try again.`,
+        );
+        setErrorKind("abandoned");
+      } else if (!aborted) {
         setErrorMessage(normalizeErrorMessage(error));
+        setErrorKind("generic");
       }
     } finally {
       if (connectAbortRef.current === controller) {
@@ -405,6 +429,7 @@ export function useIntegrationBinding({
     state,
     busy,
     errorMessage,
+    errorKind,
     lastVerify,
     refresh,
     connect,
