@@ -147,7 +147,6 @@ function MarketplaceOverlay() {
 }
 
 function SettingsOverlay() {
-  const setOpen = useSetAtom(settingsOpenAtom);
   const [section, setSection] = useAtom(settingsSectionAtom);
   const settings = useSettingsState();
   const [appVersion, setAppVersion] = useState("");
@@ -171,7 +170,6 @@ function SettingsOverlay() {
         activeSection={section}
         appVersion={appVersion}
         onSectionChange={setSection}
-        onBackToApp={() => setOpen(false)}
         colorScheme={settings.colorScheme}
         onColorSchemeChange={settings.onColorSchemeChange}
         themeVariant={settings.themeVariant}
