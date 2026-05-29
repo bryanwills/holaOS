@@ -958,7 +958,7 @@ function ExperimentalPanel() {
             {
               value: "agentic",
               label: "Agentic",
-              description: "Lab-backed conversational onboarding still under active construction.",
+              description: "Phase-based conversational onboarding still under active construction.",
             },
           ]}
         />

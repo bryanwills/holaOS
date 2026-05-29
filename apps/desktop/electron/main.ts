@@ -1001,6 +1001,7 @@ type RuntimeUserProfileNameSource = "manual" | "agent" | "authFallback";
 interface RuntimeUserProfilePayload {
   profileId: string;
   name: string | null;
+  timezone: string | null;
   nameSource: RuntimeUserProfileNameSource | null;
   createdAt: string | null;
   updatedAt: string | null;
@@ -1009,6 +1010,7 @@ interface RuntimeUserProfilePayload {
 interface RuntimeUserProfileUpdatePayload {
   profileId?: string | null;
   name?: string | null;
+  timezone?: string | null;
   nameSource?: RuntimeUserProfileNameSource | null;
 }
 
@@ -1017,6 +1019,7 @@ interface AuthUserPayload {
   email?: string | null;
   name?: string | null;
   image?: string | null;
+  timezone?: string | null;
   [key: string]: unknown;
 }
 
@@ -8194,19 +8197,29 @@ async function setRuntimeUserProfile(
 async function applyRuntimeUserProfileAuthFallback(
   name: string,
   profileId = "default",
+  timezone?: string | null,
 ): Promise<RuntimeUserProfilePayload> {
-  return localRuntimeUserProfileStore.applyAuthFallback(name, profileId);
+  return localRuntimeUserProfileStore.applyAuthFallback(name, profileId, timezone);
+}
+
+function resolveLocalTimezone(): string | null {
+  try {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone?.trim();
+    return timezone || null;
+  } catch {
+    return null;
+  }
 }
 
 async function syncRuntimeUserProfileFromAuth(
   user: AuthUserPayload,
 ): Promise<void> {
   const name = typeof user.name === "string" ? user.name.trim() : "";
-  if (!name) {
-    return;
-  }
+  const timezone =
+    (typeof user.timezone === "string" ? user.timezone.trim() : "") ||
+    resolveLocalTimezone();
   try {
-    await applyRuntimeUserProfileAuthFallback(name);
+    await applyRuntimeUserProfileAuthFallback(name, "default", timezone);
   } catch (error) {
     appendRuntimeEventLog({
       category: "auth",
@@ -9948,6 +9961,7 @@ async function createIssue(
       path: "/api/v1/issues",
       payload: {
         workspace_id: payload.workspace_id,
+        parent_issue_id: payload.parent_issue_id ?? null,
         title: payload.title,
         description: payload.description ?? null,
         status: payload.status,
@@ -9976,6 +9990,7 @@ async function updateIssue(
     path: `/api/v1/issues/${encodeURIComponent(issueId)}`,
       payload: {
         workspace_id: workspaceId,
+        parent_issue_id: payload.parent_issue_id ?? undefined,
         title: payload.title ?? undefined,
         description: payload.description ?? undefined,
         status: payload.status ?? undefined,
@@ -15611,7 +15626,7 @@ async function createLocalWorkspace(
         updated = await runtimeClient.workspaces
           .update(workspaceId, {
             error_message: contextualWorkspaceCreateError(
-              "Workspace created, but workspace onboarding lab could not start",
+              "Workspace created, but workspace onboarding could not start",
               error,
             ),
           })
