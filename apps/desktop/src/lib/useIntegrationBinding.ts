@@ -25,15 +25,32 @@ export type IntegrationBindingState =
       otherActiveConnections: IntegrationConnectionPayload[];
     };
 
-export type IntegrationBindingBusy = "connecting" | "binding" | null;
+export type IntegrationBindingBusy =
+  | "connecting"
+  | "binding"
+  | "verifying"
+  | null;
+
+// Result of a `verify()` call — drives a tiny inline status indicator
+// ("Verified just now", "Verified 2m ago", or an error tone).
+export type IntegrationBindingVerifyOutcome =
+  | { ok: true; at: number; changed: boolean }
+  | { ok: false; at: number; reason: string };
 
 export interface UseIntegrationBindingResult {
   state: IntegrationBindingState;
   busy: IntegrationBindingBusy;
   errorMessage: string;
+  /** Last `verify()` result. Null until the user clicks the action. */
+  lastVerify: IntegrationBindingVerifyOutcome | null;
   refresh: () => Promise<void>;
   connect: () => Promise<void>;
   bind: (connectionId: string) => Promise<void>;
+  // Re-probe the bound connection against the upstream provider. Surfaces
+  // `provider_credentials_rejected` so the user finds out the connection is
+  // dead *here* (in the dialog) instead of next time they trigger the app
+  // and it silently fails.
+  verify: () => Promise<void>;
   // Abort the in-flight `connect()` flow. No-op when nothing is running.
   // Used by the UI when the user closes the OAuth window or explicitly
   // clicks the Cancel affordance — without it, a rejected OAuth leaves
@@ -82,6 +99,8 @@ export function useIntegrationBinding({
   const [state, setState] = useState<IntegrationBindingState>({ kind: "loading" });
   const [busy, setBusy] = useState<IntegrationBindingBusy>(null);
   const [errorMessage, setErrorMessage] = useState<string>("");
+  const [lastVerify, setLastVerify] =
+    useState<IntegrationBindingVerifyOutcome | null>(null);
   const connectAbortRef = useRef<AbortController | null>(null);
 
   // Abort any in-flight connect when the component unmounts so a poll
@@ -298,5 +317,73 @@ export function useIntegrationBinding({
     ],
   );
 
-  return { state, busy, errorMessage, refresh, connect, bind, cancel };
+  // Re-probe the bound connection against the upstream provider. The
+  // `composioRefreshConnection` IPC returns one of:
+  //   - changed:true            → identity rewritten, treat as healthy
+  //   - reason "no_new_identity" / no reason → still healthy, nothing changed
+  //   - reason "provider_credentials_rejected" → token is dead, user must reauth
+  //   - reason "account_missing" → upstream Composio row is gone
+  //   - reason "no_external_id"  → can't probe (non-OAuth provider)
+  //
+  // Only meaningful when state.kind === "bound" — caller is expected to
+  // hide the action otherwise. The hook still tolerates being called in a
+  // non-bound state so a stale render doesn't crash; it just surfaces a
+  // benign error.
+  const verify = useCallback(async () => {
+    if (state.kind !== "bound") return;
+    const connectionId = state.activeConnection.connection_id;
+    setBusy("verifying");
+    setErrorMessage("");
+    try {
+      const result =
+        await window.electronAPI.workspace.composioRefreshConnection(
+          connectionId,
+        );
+      const at = Date.now();
+      if (result.reason === "provider_credentials_rejected") {
+        const code = result.providerStatus ? ` (HTTP ${result.providerStatus})` : "";
+        setLastVerify({
+          ok: false,
+          at,
+          reason: `Provider rejected the stored token${code}. Reconnect to re-authorize.`,
+        });
+      } else if (result.reason === "account_missing") {
+        setLastVerify({
+          ok: false,
+          at,
+          reason: "Upstream account no longer exists. Disconnect and reconnect.",
+        });
+      } else if (result.reason === "no_external_id") {
+        setLastVerify({
+          ok: false,
+          at,
+          reason: "No identity to verify on this connection.",
+        });
+      } else {
+        setLastVerify({ ok: true, at, changed: Boolean(result.changed) });
+      }
+      // Pull the latest persisted identity so the `bound` label re-renders.
+      await refresh();
+    } catch (error) {
+      setLastVerify({
+        ok: false,
+        at: Date.now(),
+        reason: normalizeErrorMessage(error),
+      });
+    } finally {
+      setBusy(null);
+    }
+  }, [state, refresh]);
+
+  return {
+    state,
+    busy,
+    errorMessage,
+    lastVerify,
+    refresh,
+    connect,
+    bind,
+    verify,
+    cancel,
+  };
 }

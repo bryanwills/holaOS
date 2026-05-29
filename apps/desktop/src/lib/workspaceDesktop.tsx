@@ -217,6 +217,16 @@ interface WorkspaceDesktopContextValue {
     signal?: AbortSignal;
     whoami?: PendingIntegrationWhoami | null;
   }) => Promise<{ connectionId: string }>;
+  /** True while at least one `connectIntegrationProvider(...)` call is
+   *  mid-OAuth (browser tab open, poll loop running). Drives the chat
+   *  composer disable so users don't fire messages into the agent before
+   *  the integration is wired in — half-connected accounts otherwise fail
+   *  noisily on the next tool call. */
+  isIntegrationConnectInFlight: boolean;
+  /** Display names of the providers currently being connected, in start
+   *  order. Empty when nothing is in flight. Used to compose the disabled
+   *  reason ("Connecting Gmail…"). */
+  inFlightIntegrationProviderNames: string[];
   templateSourceMode: TemplateSourceMode;
   setTemplateSourceMode: (value: TemplateSourceMode) => void;
   createHarnessOptions: WorkspaceHarnessOption[];
@@ -424,6 +434,20 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const [isResolvingIntegrations, setIsResolvingIntegrations] = useState(false);
   const [pendingAppInstall, setPendingAppInstall] = useState<{ appId: string; provider: string } | null>(null);
   const [isConnectingAppIntegration, setIsConnectingAppIntegration] = useState(false);
+  // Stack of provider display names currently mid-OAuth via
+  // connectIntegrationProvider(). Stack (not boolean) because multiple
+  // connects can overlap — e.g. agent emits two pending_integrations
+  // back-to-back, both cards started before the first resolves.
+  //
+  // Source of truth is the ref Map (immune to React batching), and we
+  // mirror it into state after every mutation so consumers can subscribe
+  // via the normal context value. Token-based bookkeeping (vs index-
+  // based splice) keeps overlapping connects from removing the wrong
+  // entry on exit.
+  const inFlightConnectsRef = useRef<Map<number, string>>(new Map());
+  const inFlightConnectIdRef = useRef(0);
+  const [inFlightIntegrationProviderNames, setInFlightIntegrationProviderNames] =
+    useState<string[]>([]);
   // Per-call AbortController for the in-flight app-install connect flow.
   // A controller is created in `connectAndInstallApp`, captured here so the
   // Cancel button can abort it. Other callers (e.g. chat pane's connect
@@ -1284,6 +1308,18 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
 
     const MAX_CONSECUTIVE_ERRORS = 20;
 
+    // Register this connect in the in-flight map BEFORE any awaits so the
+    // chat composer flips disabled the moment the user clicks Connect,
+    // not after the first round-trip lands ~300ms later. The token-based
+    // remove (vs splice by index) survives overlapping connects.
+    const entryId = inFlightConnectIdRef.current++;
+    const displayName = toolkitDisplayName(provider);
+    inFlightConnectsRef.current.set(entryId, displayName);
+    setInFlightIntegrationProviderNames(
+      Array.from(inFlightConnectsRef.current.values()),
+    );
+
+    try {
     // Parallelize the two independent pre-OAuth round-trips. Before this
     // was serial — getConfig → snapshot → composioConnect — adding ~300-800ms
     // of latency before the browser even opens. The snapshot only needs
@@ -1392,6 +1428,15 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
         (COMPOSIO_POLL_MAX_TICKS * COMPOSIO_POLL_INTERVAL_MS) / 1000
       }s. Please try again.`,
     );
+    } finally {
+      // Always pop — success, throw, and cancel paths all land here so the
+      // chat composer can't get stuck in a "Connecting…" disabled state
+      // after the connect resolves.
+      inFlightConnectsRef.current.delete(entryId);
+      setInFlightIntegrationProviderNames(
+        Array.from(inFlightConnectsRef.current.values()),
+      );
+    }
   }
 
   function cancelAppIntegrationConnect() {
@@ -1956,6 +2001,8 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       isConnectingAppIntegration,
       cancelAppIntegrationConnect,
       connectIntegrationProvider,
+      isIntegrationConnectInFlight: inFlightIntegrationProviderNames.length > 0,
+      inFlightIntegrationProviderNames,
       templateSourceMode,
       setTemplateSourceMode,
       createHarnessOptions: WORKSPACE_HARNESS_OPTIONS,
@@ -2040,6 +2087,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       installAppFromCatalog,
       pendingAppInstall,
       isConnectingAppIntegration,
+      inFlightIntegrationProviderNames,
       templateSourceMode,
       selectedCreateHarness,
       selectedTemplateFolder,

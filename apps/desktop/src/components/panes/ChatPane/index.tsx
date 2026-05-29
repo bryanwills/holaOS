@@ -97,6 +97,8 @@ import {
   resolveExplorerAttachmentKind,
 } from "@/lib/attachmentDrag";
 import { getExplorerAttachmentClipboardEntry } from "@/lib/appClipboard";
+import { useAtomValue } from "jotai";
+import { recentFilesAtom } from "@/components/layout/new-shell/state/recentFiles";
 import { CHAT_LAYOUT, chatScrollMaskImage } from "@/lib/chatLayout";
 import { ProviderBrandIcon } from "@/lib/providerBrandIcon";
 import { trackUmamiEvent } from "@/lib/analytics/umami";
@@ -3388,6 +3390,8 @@ export function ChatPane({
     workspaceErrorMessage,
     refreshWorkspaceData,
     installedApps,
+    isIntegrationConnectInFlight,
+    inFlightIntegrationProviderNames,
   } = useWorkspaceDesktop();
 
   // Recursive list of workspace files for the `@` picker. The walk
@@ -3415,6 +3419,27 @@ export function ChatPane({
     };
   }, [selectedWorkspace?.id]);
 
+  // Recent file opens (renderer-side log persisted by file tabs). Drives
+  // the "recent" boost in the @ picker below — recently-opened files
+  // float to the top so users don't have to scroll past the alphabetical
+  // workspace tree to re-mention a file they just had open.
+  const allRecentFiles = useAtomValue(recentFilesAtom);
+  const recentAbsolutePathsForWorkspace = useMemo(() => {
+    const workspaceId = selectedWorkspace?.id ?? null;
+    if (!workspaceId) return new Map<string, number>();
+    // Map absolutePath → rank (lower rank = more recent). Built once so
+    // the picker doesn't re-scan the recents list for every entry.
+    const ranked = new Map<string, number>();
+    let rank = 0;
+    for (const entry of allRecentFiles) {
+      if (entry.workspaceId !== workspaceId) continue;
+      if (!entry.filePath) continue;
+      if (ranked.has(entry.filePath)) continue;
+      ranked.set(entry.filePath, rank++);
+    }
+    return ranked;
+  }, [allRecentFiles, selectedWorkspace?.id]);
+
   // `@` references content WITHIN the current workspace — files at
   // any depth + installed apps. Future kinds (sessions, memories,
   // skills) plug into the same array. Cross-workspace navigation is
@@ -3422,8 +3447,9 @@ export function ChatPane({
   const composerMentionableItems = useMemo<ChatComposerMentionItem[]>(() => {
     const items: ChatComposerMentionItem[] = [];
 
-    // Files first — typically the more frequent reference target.
-    for (const entry of workspaceFiles) {
+    const fileEntryToItem = (
+      entry: WorkspaceFileEntry,
+    ): ChatComposerMentionItem | null => {
       // Slugify each path segment so the inserted token round-trips
       // through findActiveMentionRange. Unicode letters / digits are
       // preserved so CJK-named files (e.g. `产品方案.md`) survive
@@ -3438,14 +3464,46 @@ export function ChatPane({
         )
         .filter(Boolean)
         .join("/");
-      if (!handle) continue;
-      items.push({
+      if (!handle) return null;
+      return {
         id: `file:${entry.relativePath}`,
         handle,
         label: entry.relativePath,
         kindIcon: <FileIcon className="size-3.5" />,
         keywords: [entry.name, entry.relativePath, handle],
-      });
+      };
+    };
+
+    // Recent files first, in most-recent-first order — when the user
+    // types `@` with no query, this is what shows up at the top. The
+    // dedupe set guards against duplicate items when we fall through
+    // to the alphabetical workspace listing below.
+    const emittedRelativePaths = new Set<string>();
+    if (recentAbsolutePathsForWorkspace.size > 0) {
+      const recentMatches = workspaceFiles
+        .filter((entry) =>
+          recentAbsolutePathsForWorkspace.has(entry.absolutePath),
+        )
+        .sort(
+          (a, b) =>
+            (recentAbsolutePathsForWorkspace.get(a.absolutePath) ?? 0) -
+            (recentAbsolutePathsForWorkspace.get(b.absolutePath) ?? 0),
+        );
+      for (const entry of recentMatches) {
+        const item = fileEntryToItem(entry);
+        if (!item) continue;
+        items.push(item);
+        emittedRelativePaths.add(entry.relativePath);
+      }
+    }
+
+    // Remaining files — alphabetical (as listWorkspaceFiles sorts), skip
+    // anything already emitted via the recents boost.
+    for (const entry of workspaceFiles) {
+      if (emittedRelativePaths.has(entry.relativePath)) continue;
+      const item = fileEntryToItem(entry);
+      if (!item) continue;
+      items.push(item);
     }
 
     // Apps next.
@@ -3463,7 +3521,7 @@ export function ChatPane({
     }
 
     return items;
-  }, [installedApps, workspaceFiles]);
+  }, [installedApps, recentAbsolutePathsForWorkspace, workspaceFiles]);
 
   // handle → workspace-file entry map. Built from the same slug logic
   // as composerMentionableItems above so a `@<handle>` typed by the
@@ -8051,12 +8109,18 @@ export function ChatPane({
         : isResponding
           ? "This issue is actively running. Wait for the current run to finish before replying."
           : "";
+  const integrationConnectingDisabledReason = isIntegrationConnectInFlight
+    ? inFlightIntegrationProviderNames.length === 1
+      ? `Finish connecting ${inFlightIntegrationProviderNames[0]} in your browser before sending another message.`
+      : `Finish connecting ${inFlightIntegrationProviderNames.join(", ")} in your browser before sending another message.`
+    : "";
   const composerBaseDisabledReason =
     readOnlyInspectionDisabledReason ||
     issueComposerDisabledReason ||
     baseComposerDisabledReason ||
     onboardingReviewDisabledReason ||
     onboardingImplementingDisabledReason ||
+    integrationConnectingDisabledReason ||
     (usesHostedManagedCredits && isOutOfCredits
       ? "You're out of credits for managed usage."
       : "") ||
