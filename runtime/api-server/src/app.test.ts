@@ -4893,6 +4893,114 @@ test("workspace onboarding starts a source controller session without creating a
   store.close();
 });
 
+test("approving onboarding alignment resumes the onboarding session for implementation", async () => {
+  const root = makeTempDir("hb-runtime-api-onboarding-approve-resume-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace"),
+  });
+  const source = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  let wakeCount = 0;
+  const app = buildTestRuntimeApiServer({
+    store,
+    queueWorker: {
+      async start() {},
+      wake() {
+        wakeCount += 1;
+      },
+      async close() {},
+    },
+  });
+
+  const created = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspaces/${source.id}/labs`,
+    payload: { purpose: "workspace_onboarding" },
+  });
+  assert.equal(created.statusCode, 200);
+  const sessionId = created.json().session.session_id as string;
+
+  const alignment = await app.inject({
+    method: "POST",
+    url: "/api/v1/capabilities/runtime-tools/onboarding/alignment-report",
+    headers: {
+      "x-holaboss-workspace-id": source.id,
+    },
+    payload: {
+      report: {
+        markdown: [
+          "# Alignment report",
+          "",
+          "- Set up a lightweight CRM workspace",
+          "- Build a thin deal tracker first",
+        ].join("\n"),
+        summary: "Set up a lightweight CRM workspace",
+        integrations: ["hubspot"],
+        teammates: [
+          {
+            teammate_id: "sales-ops",
+            name: "Sales Ops",
+            remit: "Own pipeline hygiene and follow-up orchestration.",
+            system_prompt: "Keep the pipeline current and actionable.",
+          },
+        ],
+        workspace_rules: {
+          summary: "Keep execution concise and safe.",
+        },
+        apps: ["deal-tracker"],
+        cronjobs: [
+          {
+            name: "weekly pipeline digest",
+            owner_teammate_id: "sales-ops",
+          },
+        ],
+      },
+    },
+  });
+  assert.equal(alignment.statusCode, 200);
+  assert.equal(alignment.json().onboarding_state, "awaiting_alignment_approval");
+
+  wakeCount = 0;
+  const implementing = await app.inject({
+    method: "POST",
+    url: "/api/v1/capabilities/runtime-tools/onboarding/alignment/approve",
+    headers: {
+      "x-holaboss-workspace-id": source.id,
+    },
+    payload: {},
+  });
+  assert.equal(implementing.statusCode, 200);
+  assert.equal(implementing.json().onboarding_state, "implementing");
+  assert.equal(wakeCount, 1);
+
+  const queuedRuntimeState = store.getRuntimeState({
+    workspaceId: source.id,
+    sessionId,
+  });
+  assert.equal(queuedRuntimeState?.status, "QUEUED");
+  const queued = queuedRuntimeState?.currentInputId
+    ? store.getInput({
+        workspaceId: source.id,
+        inputId: queuedRuntimeState.currentInputId,
+      })
+    : null;
+  assert.ok(queued);
+  assert.match((queued?.payload.text as string | undefined) ?? "", /The user approved the alignment report\./);
+  assert.match((queued?.payload.text as string | undefined) ?? "", /Begin implementation now\./);
+  assert.deepEqual(queued?.payload.context, {
+    source: "alignment_approval",
+    approved_alignment_report_summary: "Set up a lightweight CRM workspace",
+  });
+
+  await app.close();
+  store.close();
+});
+
 test("workspace lab keeps copied cronjobs inert and restores their recommended enabled state on merge", async () => {
   const root = makeTempDir("hb-runtime-api-lab-cron-");
   const store = new RuntimeStateStore({
