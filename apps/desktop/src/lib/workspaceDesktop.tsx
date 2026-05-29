@@ -11,6 +11,7 @@ import {
 } from "react";
 import { trackUmamiEvent } from "@/lib/analytics/umami";
 import { getMarketplaceAppSdkClient } from "@/lib/app-sdk-client";
+import { waitForComposioConnectionInvalidation } from "@/lib/composioConnectionEvents";
 import { type AuthSession, useDesktopAuthSession } from "@/lib/auth/authClient";
 import { loadWorkspaceOnboardingPreference } from "@/features/workspace-onboarding/preferences";
 import { hydrateInstalledWorkspaceApps, type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
@@ -1352,10 +1353,28 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     let knownNewConnectionId: string | null = null;
     let consecutiveErrors = 0;
     for (let tick = 0; tick < COMPOSIO_POLL_MAX_TICKS; tick++) {
-      await sleepUntilFocusOrTimeout(
-        composioPollIntervalForTick(tick),
-        signal,
-      );
+      // Race the polling tick against a webhook-fed SSE invalidation for
+      // this specific connected_account. If the cloud BFF fires before the
+      // next focus tick, we wake immediately and skip the wait. The SSE
+      // wait only attaches once we've discovered the ca_xxx — earlier
+      // ticks still need the list call to find it.
+      if (knownNewConnectionId) {
+        await Promise.race([
+          sleepUntilFocusOrTimeout(
+            composioPollIntervalForTick(tick),
+            signal,
+          ),
+          waitForComposioConnectionInvalidation({
+            externalId: knownNewConnectionId,
+            signal,
+          }).catch(() => undefined),
+        ]);
+      } else {
+        await sleepUntilFocusOrTimeout(
+          composioPollIntervalForTick(tick),
+          signal,
+        );
+      }
       throwIfAborted();
       if (knownNewConnectionId === null) {
         let current;

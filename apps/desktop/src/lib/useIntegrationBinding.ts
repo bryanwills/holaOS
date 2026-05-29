@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { subscribeComposioConnectionInvalidated } from "@/lib/composioConnectionEvents";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
@@ -199,6 +200,31 @@ export function useIntegrationBinding({
       void refresh();
     }, 8000);
     return () => clearInterval(id);
+  }, [selectedWorkspaceId, trimmedProvider, trimmedAppId, refresh]);
+
+  // Real-time Composio invalidation: the cloud BFF webhook handler
+  // broadcasts `connected_account.*` lifecycle events; main pipes them in.
+  // We refresh only when the event targets a connection we already render,
+  // so an unrelated user's expiry on another row doesn't trigger churn.
+  const stateRef = useRef(state);
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+  useEffect(() => {
+    if (!selectedWorkspaceId || !trimmedProvider || !trimmedAppId) return;
+    return subscribeComposioConnectionInvalidated((event) => {
+      const externalId = event.connection_id;
+      const snapshot = stateRef.current;
+      const matchesActive =
+        snapshot.kind === "bound" &&
+        snapshot.activeConnection.account_external_id === externalId;
+      const matchesCandidate =
+        snapshot.kind === "needs_binding" &&
+        snapshot.candidates.some((c) => c.account_external_id === externalId);
+      if (matchesActive || matchesCandidate) {
+        void refresh();
+      }
+    });
   }, [selectedWorkspaceId, trimmedProvider, trimmedAppId, refresh]);
 
   // The running app captured HOLABOSS_APP_GRANT at boot in its bridge
