@@ -873,12 +873,18 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
         if (status !== "ACTIVE") {
           continue;
         }
-        await window.electronAPI.workspace.composioFinalize({
+        // composioFinalize writes a runtime row whose connection_id is a
+        // fresh UUID; everything downstream (set-default, rebind, MCP host)
+        // keys off THAT id, not Composio's ca_xxx. Capturing the return
+        // value avoids the "integration connection ca_xxx not found" 400
+        // that surfaced when those callers were handed the upstream id.
+        const finalized = await window.electronAPI.workspace.composioFinalize({
           connected_account_id: connectedAccountId,
           provider: integration.providerId,
           owner_user_id: userId,
           account_label: integration.name,
         });
+        const runtimeConnectionId = finalized.connection_id;
         // Layer-2 auto-default: when the user explicitly connects an
         // account from Settings AND the selected workspace has no
         // workspace_default set for this provider yet, the just-
@@ -898,7 +904,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
               await window.electronAPI.workspace.setWorkspaceDefaultAccount(
                 selectedWorkspaceId,
                 integration.providerId,
-                connectedAccountId,
+                runtimeConnectionId,
               );
             }
           } catch {
@@ -914,7 +920,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
           await rebindWorkspaceAppsForProvider({
             workspaceId: selectedWorkspaceId,
             provider: integration.providerId,
-            connectionId: connectedAccountId,
+            connectionId: runtimeConnectionId,
           });
           // The agent reaches integrations through the composio-mcp host;
           // its toolkit list is cached per host. Ensure-running pokes it to
