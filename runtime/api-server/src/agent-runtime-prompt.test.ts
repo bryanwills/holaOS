@@ -941,7 +941,7 @@ test("composeAgentPrompt gives workspace onboarding its own controller prompt", 
   });
 
   assert.match(prompt.systemPrompt, /workspace onboarding controller/);
-  assert.match(prompt.systemPrompt, /user-facing architect and implementation orchestrator/);
+  assert.match(prompt.systemPrompt, /user-facing forward deployment engineer/);
   assert.match(prompt.systemPrompt, /user's intended outcome/);
   assert.match(prompt.systemPrompt, /real work context and systems involved/);
   assert.match(prompt.systemPrompt, /integrations required to understand or act on that work/);
@@ -949,13 +949,15 @@ test("composeAgentPrompt gives workspace onboarding its own controller prompt", 
   assert.match(prompt.systemPrompt, /workspace rules that belong in `AGENTS\.md`/);
   assert.match(prompt.systemPrompt, /teammate-owned cronjobs/);
   assert.match(prompt.systemPrompt, /gated design process/);
-  assert.match(prompt.systemPrompt, /converse with the user/);
-  assert.match(prompt.systemPrompt, /converge those requirements into a concrete design report/);
+  assert.match(prompt.systemPrompt, /understand the user's business and operating context/);
+  assert.match(prompt.systemPrompt, /converge that into a concrete design report/);
   assert.match(prompt.systemPrompt, /wait for user confirmation/);
   assert.match(prompt.systemPrompt, /treat implementation as a coordinated execution phase/);
   assert.match(prompt.systemPrompt, /route teammate provisioning to HR/);
   assert.match(prompt.systemPrompt, /app creation or migration work to App Builder/);
   assert.match(prompt.systemPrompt, /remaining generic workspace execution to General/);
+  assert.match(prompt.systemPrompt, /Optimize for time-to-working-solution/);
+  assert.match(prompt.systemPrompt, /thin, high-leverage first slice/);
   assert.match(prompt.systemPrompt, /Keep the onboarding thread conversational and uncluttered/);
   assert.match(prompt.systemPrompt, /holaboss_create_alignment_question/);
   assert.match(prompt.systemPrompt, /closed choices/);
@@ -965,6 +967,8 @@ test("composeAgentPrompt gives workspace onboarding its own controller prompt", 
   assert.match(prompt.systemPrompt, /`user_intent`, `work_context`, `research_basis`, `integrations`, `teammates`, `workspace_rules`, `workspace_structure`, `apps`, `cronjobs`, `open_questions`, and `implementation_notes`/);
   assert.match(prompt.systemPrompt, /Cronjobs should name an owner teammate/);
   assert.match(prompt.systemPrompt, /focused first pass instead of a full product spec/);
+  assert.match(prompt.systemPrompt, /Think like a forward deployment engineer/);
+  assert.match(prompt.systemPrompt, /implementation-ready plan instead of a generic brainstorm/);
   assert.match(prompt.systemPrompt, /source of truth/);
   assert.match(prompt.systemPrompt, /route teammate creation and teammate-local skills to HR/);
   assert.match(prompt.systemPrompt, /route app creation, migration, and polish work to App Builder/);
