@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import {
+  createEditToolDefinition,
   createReadToolDefinition,
   createWriteToolDefinition,
   DEFAULT_MAX_BYTES,
@@ -31,6 +32,11 @@ type LineRange = {
   endLine?: number;
 };
 
+type ParsedSelector =
+  | { kind: "none" }
+  | { kind: "raw" }
+  | { kind: "lines"; ranges: [LineRange, ...LineRange[]]; raw?: boolean };
+
 const HASHLINE_HEADER_PREFIX = "¶";
 const HASHLINE_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 const HASHLINE_DOCUMENT_MIME_TYPES = new Map<string, string>([
@@ -53,6 +59,10 @@ const HASHLINE_SUMMARY_UNFOLD_LIMIT = 100;
 const HASHLINE_SUMMARY_SAMPLE_RANGES = 2;
 const HASHLINE_PROSE_SUMMARY_EXTENSIONS = new Set([".md", ".txt"]);
 const HASHLINE_SELECTOR_RE = /^L?\d+(?:[-+]L?\d+|-)?(?:,L?\d+(?:[-+]L?\d+|-)?)*$/i;
+const HASHLINE_STRUCTURAL_SUMMARY_LINE_RE = /^\s*(?:\[(?:lines? \d+(?:-\d+)?(?:,\d+(?:-\d+)?)? elided.*?)\]|\.\.\.|…)\s*$/m;
+const HASHLINE_MERGED_SUMMARY_RANGE_RE = /^\s*(?:[*+-]\s*)?\d+(?:-\d+):.*\s\.\.\s.*$/m;
+const BRACE_PAIRS: Record<string, string> = { "{": "}", "(": ")", "[": "]" };
+const BRACE_TAIL_TRAILING_RE = /^[;,)\]}]*$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -62,7 +72,7 @@ function hashlineHeader(displayPath: string, tag: string): string {
   return `${HASHLINE_HEADER_PREFIX}${displayPath}#${tag}`;
 }
 
-const HASHLINE_LINE_PREFIX_RE = /^\s*\d+:(.*)$/;
+const HASHLINE_LINE_PREFIX_RE = /^\s*(?:[*+-]\s*)?\d+(?:-\d+)?:(.*)$/;
 const LOOSE_HASHLINE_HEADER_RE = /^\s*¶\S+#[^ \t\r\n]*\s*$/;
 
 function splitLogicalLines(text: string): string[] {
@@ -84,19 +94,54 @@ function joinLogicalLines(lines: readonly string[], hadTrailingNewline: boolean)
   return hadTrailingNewline ? `${joined}\n` : joined;
 }
 
-function splitPathAndSelector(rawPath: string): { path: string; selector?: string } {
-  const colon = rawPath.lastIndexOf(":");
-  if (colon <= 0) {
-    return { path: rawPath };
+function parseSelector(selector: string | undefined): ParsedSelector {
+  if (!selector || selector.length === 0) {
+    return { kind: "none" };
   }
-  const selector = rawPath.slice(colon + 1);
-  if (!HASHLINE_SELECTOR_RE.test(selector)) {
-    return { path: rawPath };
+  if (selector.includes(":")) {
+    const chunks = selector.split(":");
+    if (chunks.length === 2) {
+      const [left, right] = chunks;
+      const leftIsRaw = left.toLowerCase() === "raw";
+      const rightIsRaw = right.toLowerCase() === "raw";
+      const rangeChunk = leftIsRaw ? right : rightIsRaw ? left : null;
+      if (rangeChunk && (leftIsRaw || rightIsRaw)) {
+        const ranges = parseLineRanges(rangeChunk);
+        if (ranges) {
+          return { kind: "lines", ranges, raw: true };
+        }
+      }
+    }
+    return { kind: "none" };
   }
-  return {
-    path: rawPath.slice(0, colon),
-    selector,
-  };
+  if (selector.toLowerCase() === "raw") {
+    return { kind: "raw" };
+  }
+  const ranges = parseLineRanges(selector);
+  if (ranges) {
+    return { kind: "lines", ranges };
+  }
+  return { kind: "none" };
+}
+
+function isRawSelector(parsed: ParsedSelector): boolean {
+  return parsed.kind === "raw" || (parsed.kind === "lines" && parsed.raw === true);
+}
+
+function splitPathAndSelector(rawPath: string): { path: string; parsed: ParsedSelector } {
+  let searchIndex = rawPath.indexOf(":");
+  while (searchIndex > 0) {
+    const candidate = rawPath.slice(searchIndex + 1);
+    const parsed = parseSelector(candidate);
+    if (parsed.kind !== "none") {
+      return {
+        path: rawPath.slice(0, searchIndex),
+        parsed,
+      };
+    }
+    searchIndex = rawPath.indexOf(":", searchIndex + 1);
+  }
+  return { path: rawPath, parsed: { kind: "none" } };
 }
 
 function parseLineRangeChunk(selector: string): LineRange | null {
@@ -165,6 +210,115 @@ function selectorRangeToOffsetLimit(range: LineRange): { offset: number; limit?:
   };
 }
 
+type RangeWindow = {
+  visibleStartLine: number;
+  visibleEndLine: number;
+  visibleLines: string[];
+  sparseEntries: Array<readonly [number, string]>;
+};
+
+function mergeLineRanges(ranges: readonly LineRange[]): LineRange[] {
+  if (ranges.length === 0) {
+    return [];
+  }
+  const sorted = [...ranges].sort((left, right) => left.startLine - right.startLine);
+  const merged: LineRange[] = [sorted[0]!];
+  for (let index = 1; index < sorted.length; index += 1) {
+    const current = sorted[index]!;
+    const previous = merged[merged.length - 1]!;
+    if (previous.endLine === undefined) {
+      continue;
+    }
+    const previousEnd = previous.endLine;
+    const currentEnd = current.endLine ?? current.startLine;
+    if (current.startLine <= previousEnd + 1) {
+      if (current.endLine === undefined || currentEnd > previousEnd) {
+        merged[merged.length - 1] = {
+          startLine: previous.startLine,
+          endLine: current.endLine,
+        };
+      }
+      continue;
+    }
+    merged.push(current);
+  }
+  return merged;
+}
+
+function expandRangesWithContext(
+  ranges: readonly LineRange[],
+  totalLines: number,
+): LineRange[] {
+  if (totalLines <= 0) {
+    return [...ranges];
+  }
+  const expanded = ranges.map((range) => {
+    if (range.startLine > totalLines) {
+      return range;
+    }
+    const requestedEnd = Math.min(range.endLine ?? totalLines, totalLines);
+    return {
+      startLine: Math.max(1, range.startLine - 1),
+      endLine: requestedEnd >= totalLines ? totalLines : Math.min(totalLines, requestedEnd + 3),
+    };
+  });
+  return mergeLineRanges(expanded);
+}
+
+function sparseEntriesFromRanges(params: {
+  allLines: readonly string[];
+  ranges: readonly LineRange[];
+}): Array<readonly [number, string]> {
+  const entries: Array<readonly [number, string]> = [];
+  for (const range of params.ranges) {
+    if (range.startLine > params.allLines.length) {
+      continue;
+    }
+    const effectiveEnd = Math.min(range.endLine ?? params.allLines.length, params.allLines.length);
+    for (let lineNumber = range.startLine; lineNumber <= effectiveEnd; lineNumber += 1) {
+      entries.push([lineNumber, params.allLines[lineNumber - 1] ?? ""]);
+    }
+  }
+  return entries;
+}
+
+function buildRangeWindow(params: {
+  allLines: readonly string[];
+  offset?: number;
+  limit?: number;
+}): RangeWindow {
+  const totalLines = params.allLines.length;
+  const requestedStartLine = params.offset && params.offset > 0 ? Math.floor(params.offset) : 1;
+  if (totalLines === 0) {
+    return {
+      visibleStartLine: requestedStartLine,
+      visibleEndLine: requestedStartLine - 1,
+      visibleLines: [],
+      sparseEntries: [],
+    };
+  }
+  if (requestedStartLine > totalLines) {
+    throw new Error(`Offset ${requestedStartLine} is beyond end of file (${totalLines} lines total)`);
+  }
+
+  const requestedLimit = params.limit && params.limit > 0 ? Math.floor(params.limit) : undefined;
+  const requestedEndLine = requestedLimit === undefined
+    ? totalLines
+    : Math.min(totalLines, requestedStartLine + requestedLimit - 1);
+  const expandStart = params.offset !== undefined && requestedStartLine > 1;
+  const expandEnd = params.limit !== undefined;
+  const visibleStartLine = expandStart ? Math.max(1, requestedStartLine - 1) : requestedStartLine;
+  const visibleEndLine = expandEnd ? Math.min(totalLines, requestedEndLine + 3) : requestedEndLine;
+  const visibleLines = params.allLines.slice(visibleStartLine - 1, visibleEndLine);
+  const sparseEntries = visibleLines.map((line, index) => [visibleStartLine + index, line] as const);
+  return {
+    visibleStartLine,
+    visibleEndLine,
+    visibleLines,
+    sparseEntries,
+  };
+}
+
 function formatRangeLabel(range: LineRange): string {
   return range.endLine === undefined ? `${range.startLine}` : `${range.startLine}-${range.endLine}`;
 }
@@ -172,27 +326,19 @@ function formatRangeLabel(range: LineRange): string {
 function renderHashlineReadOutput(params: {
   displayPath: string;
   tag: string;
-  allLines: readonly string[];
-  offset?: number;
-  limit?: number;
+  totalLines: number;
+  visibleStartLine: number;
+  visibleLines: readonly string[];
 }): string {
-  const startLine = params.offset && params.offset > 0 ? params.offset : 1;
-  const startIndex = startLine - 1;
-  if (params.allLines.length === 0) {
+  if (params.totalLines === 0) {
     return `${hashlineHeader(params.displayPath, params.tag)}\n[Empty file. Use BOF or EOF to insert content.]`;
   }
-  if (startIndex >= params.allLines.length) {
-    throw new Error(`Offset ${startLine} is beyond end of file (${params.allLines.length} lines total)`);
-  }
-
-  const requestedLimit = params.limit && params.limit > 0 ? Math.floor(params.limit) : Number.POSITIVE_INFINITY;
-  const selectedLines = params.allLines.slice(startIndex, startIndex + requestedLimit);
   const rendered: string[] = [hashlineHeader(params.displayPath, params.tag)];
   let renderedBytes = Buffer.byteLength(`${rendered[0]}\n`, "utf-8");
   let renderedLineCount = 0;
-  let nextLineNumber = startLine;
+  let nextLineNumber = params.visibleStartLine;
 
-  for (const line of selectedLines) {
+  for (const line of params.visibleLines) {
     const prefixed = `${nextLineNumber}:${line}`;
     const prefixedBytes = Buffer.byteLength(`${prefixed}\n`, "utf-8");
     const wouldExceedLines = renderedLineCount >= DEFAULT_MAX_LINES;
@@ -219,26 +365,62 @@ function renderHashlineReadOutput(params: {
   if (renderedLineCount === 0) {
     rendered.push("[No lines rendered.]");
   }
-  if (renderedRangeEnd < params.allLines.length) {
+  if (renderedRangeEnd < params.totalLines) {
     rendered.push(
-      `[Showing lines ${startLine}-${renderedRangeEnd} of ${params.allLines.length}. Use offset=${renderedRangeEnd + 1} to continue.]`,
+      `[Showing lines ${params.visibleStartLine}-${renderedRangeEnd} of ${params.totalLines}. Use offset=${renderedRangeEnd + 1} to continue.]`,
     );
   }
   return rendered.join("\n");
 }
 
-function renderHashlineMultiRangeReadOutput(params: {
-  displayPath: string;
-  tag: string;
-  allLines: readonly string[];
-  ranges: readonly LineRange[];
+function renderRawReadOutput(params: {
+  totalLines: number;
+  visibleStartLine: number;
+  visibleLines: readonly string[];
 }): string {
-  if (params.allLines.length === 0) {
-    return `${hashlineHeader(params.displayPath, params.tag)}\n[Empty file. Use BOF or EOF to insert content.]`;
+  if (params.totalLines === 0 || params.visibleLines.length === 0) {
+    return "";
+  }
+  const rendered: string[] = [];
+  let renderedBytes = 0;
+  let renderedLineCount = 0;
+  let nextLineNumber = params.visibleStartLine;
+
+  for (const line of params.visibleLines) {
+    const withNewline = renderedLineCount === 0 ? line : `\n${line}`;
+    const bytes = Buffer.byteLength(withNewline, "utf-8");
+    const wouldExceedLines = renderedLineCount >= DEFAULT_MAX_LINES;
+    const wouldExceedBytes = renderedBytes + bytes > DEFAULT_MAX_BYTES;
+    if ((wouldExceedLines || wouldExceedBytes) && renderedLineCount > 0) {
+      break;
+    }
+    rendered.push(line);
+    renderedBytes += bytes;
+    renderedLineCount += 1;
+    nextLineNumber += 1;
   }
 
-  const rendered: string[] = [hashlineHeader(params.displayPath, params.tag)];
-  let renderedBytes = Buffer.byteLength(`${rendered[0]}\n`, "utf-8");
+  const renderedRangeEnd = nextLineNumber - 1;
+  let output = rendered.join("\n");
+  if (renderedRangeEnd < params.totalLines) {
+    output += `${output.length > 0 ? "\n" : ""}[Showing lines ${params.visibleStartLine}-${renderedRangeEnd} of ${params.totalLines}. Use offset=${renderedRangeEnd + 1} to continue.]`;
+  }
+  return output;
+}
+
+function renderHashlineMultiRangeReadOutput(params: {
+  displayPath: string;
+  tag?: string;
+  allLines: readonly string[];
+  ranges: readonly LineRange[];
+  raw?: boolean;
+}): string {
+  if (params.allLines.length === 0) {
+    return params.raw ? "" : `${hashlineHeader(params.displayPath, params.tag ?? "000")}\n[Empty file. Use BOF or EOF to insert content.]`;
+  }
+
+  const rendered: string[] = params.raw ? [] : [hashlineHeader(params.displayPath, params.tag ?? "000")];
+  let renderedBytes = Buffer.byteLength(rendered.length > 0 ? `${rendered[0]}\n` : "", "utf-8");
   let renderedLineCount = 0;
   const notices: string[] = [];
   let emittedBlock = false;
@@ -289,7 +471,7 @@ function renderHashlineMultiRangeReadOutput(params: {
     }
     for (let lineNumber = range.startLine; lineNumber <= effectiveEnd; lineNumber += 1) {
       const line = params.allLines[lineNumber - 1] ?? "";
-      if (!pushRenderedLine(`${lineNumber}:${line}`)) {
+      if (!pushRenderedLine(params.raw ? line : `${lineNumber}:${line}`)) {
         break;
       }
     }
@@ -373,19 +555,88 @@ type SummaryRange = {
   endLine: number;
 };
 
-function formatSummaryFooter(displayPath: string, elidedRanges: readonly SummaryRange[]): string {
+type SummaryUnit =
+  | { kind: "line"; line: number; text: string }
+  | { kind: "elided"; startLine: number; endLine: number }
+  | { kind: "merged"; startLine: number; endLine: number; headText: string; tailText: string };
+
+function canMergeBracePair(headLine: string, tailLine: string): boolean {
+  const head = headLine.trimEnd();
+  const tail = tailLine.trim();
+  const opener = head.slice(-1);
+  const closer = BRACE_PAIRS[opener];
+  if (!closer) {
+    return false;
+  }
+  if (!tail.startsWith(closer)) {
+    return false;
+  }
+  return BRACE_TAIL_TRAILING_RE.test(tail.slice(closer.length));
+}
+
+function renderMergedSummaryLine(unit: Extract<SummaryUnit, { kind: "merged" }>): string {
+  return `${unit.startLine}-${unit.endLine}:${unit.headText.trimEnd()} .. ${unit.tailText.trim()}`;
+}
+
+function flattenSummaryUnits(summary: SummaryResult): SummaryUnit[] {
+  const raw: SummaryUnit[] = [];
+  for (const segment of summary.segments) {
+    if (segment.kind === "elided") {
+      raw.push({ kind: "elided", startLine: segment.startLine, endLine: segment.endLine });
+      continue;
+    }
+    const text = segment.text ?? "";
+    if (!text) {
+      continue;
+    }
+    const lines = splitLogicalLines(text);
+    for (let index = 0; index < lines.length; index += 1) {
+      raw.push({ kind: "line", line: segment.startLine + index, text: lines[index] ?? "" });
+    }
+  }
+
+  const units: SummaryUnit[] = [];
+  let index = 0;
+  while (index < raw.length) {
+    const current = raw[index];
+    if (current?.kind === "elided") {
+      const previous = units.length > 0 ? units[units.length - 1] : null;
+      const next = index + 1 < raw.length ? raw[index + 1] : null;
+      if (previous?.kind === "line" && next?.kind === "line" && canMergeBracePair(previous.text, next.text)) {
+        units.pop();
+        units.push({
+          kind: "merged",
+          startLine: previous.line,
+          endLine: next.line,
+          headText: previous.text,
+          tailText: next.text,
+        });
+        index += 2;
+        continue;
+      }
+    }
+    if (current) {
+      units.push(current);
+    }
+    index += 1;
+  }
+  return units;
+}
+
+function formatSummaryFooter(displayPath: string, elidedRanges: readonly SummaryRange[], elidedLines?: number): string {
   if (elidedRanges.length === 0) {
     return "";
   }
-  const elidedLines = elidedRanges.reduce((total, range) => total + (range.endLine - range.startLine + 1), 0);
+  const effectiveElidedLines = elidedLines
+    ?? elidedRanges.reduce((total, range) => total + (range.endLine - range.startLine + 1), 0);
   const selector = elidedRanges
     .slice(0, HASHLINE_SUMMARY_SAMPLE_RANGES)
     .map((range) => `${range.startLine}-${range.endLine}`)
     .join(",");
-  const lineWord = elidedLines === 1 ? "line" : "lines";
+  const lineWord = effectiveElidedLines === 1 ? "line" : "lines";
   const example = `${displayPath}:${selector}`;
   const suffix = elidedRanges.length > HASHLINE_SUMMARY_SAMPLE_RANGES ? `, e.g. ${example}` : ` with ${example}`;
-  return `[${elidedLines} ${lineWord} elided; re-read needed ranges${suffix}]`;
+  return `[${effectiveElidedLines} ${lineWord} elided; re-read needed ranges${suffix}]`;
 }
 
 function renderSummaryReadOutput(params: {
@@ -395,6 +646,7 @@ function renderSummaryReadOutput(params: {
 }): string {
   const rendered: string[] = [hashlineHeader(params.displayPath, params.tag)];
   const elidedRanges: SummaryRange[] = [];
+  let elidedLines = 0;
   let renderedBytes = Buffer.byteLength(`${rendered[0]}\n`, "utf-8");
   let renderedLineCount = 0;
 
@@ -417,28 +669,29 @@ function renderSummaryReadOutput(params: {
     return true;
   };
 
-  for (const segment of params.summary.segments) {
-    if (segment.kind === "elided") {
-      elidedRanges.push({ startLine: segment.startLine, endLine: segment.endLine });
-      if (!pushRenderedLine(`[lines ${segment.startLine}-${segment.endLine} elided]`)) {
+  for (const unit of flattenSummaryUnits(params.summary)) {
+    if (unit.kind === "elided") {
+      elidedRanges.push({ startLine: unit.startLine, endLine: unit.endLine });
+      elidedLines += unit.endLine - unit.startLine + 1;
+      if (!pushRenderedLine("...")) {
         break;
       }
       continue;
     }
-    const text = segment.text ?? "";
-    if (!text) {
-      continue;
-    }
-    const lines = splitLogicalLines(text);
-    for (let index = 0; index < lines.length; index += 1) {
-      const lineNumber = segment.startLine + index;
-      if (!pushRenderedLine(`${lineNumber}:${lines[index] ?? ""}`)) {
+    if (unit.kind === "merged") {
+      elidedRanges.push({ startLine: unit.startLine, endLine: unit.endLine });
+      elidedLines += Math.max(0, unit.endLine - unit.startLine - 1);
+      if (!pushRenderedLine(renderMergedSummaryLine(unit))) {
         break;
       }
+      continue;
+    }
+    if (!pushRenderedLine(`${unit.line}:${unit.text}`)) {
+      break;
     }
   }
 
-  const footer = formatSummaryFooter(params.displayPath, elidedRanges);
+  const footer = formatSummaryFooter(params.displayPath, elidedRanges, elidedLines);
   if (footer) {
     rendered.push(footer);
   }
@@ -506,7 +759,7 @@ function stripHashlinePrefixes(lines: readonly string[]): string[] {
   return cleaned;
 }
 
-function stripWriteContentWithPotentialLooseHeader(content: string): { text: string; stripped: boolean } {
+function stripHashlineContentWithPotentialLooseHeader(content: string): { text: string; stripped: boolean } {
   const hadTrailingNewline = content.endsWith("\n");
   const lines = content.split("\n");
   const cleaned = stripHashlinePrefixes(lines);
@@ -526,6 +779,19 @@ function stripWriteContentWithPotentialLooseHeader(content: string): { text: str
     return { text: content, stripped: false };
   }
   return { text: joinLogicalLines(cleanedWithoutHeader, hadTrailingNewline), stripped: true };
+}
+
+function containsStructuralSummaryPlaceholder(params: {
+  originalText: string;
+  cleanedText: string;
+}): boolean {
+  if (HASHLINE_STRUCTURAL_SUMMARY_LINE_RE.test(params.originalText) || HASHLINE_STRUCTURAL_SUMMARY_LINE_RE.test(params.cleanedText)) {
+    return true;
+  }
+  if (HASHLINE_MERGED_SUMMARY_RANGE_RE.test(params.originalText)) {
+    return true;
+  }
+  return false;
 }
 
 function isLikelyBinaryBuffer(buffer: Buffer): boolean {
@@ -702,6 +968,11 @@ async function resolveArchiveReadPath(rawPath: string, cwd: string): Promise<Res
 export function createPiHashlineToolDefinitions(cwd: string, store = new HashlineSnapshotStore()): ToolDefinition[] {
   const baseReadTool = createReadToolDefinition(cwd);
   const {
+    renderCall: _baseEditRenderCall,
+    renderResult: _baseEditRenderResult,
+    ...baseEditTool
+  } = createEditToolDefinition(cwd);
+  const {
     renderCall: _baseWriteRenderCall,
     renderResult: _baseWriteRenderResult,
     ...baseWriteTool
@@ -710,13 +981,16 @@ export function createPiHashlineToolDefinitions(cwd: string, store = new Hashlin
   const readTool = defineTool({
     ...baseReadTool,
     description:
-      "Read files, directories, and common documents. Editable text results are returned as snapshot-tagged, line-numbered hashline output (`¶path#TAG` then `N:text`) so follow-up tools can refer back to the exact file view you read. The path may include line selectors like `src/app.ts:40-90,140-170` for targeted rereads. Plain code reads may return structural summaries that keep declarations and elide large bodies; re-read those ranges with selectors or offset/limit before changing them. Directories return numbered entry listings. Images are returned inline as attachments. PDFs, DOCX, PPTX, XLSX, and XLS files are converted into readable text output.",
+      "Read files, directories, .zip archive members, and common documents. Use this tool for workspace inspection instead of shelling out to `cat`, `head`, `tail`, `ls`, or archive CLIs. Editable text results are returned as snapshot-tagged, line-numbered hashline output (`¶path#TAG` then `N:text`) so follow-up tools can refer back to the exact file view you read. The path may include line selectors like `src/app.ts:40-90,140-170` for targeted rereads, and `:raw` to request verbatim text without hashline formatting or structural summaries. Plain code reads may return structural summaries that keep declarations and elide large bodies; re-read those ranges with selectors or offset/limit before changing them. Directories return numbered entry listings. Images are returned inline as attachments. PDFs, DOCX, PPTX, XLSX, and XLS files are converted into readable text output.",
     promptSnippet: "Read snapshot-tagged file contents for precise edits and full-file rewrites",
     promptGuidelines: [
       "Use read before editing. For exact replacement edits, copy the needed old text from read output; for full rewrites, you may paste hashline read output into write and it will strip the display prefixes automatically.",
-      "For targeted rereads, prefer path selectors like `path/to/file.ts:40-90` or `path/to/file.ts:40-90,140-170`.",
-      "Use offset/limit to continue large files instead of re-reading from the top.",
+      "Use read for workspace inspection instead of shelling out to `cat`, `head`, `tail`, `ls`, or archive CLIs.",
+      "For targeted rereads, prefer path selectors like `path/to/file.ts:40-90`, `path/to/file.ts:40-90,140-170`, or append `:raw` when you need verbatim text.",
+      "Use offset/limit only to continue a long view. When you already know the relevant area, prefer selectors over re-reading from the top.",
       "If read returns a structural summary with `[lines A-B elided]`, do a targeted follow-up read with a line selector before editing inside the elided body.",
+      "If read returns a structural summary with `...` or `start-end:... .. }`, do a targeted follow-up read with a line selector before editing inside the elided body.",
+      "Never guess what is inside `...` or merged summary lines; those markers carry no content.",
       "If you copy numbered read output into a full-file rewrite, the write tool will strip the hashline header and line prefixes automatically.",
     ],
     async execute(toolCallId, params, signal, onUpdate, ctx) {
@@ -730,10 +1004,9 @@ export function createPiHashlineToolDefinitions(cwd: string, store = new Hashlin
       const resolvedArchivePath = await resolveArchiveReadPath(rawPath, cwd);
       const pathForSelectorSplit = resolvedArchivePath ? resolvedArchivePath.archiveSubPath : rawPath;
       const splitPath = splitPathAndSelector(pathForSelectorSplit);
-      const selectorRanges = splitPath.selector ? parseLineRanges(splitPath.selector) : null;
-      if (splitPath.selector && !selectorRanges) {
-        throw new Error(`Invalid line selector in path ${JSON.stringify(rawPath)}.`);
-      }
+      const parsedSelector = splitPath.parsed;
+      const rawSelector = isRawSelector(parsedSelector);
+      const selectorRanges = parsedSelector.kind === "lines" ? parsedSelector.ranges : null;
       if (selectorRanges && (explicitOffset !== undefined || explicitLimit !== undefined)) {
         throw new Error("Use either path selectors or offset/limit for read, not both in the same call.");
       }
@@ -744,8 +1017,8 @@ export function createPiHashlineToolDefinitions(cwd: string, store = new Hashlin
           throw new Error(`Archive path not found: ${rawPath}`);
         }
         if (archiveNode.isDirectory) {
-          if (selectorRanges) {
-            throw new Error(`Line-range selectors require a file inside the archive, not directory ${JSON.stringify(rawPath)}.`);
+          if (parsedSelector.kind !== "none") {
+            throw new Error(`Path selectors require a file inside the archive, not directory ${JSON.stringify(rawPath)}.`);
           }
           return {
             content: [{
@@ -782,24 +1055,61 @@ export function createPiHashlineToolDefinitions(cwd: string, store = new Hashlin
         const rawContent = memberBuffer.toString("utf-8");
         const { text } = stripBom(rawContent);
         const normalizedText = normalizeToLF(text);
-        const tag = store.record({
-          absolutePath: memberAbsolutePath,
-          displayPath: memberDisplayPath,
-          normalizedText,
-        });
         const selectedRange = selectorRanges?.length === 1 ? selectorRangeToOffsetLimit(selectorRanges[0]!) : null;
         const offset = selectedRange?.offset ?? explicitOffset;
         const limit = selectedRange?.limit ?? explicitLimit;
         const outputText = (() => {
           const allLines = splitLogicalLines(normalizedText);
+          if (rawSelector) {
+            if (selectorRanges && selectorRanges.length > 1) {
+              return renderHashlineMultiRangeReadOutput({
+                displayPath: memberDisplayPath,
+                allLines,
+                ranges: expandRangesWithContext(selectorRanges, allLines.length),
+                raw: true,
+              });
+            }
+            const window = buildRangeWindow({ allLines, offset, limit });
+            return renderRawReadOutput({
+              totalLines: allLines.length,
+              visibleStartLine: window.visibleStartLine,
+              visibleLines: window.visibleLines,
+            });
+          }
           if (selectorRanges && selectorRanges.length > 1) {
+            const visibleRanges = expandRangesWithContext(selectorRanges, allLines.length);
+            const tag = store.recordSparse({
+              absolutePath: memberAbsolutePath,
+              displayPath: memberDisplayPath,
+              entries: sparseEntriesFromRanges({ allLines, ranges: visibleRanges }),
+            });
             return renderHashlineMultiRangeReadOutput({
               displayPath: memberDisplayPath,
               tag,
               allLines,
-              ranges: selectorRanges,
+              ranges: visibleRanges,
             });
           }
+          if (offset !== undefined || limit !== undefined) {
+            const window = buildRangeWindow({ allLines, offset, limit });
+            const tag = store.recordSparse({
+              absolutePath: memberAbsolutePath,
+              displayPath: memberDisplayPath,
+              entries: window.sparseEntries,
+            });
+            return renderHashlineReadOutput({
+              displayPath: memberDisplayPath,
+              tag,
+              totalLines: allLines.length,
+              visibleStartLine: window.visibleStartLine,
+              visibleLines: window.visibleLines,
+            });
+          }
+          const tag = store.record({
+            absolutePath: memberAbsolutePath,
+            displayPath: memberDisplayPath,
+            normalizedText,
+          });
           return maybeRenderStructuralSummary({
             displayPath: memberDisplayPath,
             extension: memberExtension,
@@ -811,9 +1121,9 @@ export function createPiHashlineToolDefinitions(cwd: string, store = new Hashlin
           }) ?? renderHashlineReadOutput({
             displayPath: memberDisplayPath,
             tag,
-            allLines,
-            offset,
-            limit,
+            totalLines: allLines.length,
+            visibleStartLine: 1,
+            visibleLines: allLines,
           });
         })();
         return {
@@ -825,8 +1135,8 @@ export function createPiHashlineToolDefinitions(cwd: string, store = new Hashlin
       const stats = await fs.stat(absolutePath);
       const displayPath = normalizeDisplayPath(cwd, absolutePath);
       if (stats.isDirectory()) {
-        if (selectorRanges) {
-          throw new Error(`Line-range selectors require a regular file, not directory ${JSON.stringify(displayPath)}.`);
+        if (parsedSelector.kind !== "none") {
+          throw new Error(`Path selectors require a regular file, not directory ${JSON.stringify(displayPath)}.`);
         }
         return {
           content: [{
@@ -846,8 +1156,8 @@ export function createPiHashlineToolDefinitions(cwd: string, store = new Hashlin
         return baseReadTool.execute(toolCallId, params, signal, onUpdate, ctx);
       }
       if (HASHLINE_DOCUMENT_MIME_TYPES.has(extension)) {
-        if (selectorRanges) {
-          throw new Error(`Line-range selectors are only supported for plain text code reads, not ${JSON.stringify(displayPath)}.`);
+        if (parsedSelector.kind !== "none") {
+          throw new Error(`Path selectors are only supported for plain text code reads, not ${JSON.stringify(displayPath)}.`);
         }
         return {
           content: [{
@@ -881,20 +1191,57 @@ export function createPiHashlineToolDefinitions(cwd: string, store = new Hashlin
       const rawContent = rawBuffer.toString("utf-8");
       const { text } = stripBom(rawContent);
       const normalizedText = normalizeToLF(text);
-      const tag = store.record({ absolutePath, displayPath, normalizedText });
       const selectedRange = selectorRanges?.length === 1 ? selectorRangeToOffsetLimit(selectorRanges[0]!) : null;
       const offset = selectedRange?.offset ?? explicitOffset;
       const limit = selectedRange?.limit ?? explicitLimit;
       const outputText = (() => {
         const allLines = splitLogicalLines(normalizedText);
+        if (rawSelector) {
+          if (selectorRanges && selectorRanges.length > 1) {
+            return renderHashlineMultiRangeReadOutput({
+              displayPath,
+              allLines,
+              ranges: expandRangesWithContext(selectorRanges, allLines.length),
+              raw: true,
+            });
+          }
+          const window = buildRangeWindow({ allLines, offset, limit });
+          return renderRawReadOutput({
+            totalLines: allLines.length,
+            visibleStartLine: window.visibleStartLine,
+            visibleLines: window.visibleLines,
+          });
+        }
         if (selectorRanges && selectorRanges.length > 1) {
+          const visibleRanges = expandRangesWithContext(selectorRanges, allLines.length);
+          const tag = store.recordSparse({
+            absolutePath,
+            displayPath,
+            entries: sparseEntriesFromRanges({ allLines, ranges: visibleRanges }),
+          });
           return renderHashlineMultiRangeReadOutput({
             displayPath,
             tag,
             allLines,
-            ranges: selectorRanges,
+            ranges: visibleRanges,
           });
         }
+        if (offset !== undefined || limit !== undefined) {
+          const window = buildRangeWindow({ allLines, offset, limit });
+          const tag = store.recordSparse({
+            absolutePath,
+            displayPath,
+            entries: window.sparseEntries,
+          });
+          return renderHashlineReadOutput({
+            displayPath,
+            tag,
+            totalLines: allLines.length,
+            visibleStartLine: window.visibleStartLine,
+            visibleLines: window.visibleLines,
+          });
+        }
+        const tag = store.record({ absolutePath, displayPath, normalizedText });
         return maybeRenderStructuralSummary({
           displayPath,
           extension,
@@ -906,9 +1253,9 @@ export function createPiHashlineToolDefinitions(cwd: string, store = new Hashlin
         }) ?? renderHashlineReadOutput({
           displayPath,
           tag,
-          allLines,
-          offset,
-          limit,
+          totalLines: allLines.length,
+          visibleStartLine: 1,
+          visibleLines: allLines,
         });
       })();
       return {
@@ -918,20 +1265,80 @@ export function createPiHashlineToolDefinitions(cwd: string, store = new Hashlin
     },
   });
 
+  const editTool = defineTool({
+    ...baseEditTool,
+    description:
+      "Edit a single existing file using exact text replacement. Read or search first, then copy the exact snippet you want to replace. Hashline display prefixes copied from read or search output are stripped automatically from edits[].oldText and edits[].newText before matching. Do not edit structural summary placeholders like `...`, `…`, or merged brace-summary lines; re-read the elided ranges first.",
+    promptSnippet: "Make precise file edits with exact text replacement, including snippets copied from hashline read/search output",
+    promptGuidelines: [
+      "Use edit for precise existing-file changes where edits[].oldText must match exactly.",
+      "Read or search first, then copy the exact old text from the latest output instead of paraphrasing it from memory.",
+      "You may paste numbered snippets copied from hashline read/search output into edits[].oldText or edits[].newText; edit will strip the display prefixes before applying replacements.",
+      "Do not use structural summary placeholders like `...`, `…`, or merged ` .. ` brace-summary lines in edits. Re-read the elided ranges first.",
+      "When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls.",
+      "Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits.",
+    ],
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
+      const rawEdits = Array.isArray((params as { edits?: unknown[] }).edits)
+        ? (params as { edits: Array<{ oldText?: unknown; newText?: unknown }> }).edits
+        : null;
+      if (!rawEdits) {
+        return baseEditTool.execute(toolCallId, params, signal, onUpdate, ctx);
+      }
+
+      let strippedAnyPrefixes = false;
+      const sanitizedEdits = rawEdits.map((edit, index) => {
+        const rawOldText = typeof edit.oldText === "string" ? edit.oldText : "";
+        const rawNewText = typeof edit.newText === "string" ? edit.newText : "";
+        const cleanedOld = stripHashlineContentWithPotentialLooseHeader(rawOldText);
+        const cleanedNew = stripHashlineContentWithPotentialLooseHeader(rawNewText);
+        if (
+          containsStructuralSummaryPlaceholder({ originalText: rawOldText, cleanedText: cleanedOld.text })
+          || containsStructuralSummaryPlaceholder({ originalText: rawNewText, cleanedText: cleanedNew.text })
+        ) {
+          throw new Error(`Edit ${index + 1} contains structural summary placeholders. Re-read the elided ranges before editing.`);
+        }
+        if (cleanedOld.stripped || cleanedNew.stripped) {
+          strippedAnyPrefixes = true;
+        }
+        return {
+          ...edit,
+          oldText: cleanedOld.text,
+          newText: cleanedNew.text,
+        };
+      });
+
+      const result = await baseEditTool.execute(
+        toolCallId,
+        { ...(isRecord(params) ? params : {}), edits: sanitizedEdits } as never,
+        signal,
+        onUpdate,
+        ctx,
+      );
+      if (strippedAnyPrefixes) {
+        const block = result.content.find((entry) => entry.type === "text");
+        if (block && "text" in block && typeof block.text === "string") {
+          block.text += "\nNote: auto-stripped hashline display prefixes from edit input before applying replacements.";
+        }
+      }
+      return result;
+    },
+  });
+
   const writeTool = defineTool({
     ...baseWriteTool,
     description:
-      "Write content to a file. Creates the file if it doesn't exist and overwrites it if it does. If the content was copied from hashline read output (`¶path#TAG` and `N:text`), those display prefixes are stripped automatically before writing.",
+      "Write content to a file. Creates the file if it doesn't exist and overwrites it if it does. Prefer edit for targeted modifications to existing files; use write for new files or full rewrites. If the content was copied from hashline read output (`¶path#TAG` and `N:text`), those display prefixes are stripped automatically before writing.",
     promptSnippet: "Create or overwrite files, including content copied from hashline read output",
     promptGuidelines: [
-      "Use write for new files or complete rewrites.",
+      "Use write for new files or complete rewrites. Prefer edit for targeted modifications to existing files.",
       "If you copied content from hashline read output, you may paste it directly; write will strip the `¶path#TAG` header and numbered line prefixes before writing.",
       "Do not write structural summary placeholders like `[lines A-B elided]`; re-read those ranges first.",
     ],
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       const pathValue = String((params as { path?: string }).path ?? "");
       const contentValue = String((params as { content?: string }).content ?? "");
-      const { text: cleanContent, stripped } = stripWriteContentWithPotentialLooseHeader(contentValue);
+      const { text: cleanContent, stripped } = stripHashlineContentWithPotentialLooseHeader(contentValue);
       const result = await baseWriteTool.execute(
         toolCallId,
         { ...(isRecord(params) ? params : {}), path: pathValue, content: cleanContent } as never,
@@ -949,5 +1356,5 @@ export function createPiHashlineToolDefinitions(cwd: string, store = new Hashlin
     },
   });
 
-  return [readTool, writeTool];
+  return [readTool, editTool, writeTool];
 }

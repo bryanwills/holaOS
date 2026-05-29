@@ -78,6 +78,7 @@ import {
   type RuntimeHarnessPlugin,
 } from "./harness-registry.js";
 import { buildRunnerEnv } from "./runner-worker.js";
+import { installBenignStdioEpipeGuard } from "./stdio-epipe.js";
 import {
   startWorkspaceMcpSidecar,
   type WorkspaceMcpSidecarCliRequest,
@@ -2896,6 +2897,7 @@ export async function runTsRunnerCli(
   } = {},
 ): Promise<number> {
   const io = options.io ?? { stdout: process.stdout, stderr: process.stderr };
+  installBenignStdioEpipeGuard(io);
   const logger = options.logger ?? console;
   const requestBase64 =
     argv[0] === "--request-base64" ? (argv[1] ?? "") : (argv[0] ?? "");

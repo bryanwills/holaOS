@@ -9,6 +9,7 @@ import {
   type ResolvedIntegrationRequirement
 } from "./integration-types.js";
 import { validateCanonicalIntegrationProviderId } from "./integration-catalog.js";
+import { installBenignStdioEpipeGuard } from "./stdio-epipe.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -1006,6 +1007,7 @@ export async function runWorkspaceRuntimePlanCli(
   } = {}
 ): Promise<number> {
   const io = options.io ?? { stdout: process.stdout, stderr: process.stderr };
+  installBenignStdioEpipeGuard(io);
   const operation = (argv[0] ?? "").trim().toLowerCase();
   const requestBase64 = argv[1] === "--request-base64" ? argv[2] ?? "" : argv[1] ?? "";
 

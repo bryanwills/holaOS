@@ -389,8 +389,15 @@ export function createPiFindToolDefinition(cwd: string) {
     ...baseTool,
     parameters,
     description:
-      `Find files and directories from one or more file, directory, or glob inputs. Results are grouped by directory, sorted by most recent modification time, and truncated to ${FIND_MAX_LIMIT} results or ${formatSize(DEFAULT_MAX_BYTES)} of output.`,
+      `Find files and directories from one or more file, directory, or glob inputs. Use this tool for filename lookup instead of shelling out to \`find\`, \`fd\`, or \`ls\`. Results are grouped by directory, sorted by most recent modification time, and truncated to ${FIND_MAX_LIMIT} results or ${formatSize(DEFAULT_MAX_BYTES)} of output.`,
     promptSnippet: "Find files and directories from file, directory, or glob inputs",
+    promptGuidelines: [
+      "Use find for filename and path discovery instead of shelling out to `find`, `fd`, `locate`, or `ls`.",
+      "Pass multiple search scopes as separate entries in `paths`, not one comma-joined string.",
+      "Keep `gitignore` enabled unless you intentionally need ignored files such as `.env`, logs, or build artifacts.",
+      "Use `timeout` only when searching very large scopes; if results are truncated, narrow the glob before raising limits.",
+      "Use read or search after find to inspect file contents; do not treat path hits as content evidence.",
+    ],
     async execute(_toolCallId: string, rawParams: FindToolParams, signal?: AbortSignal) {
       const params = rawParams as FindToolParams;
       const normalizedPaths = parseFindPathInputs(params);

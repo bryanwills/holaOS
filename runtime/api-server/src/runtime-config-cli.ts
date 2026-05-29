@@ -7,6 +7,7 @@ import {
   runtimeConfigResponse,
   updateRuntimeConfigDocument
 } from "./runtime-config.js";
+import { installBenignStdioEpipeGuard } from "./stdio-epipe.js";
 
 type ResolveRuntimeConfigRequest = {
   require_auth?: boolean | null;
@@ -78,6 +79,7 @@ export async function runRuntimeConfigCli(
   } = {}
 ): Promise<number> {
   const io = options.io ?? { stdout: process.stdout, stderr: process.stderr };
+  installBenignStdioEpipeGuard(io);
   const operation = (argv[0] ?? "").trim().toLowerCase();
   const requestBase64 = argv[1] === "--request-base64" ? argv[2] ?? "" : argv[1] ?? "";
 

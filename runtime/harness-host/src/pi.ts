@@ -95,6 +95,7 @@ import { createPiFindToolDefinition } from "./pi-find-tool.js";
 import { HashlineSnapshotStore } from "./pi-hashline-shared.js";
 import { createPiHashlineToolDefinitions } from "./pi-hashline-tools.js";
 import { createPiSearchToolDefinition } from "./pi-search-tool.js";
+import { installBenignStdioEpipeGuard } from "./stdio-epipe.js";
 import { resolvePiWebSearchToolDefinitions } from "./pi-web-search.js";
 
 export type PiMappedEvent = {
@@ -2369,6 +2370,7 @@ function suppressPiPostRunAutoCompaction(session: AgentSession): void {
 }
 
 export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaultPiDeps()): Promise<number> {
+  installBenignStdioEpipeGuard();
   let sequence = 0;
   const nextSequence = () => {
     sequence += 1;

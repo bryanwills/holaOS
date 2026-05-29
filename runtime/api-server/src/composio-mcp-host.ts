@@ -4,6 +4,7 @@ import {
   type Server as HttpServer,
   type ServerResponse,
 } from "node:http";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -15,6 +16,7 @@ import {
   ComposioToolExecutionError,
   type ComposioServiceConfig,
 } from "./composio-service.js";
+import { installBenignStdioEpipeGuard } from "./stdio-epipe.js";
 
 /**
  * One Composio tool exposure: maps an MCP tool name visible to the agent
@@ -306,6 +308,7 @@ export async function runComposioMcpHostCli(
   argv: string[],
   deps: ComposioMcpHostDeps = {},
 ): Promise<number> {
+  installBenignStdioEpipeGuard();
   const requestBase64 = argv[0] === "--request-base64" ? argv[1] ?? "" : argv[0] ?? "";
   if (!requestBase64) {
     process.stderr.write("request_base64 is required\n");
@@ -352,6 +355,13 @@ async function main(): Promise<void> {
   process.exitCode = await runComposioMcpHostCli(process.argv.slice(2));
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+// See workspace-runtime-plan.ts for why the usual import.meta.url guard
+// isn't sufficient when these files are re-bundled into dist/index.mjs.
+const COMPOSIO_MCP_HOST_CLI_BASENAME = "composio-mcp-host";
+if (
+  import.meta.url === pathToFileURL(process.argv[1] ?? "").href &&
+  path.basename(process.argv[1] ?? "", path.extname(process.argv[1] ?? "")) ===
+    COMPOSIO_MCP_HOST_CLI_BASENAME
+) {
   await main();
 }

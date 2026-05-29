@@ -4,6 +4,7 @@ import path from "node:path";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { installBenignStdioEpipeGuard } from "./stdio-epipe.js";
 import { ensureWorkspaceStateDir } from "./workspace-bundle-paths.js";
 
 const WORKSPACE_MCP_STATE_VERSION = 1;
@@ -392,6 +393,7 @@ export async function runWorkspaceMcpSidecarCli(
   } = {}
 ): Promise<number> {
   const io = options.io ?? { stdout: process.stdout, stderr: process.stderr };
+  installBenignStdioEpipeGuard(io);
   const requestBase64 = argv[0] === "--request-base64" ? argv[1] ?? "" : argv[0] ?? "";
   if (!requestBase64) {
     io.stderr.write("request_base64 is required\n");

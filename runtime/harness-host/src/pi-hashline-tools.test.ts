@@ -4,9 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { createCodingTools } from "@mariozechner/pi-coding-agent";
 import JSZip from "jszip";
 
+import { HashlineSnapshotStore } from "./pi-hashline-shared.js";
 import { createPiHashlineToolDefinitions } from "./pi-hashline-tools.js";
 
 function createPdfBuffer(text: string): Buffer {
@@ -113,6 +113,7 @@ test("hashline read emits snapshot-tagged numbered output", async () => {
     const text = firstTextBlock(result);
 
     assert.match(text, /^¶example\.ts#[0-9A-F]{3}$/m);
+    assert.match(text, /^1:const first = 1;$/m);
     assert.match(text, /^2:const second = 2;$/m);
     assert.match(text, /^3:const third = 3;$/m);
   });
@@ -264,10 +265,10 @@ test("hashline read supports line selectors inside archive members", async () =>
     const text = firstTextBlock(result);
 
     assert.match(text, /^¶bundle\.zip:src\/index\.ts#[0-9A-F]{3}$/m);
+    assert.match(text, /^1:line 1$/m);
     assert.match(text, /^2:line 2$/m);
     assert.match(text, /^3:line 3$/m);
-    assert.doesNotMatch(text, /^1:line 1$/m);
-    assert.doesNotMatch(text, /^4:line 4$/m);
+    assert.match(text, /^4:line 4$/m);
   });
 });
 
@@ -306,12 +307,10 @@ test("hashline read structurally summarizes long code files and adds targeted re
     const text = firstTextBlock(result);
 
     assert.match(text, /^¶summary-target\.ts#[0-9A-F]{3}$/m);
-    assert.match(text, /^1:export function example0\(input: string\): string \{$/m);
-    assert.match(text, /^\[lines 2-6 elided\]$/m);
-    assert.match(text, /^7:\}$/m);
+    assert.match(text, /^1-7:export function example0\(input: string\): string \{ .. \}$/m);
     assert.match(
       text,
-      /\[\d+ lines elided; re-read needed ranges(?: with|, e\.g\.) summary-target\.ts:2-6/,
+      /\[\d+ lines elided; re-read needed ranges(?: with|, e\.g\.) summary-target\.ts:1-7/,
     );
     assert.doesNotMatch(text, /2:  const normalized = input\.trim\(\);/);
   });
@@ -336,10 +335,10 @@ test("hashline read supports single-range path selectors", async () => {
     const text = firstTextBlock(result);
 
     assert.match(text, /^¶example\.ts#[0-9A-F]{3}$/m);
+    assert.match(text, /^1:const first = 1;$/m);
     assert.match(text, /^2:const second = 2;$/m);
     assert.match(text, /^3:const third = 3;$/m);
-    assert.doesNotMatch(text, /^1:const first = 1;$/m);
-    assert.doesNotMatch(text, /^4:const fourth = 4;$/m);
+    assert.match(text, /^4:const fourth = 4;$/m);
   });
 });
 
@@ -354,6 +353,10 @@ test("hashline read supports multi-range path selectors", async () => {
         "line 4",
         "line 5",
         "line 6",
+        "line 7",
+        "line 8",
+        "line 9",
+        "line 10",
         "",
       ].join("\n"),
       "utf-8",
@@ -362,7 +365,7 @@ test("hashline read supports multi-range path selectors", async () => {
     const [readTool] = createPiHashlineToolDefinitions(workspaceDir);
     const result = await readTool.execute(
       "call-1",
-      { path: "example.ts:2-3,6-6" },
+      { path: "example.ts:2-3,9-9" },
       undefined,
       undefined,
       {} as never,
@@ -370,12 +373,15 @@ test("hashline read supports multi-range path selectors", async () => {
     const text = firstTextBlock(result);
 
     assert.match(text, /^¶example\.ts#[0-9A-F]{3}$/m);
+    assert.match(text, /^1:line 1$/m);
     assert.match(text, /^2:line 2$/m);
     assert.match(text, /^3:line 3$/m);
     assert.match(text, /^6:line 6$/m);
+    assert.match(text, /^8:line 8$/m);
+    assert.match(text, /^9:line 9$/m);
+    assert.match(text, /^10:line 10$/m);
     assert.match(text, /^\u2026$/m);
-    assert.doesNotMatch(text, /^4:line 4$/m);
-    assert.doesNotMatch(text, /^5:line 5$/m);
+    assert.doesNotMatch(text, /^7:line 7$/m);
   });
 });
 
@@ -393,11 +399,110 @@ test("hashline read bypasses structural summaries when offset or limit is provid
     );
     const text = firstTextBlock(result);
 
+    assert.match(text, /^1:export function example0\(input: string\): string \{$/m);
     assert.match(text, /^2:  const normalized = input\.trim\(\);$/m);
     assert.match(text, /^3:  const fallback = normalized \|\| "item-0";$/m);
     assert.match(text, /^4:  const upper = fallback\.toUpperCase\(\);$/m);
+    assert.match(text, /^5:  const suffix = upper\.slice\(0, 4\);$/m);
+    assert.match(text, /^6:  return `0:\$\{suffix\}`;$/m);
+    assert.match(text, /^7:\}$/m);
     assert.doesNotMatch(text, /\[lines 2-6 elided\]/);
     assert.doesNotMatch(text, /re-read needed ranges using offset\/limit/);
+  });
+});
+
+test("hashline read supports raw full-file reads without hashline formatting", async () => {
+  await withTempWorkspace(async (workspaceDir) => {
+    await fs.writeFile(
+      path.join(workspaceDir, "raw.txt"),
+      "first line\nsecond line\nthird line\n",
+      "utf-8",
+    );
+
+    const [readTool] = createPiHashlineToolDefinitions(workspaceDir);
+    const result = await readTool.execute(
+      "call-1",
+      { path: "raw.txt:raw" },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    const text = firstTextBlock(result);
+
+    assert.equal(text, "first line\nsecond line\nthird line");
+    assert.doesNotMatch(text, /^¶/m);
+    assert.doesNotMatch(text, /^\d+:/m);
+  });
+});
+
+test("hashline read supports raw range selectors in either order", async () => {
+  await withTempWorkspace(async (workspaceDir) => {
+    await fs.writeFile(
+      path.join(workspaceDir, "raw-range.txt"),
+      "one\ntwo\nthree\nfour\nfive\n",
+      "utf-8",
+    );
+
+    const [readTool] = createPiHashlineToolDefinitions(workspaceDir);
+    const first = firstTextBlock(await readTool.execute(
+      "call-1",
+      { path: "raw-range.txt:2-3:raw" },
+      undefined,
+      undefined,
+      {} as never,
+    ));
+    const second = firstTextBlock(await readTool.execute(
+      "call-2",
+      { path: "raw-range.txt:raw:2-3" },
+      undefined,
+      undefined,
+      {} as never,
+    ));
+
+    assert.equal(first, "one\ntwo\nthree\nfour\nfive");
+    assert.equal(second, first);
+    assert.doesNotMatch(first, /^¶/m);
+    assert.doesNotMatch(first, /^\d+:/m);
+  });
+});
+
+test("hashline read selector tags store only the emitted sparse window", async () => {
+  await withTempWorkspace(async (workspaceDir) => {
+    const snapshotStore = new HashlineSnapshotStore();
+    const filePath = path.join(workspaceDir, "sparse.ts");
+    await fs.writeFile(
+      filePath,
+      [
+        "line 1",
+        "line 2",
+        "line 3",
+        "line 4",
+        "line 5",
+        "line 6",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const [readTool] = createPiHashlineToolDefinitions(workspaceDir, snapshotStore);
+    const result = await readTool.execute(
+      "call-1",
+      { path: "sparse.ts:3-3" },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    const text = firstTextBlock(result);
+    const header = extractHashlineHeader(text);
+    const tagMatch = header.match(/^¶sparse\.ts#([0-9A-F]{3})$/);
+    assert.ok(tagMatch);
+
+    const snapshot = snapshotStore.lookup(filePath, tagMatch[1] ?? "");
+    assert.ok(snapshot);
+    assert.equal(snapshot.normalizedText, "line 2\nline 3\nline 4\nline 5\nline 6");
+    assert.equal(snapshot.sparseEntries?.has(1), false);
+    assert.equal(snapshot.sparseEntries?.has(2), true);
+    assert.equal(snapshot.sparseEntries?.has(6), true);
   });
 });
 
@@ -411,7 +516,11 @@ test("hashline write strips copied read prefixes before rewriting file content",
       "utf-8",
     );
 
-    const [readTool, writeTool] = createPiHashlineToolDefinitions(workspaceDir);
+    const tools = createPiHashlineToolDefinitions(workspaceDir);
+    const readTool = tools.find((tool) => tool.name === "read");
+    const writeTool = tools.find((tool) => tool.name === "write");
+    assert.ok(readTool);
+    assert.ok(writeTool);
     const readResult = await readTool.execute(
       "call-1",
       { path: "source.ts" },
@@ -439,7 +548,7 @@ test("hashline write strips copied read prefixes before rewriting file content",
   });
 });
 
-test("base edit remains the exact-replacement tool after hashline read/write overrides", async () => {
+test("hashline edit strips copied read prefixes before applying exact replacements", async () => {
   await withTempWorkspace(async (workspaceDir) => {
     const filePath = path.join(workspaceDir, "greet.ts");
     await fs.writeFile(
@@ -460,7 +569,7 @@ test("base edit remains the exact-replacement tool after hashline read/write ove
     assert.match(text, /^¶greet\.ts#[0-9A-F]{3}$/m);
     assert.match(text, /^2:  return `Hello, \$\{name\}!`;$/m);
 
-    const editTool = createCodingTools(workspaceDir).find((tool) => tool.name === "edit");
+    const editTool = createPiHashlineToolDefinitions(workspaceDir).find((tool) => tool.name === "edit");
     assert.ok(editTool, "expected the base exact-replacement edit tool");
 
     const editResult = await editTool.execute(
@@ -469,23 +578,66 @@ test("base edit remains the exact-replacement tool after hashline read/write ove
         path: "greet.ts",
         edits: [
           {
-            oldText: "  return `Hello, ${name}!`;",
-            newText: '  if (!name) return "Hello, stranger!";\n  return `Hello, ${name}!`;',
+            oldText: "2:  return `Hello, ${name}!`;",
+            newText: '2:  if (!name) return "Hello, stranger!";\n3:  return `Hello, ${name}!`;',
           },
         ],
       },
       undefined,
       undefined,
+      {} as never,
     );
 
     assert.equal(
       await fs.readFile(filePath, "utf-8"),
       'export function greet(name: string): string {\n  if (!name) return "Hello, stranger!";\n  return `Hello, ${name}!`;\n}\n',
     );
-    assert.match(firstTextBlock(editResult), /^Successfully replaced 1 block\(s\) in greet\.ts\.$/m);
+    assert.match(
+      firstTextBlock(editResult),
+      /^Successfully replaced 1 block\(s\) in greet\.ts\.\nNote: auto-stripped hashline display prefixes from edit input before applying replacements\.$/m,
+    );
     assert.match(
       String((editResult.details as { diff?: string } | undefined)?.diff ?? ""),
       /\+2   if \(!name\) return "Hello, stranger!";/,
+    );
+  });
+});
+
+test("hashline edit rejects structural summary placeholders", async () => {
+  await withTempWorkspace(async (workspaceDir) => {
+    const filePath = path.join(workspaceDir, "summary-target.ts");
+    await fs.writeFile(filePath, createSummarizableTsFile(), "utf-8");
+
+    const [readTool, editTool] = createPiHashlineToolDefinitions(workspaceDir);
+    assert.ok(editTool, "expected hashline edit tool");
+    const readResult = await readTool.execute(
+      "call-1",
+      { path: "summary-target.ts" },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    const summaryText = firstTextBlock(readResult);
+    const mergedLine = summaryText.split("\n").find((line) => /^1-7:export function example0/.test(line));
+    assert.ok(mergedLine);
+
+    await assert.rejects(
+      editTool.execute(
+        "call-2",
+        {
+          path: "summary-target.ts",
+          edits: [
+            {
+              oldText: mergedLine,
+              newText: mergedLine.replace(" .. ", " changed "),
+            },
+          ],
+        },
+        undefined,
+        undefined,
+        {} as never,
+      ),
+      /contains structural summary placeholders/i,
     );
   });
 });

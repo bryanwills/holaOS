@@ -649,7 +649,15 @@ export function createPiSearchToolDefinition(cwd: string, store = new HashlineSn
     name: "search",
     label: "search",
     description:
-      `Search file contents across files, directories, globs, or .zip archive members with grouped, hashline-aware results. Accepts file selectors like "src/app.ts:50-120" to constrain the search to specific line ranges. Results are grouped by file, include per-file hashline suffixes, show ${SEARCH_CONTEXT_BEFORE} line before and ${SEARCH_CONTEXT_AFTER} lines after each match with gap elision, paginate by ${SEARCH_FILE_WINDOW} files via skip, and truncate long lines to ${GREP_MAX_LINE_LENGTH} characters.`,
+      `Search file contents across files, directories, globs, or .zip archive members with grouped, hashline-aware results. Use this tool for content search instead of shelling out to \`grep\`, \`rg\`, or \`git grep\`. Accepts file selectors like "src/app.ts:50-120" to constrain the search to specific line ranges. Results are grouped by file, include per-file hashline suffixes, show ${SEARCH_CONTEXT_BEFORE} line before and ${SEARCH_CONTEXT_AFTER} lines after each match with gap elision, paginate by ${SEARCH_FILE_WINDOW} files via skip, and truncate long lines to ${GREP_MAX_LINE_LENGTH} characters.`,
+    promptSnippet: "Search workspace content with grouped, hashline-aware match frames",
+    promptGuidelines: [
+      "Use search for content lookup instead of shelling out to `grep`, `rg`, `ripgrep`, or `git grep`.",
+      "Use `paths` as separate array entries when searching multiple scopes; do not comma-join them into one string.",
+      "When the relevant area is already known, add a file selector like `src/app.ts:50-120` to constrain the search window.",
+      "Use `skip` to page to the next file window instead of rerunning the same broad search from the top.",
+      "If a search frame is not enough to edit safely, follow up with read on the exact file or range before changing anything.",
+    ],
     parameters,
     async execute(_toolCallId: string, rawParams: SearchToolParams, signal?: AbortSignal) {
       const params = rawParams as SearchToolParams;

@@ -351,13 +351,13 @@ const BUILTIN_CAPABILITY_DEFINITIONS: Record<string, ToolCapabilityDefinition> =
     kind: "builtin_tool",
     policy: "inspect",
     title: "Read",
-    description: "Read file contents or prior outputs without modifying workspace state.",
+    description: "Read files, directories, archive members, or prior outputs before editing or rewriting.",
   },
   edit: {
     kind: "builtin_tool",
     policy: "mutate",
     title: "Edit",
-    description: "Modify workspace files directly.",
+    description: "Modify existing workspace files directly from exact text previously read or searched.",
   },
   bash: {
     kind: "builtin_tool",
@@ -369,13 +369,13 @@ const BUILTIN_CAPABILITY_DEFINITIONS: Record<string, ToolCapabilityDefinition> =
     kind: "builtin_tool",
     policy: "inspect",
     title: "Search",
-    description: "Search workspace file contents by pattern with grouped, file-aware results.",
+    description: "Search workspace file contents by pattern with grouped, hashline-aware match frames; prefer this over shell grep.",
   },
   find: {
     kind: "builtin_tool",
     policy: "inspect",
     title: "Find",
-    description: "Find files and directories from file, directory, or glob inputs.",
+    description: "Find files and directories from file, directory, or glob inputs; prefer this over shell find or ls.",
   },
   list: {
     kind: "builtin_tool",

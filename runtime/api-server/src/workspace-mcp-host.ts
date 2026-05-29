@@ -6,6 +6,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
+import { installBenignStdioEpipeGuard } from "./stdio-epipe.js";
 import {
   decodeWorkspaceMcpCatalog,
   formatWorkspaceToolBridgeError,
@@ -246,6 +247,7 @@ export async function runWorkspaceMcpHostCli(
   argv: string[],
   deps: WorkspaceMcpHostDeps = {}
 ): Promise<number> {
+  installBenignStdioEpipeGuard();
   const requestBase64 = argv[0] === "--request-base64" ? argv[1] ?? "" : argv[0] ?? "";
   if (!requestBase64) {
     process.stderr.write("request_base64 is required\n");
@@ -292,6 +294,13 @@ async function main(): Promise<void> {
   process.exitCode = await runWorkspaceMcpHostCli(process.argv.slice(2));
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+// See workspace-runtime-plan.ts for why the usual import.meta.url guard
+// isn't sufficient when these files are re-bundled into dist/index.mjs.
+const WORKSPACE_MCP_HOST_CLI_BASENAME = "workspace-mcp-host";
+if (
+  import.meta.url === pathToFileURL(process.argv[1] ?? "").href &&
+  path.basename(process.argv[1] ?? "", path.extname(process.argv[1] ?? "")) ===
+    WORKSPACE_MCP_HOST_CLI_BASENAME
+) {
   await main();
 }
