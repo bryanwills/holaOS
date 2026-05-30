@@ -1459,7 +1459,7 @@ interface AppRowMultiIntegration {
 
 type ProviderRowStateSummary = {
   kind: "loading" | "no_connection" | "needs_binding" | "bound" | "no_workspace";
-  busy: "connecting" | "binding" | null;
+  busy: "connecting" | "binding" | "verifying" | null;
   hasError: boolean;
 };
 
