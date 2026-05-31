@@ -36,7 +36,7 @@ test("intel macOS desktop workflow publishes a notarized x64 DMG without mac upd
   assert.match(workflowSource, /permissions:\n\s+contents: write/);
   assert.match(workflowSource, /RELEASE_GH_REPO: holaboss-ai\/holaOS-releases/);
   assert.match(workflowSource, /DESKTOP_RELEASE_ASSET_NAME: holaOS-macos-x64\.dmg/);
-  assert.match(workflowSource, /runs-on: macos-13/);
+  assert.match(workflowSource, /runs-on: macos-15-intel/);
   assert.match(workflowSource, /publish-macos-intel-desktop requires an x64 runner; got \$\(uname -m\)/);
   assert.match(workflowSource, /Build macOS runtime bundle/);
   assert.match(workflowSource, /bash runtime\/deploy\/package_macos_runtime\.sh out\/runtime-macos/);

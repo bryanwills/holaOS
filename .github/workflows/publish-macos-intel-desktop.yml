@@ -65,7 +65,7 @@ env:
 
 jobs:
   publish-intel-macos-desktop:
-    runs-on: macos-13
+    runs-on: macos-15-intel
     env:
       MAC_CERTIFICATE: ${{ secrets.MAC_CERTIFICATE }}
       MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
