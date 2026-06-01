@@ -91,6 +91,7 @@ import {
   inspectDashboardUiUsage,
 } from "./workspace-app-ui-lint.js";
 import {
+  type OnboardingAlignmentReport,
   parseOnboardingAlignmentReport,
   sanitizeOnboardingAlignmentReport,
 } from "../../../shared/onboarding-contract.js";
@@ -2851,10 +2852,9 @@ function parseStoredAlignmentQuestion(
 
 function parseStoredAlignmentReport(
   raw: string | null | undefined,
-): JsonValue | null {
+): OnboardingAlignmentReport | null {
   const parsed = parseStoredOnboardingPayload(raw);
-  const normalized = parseOnboardingAlignmentReport(parsed);
-  return normalized as unknown as JsonValue | null;
+  return parseOnboardingAlignmentReport(parsed);
 }
 
 export function effectiveOnboardingState(workspace: WorkspaceRecord): string | null {
@@ -3489,14 +3489,70 @@ export class RuntimeAgentToolsService {
 
   approveAlignment(params: { workspaceId: string }): JsonObject {
     const scope = this.requireOnboardingFlowScope(params.workspaceId);
+    const sessionWorkspaceId = this.onboardingFlowWorkspaceId(scope);
     this.requireOnboardingState(scope.source, [
       ONBOARDING_AWAITING_ALIGNMENT_APPROVAL_STATE,
     ]);
+    const sessionId = normalizedString(scope.source.onboardingSessionId);
+    if (!sessionId) {
+      throw new RuntimeAgentToolsServiceError(
+        409,
+        "onboarding_session_not_configured",
+        "onboarding session is not configured",
+      );
+    }
+    if (
+      !this.store.getSession({
+        workspaceId: sessionWorkspaceId,
+        sessionId,
+      })
+    ) {
+      throw new RuntimeAgentToolsServiceError(
+        409,
+        "onboarding_session_not_found",
+        "onboarding session could not be found in the active onboarding workspace",
+      );
+    }
     const source = this.syncOnboardingFlow(scope, {
       onboardingState: ONBOARDING_IMPLEMENTING_STATE,
       onboardingAlignmentQuestion: null,
       onboardingVerificationReport: null,
     });
+    this.store.ensureRuntimeState({
+      workspaceId: sessionWorkspaceId,
+      sessionId,
+      status: "QUEUED",
+    });
+    const resumedInput = this.store.enqueueInput({
+      workspaceId: sessionWorkspaceId,
+      sessionId,
+      payload: {
+        text: [
+          "The user approved the alignment report.",
+          "Begin implementation now.",
+          "Treat the saved alignment report as the source of truth, coordinate the required specialists, and continue until you are ready to create the verification report.",
+        ].join("\n"),
+        attachments: [],
+        image_urls: [],
+        context: {
+          source: "alignment_approval",
+          approved_alignment_report_summary:
+            parseStoredAlignmentReport(source.onboardingAlignmentReport)
+              ?.summary ?? null,
+        },
+      },
+    });
+    this.store.updateRuntimeState({
+      workspaceId: sessionWorkspaceId,
+      sessionId,
+      status: "QUEUED",
+      currentInputId: resumedInput.inputId,
+      currentWorkerId: null,
+      leaseUntil: null,
+      heartbeatAt: null,
+      lastError: null,
+    });
+    this.options.queueWorker?.wake();
     return {
       ...onboardingPayload(source),
       lab_workspace_id: scope.lab?.id ?? null,

@@ -196,7 +196,8 @@ test("filterPiToolDefinitionsForRequest enforces the projected tool map and alia
     {
       tools: {
         read: true,
-        glob: true,
+        search: true,
+        find: true,
         list: true,
         ripgrep: true,
         skill: true,
@@ -205,7 +206,7 @@ test("filterPiToolDefinitionsForRequest enforces the projected tool map and alia
     },
     [
       { name: "read" },
-      { name: "ripgrep" },
+      { name: "search" },
       { name: "find" },
       { name: "ls" },
       { name: "skill" },
@@ -216,23 +217,25 @@ test("filterPiToolDefinitionsForRequest enforces the projected tool map and alia
 
   assert.deepEqual(
     filtered.map((tool) => tool.name),
-    ["read", "ripgrep", "find", "ls", "skill"]
+    ["read", "search", "find", "ls", "skill"]
   );
 });
 
-test("filterPiToolDefinitionsForRequest keeps the legacy grep request key working for ripgrep", () => {
+test("filterPiToolDefinitionsForRequest does not map deprecated grep or glob request keys", () => {
   const filtered = filterPiToolDefinitionsForRequest(
     {
       tools: {
         grep: true,
+        ripgrep: true,
+        glob: true,
       },
     },
-    [{ name: "ripgrep" }, { name: "bash" }]
+    [{ name: "search" }, { name: "find" }, { name: "bash" }]
   );
 
   assert.deepEqual(
     filtered.map((tool) => tool.name),
-    ["ripgrep"]
+    []
   );
 });
 

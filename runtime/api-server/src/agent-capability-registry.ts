@@ -351,13 +351,13 @@ const BUILTIN_CAPABILITY_DEFINITIONS: Record<string, ToolCapabilityDefinition> =
     kind: "builtin_tool",
     policy: "inspect",
     title: "Read",
-    description: "Read file contents or prior outputs without modifying workspace state.",
+    description: "Read files, directories, archive members, or prior outputs before editing or rewriting.",
   },
   edit: {
     kind: "builtin_tool",
     policy: "mutate",
     title: "Edit",
-    description: "Modify workspace files directly.",
+    description: "Modify existing workspace files directly from exact text previously read or searched.",
   },
   bash: {
     kind: "builtin_tool",
@@ -365,23 +365,17 @@ const BUILTIN_CAPABILITY_DEFINITIONS: Record<string, ToolCapabilityDefinition> =
     title: "Bash",
     description: "Run shell commands that may inspect or mutate workspace state.",
   },
-  ripgrep: {
+  search: {
     kind: "builtin_tool",
     policy: "inspect",
-    title: "Ripgrep",
-    description: "Search workspace file contents by pattern using ripgrep (rg).",
+    title: "Search",
+    description: "Search workspace file contents by pattern with grouped, hashline-aware match frames; prefer this over shell grep.",
   },
-  grep: {
+  find: {
     kind: "builtin_tool",
     policy: "inspect",
-    title: "Ripgrep",
-    description: "Legacy alias for ripgrep (rg) pattern search.",
-  },
-  glob: {
-    kind: "builtin_tool",
-    policy: "inspect",
-    title: "Glob",
-    description: "Find files and paths by glob pattern.",
+    title: "Find",
+    description: "Find files and directories from file, directory, or glob inputs; prefer this over shell find or ls.",
   },
   list: {
     kind: "builtin_tool",
@@ -501,9 +495,6 @@ function customCapabilityDefinition(toolName: string): ToolCapabilityDefinition 
   const normalized = normalizedToken(toolName);
   const inspectPrefixes = [
     "read",
-    "ripgrep",
-    "grep",
-    "glob",
     "list",
     "ls",
     "find",
@@ -706,9 +697,8 @@ function executionSemanticsForDescriptor(params: {
   }
   if (
     normalizedId === "read" ||
-    normalizedId === "ripgrep" ||
-    normalizedId === "grep" ||
-    normalizedId === "glob" ||
+    normalizedId === "search" ||
+    normalizedId === "find" ||
     normalizedId === "list"
   ) {
     return {
@@ -797,9 +787,8 @@ function authorityBoundaryForDescriptor(params: {
   if (
     normalizedId === "read" ||
     normalizedId === "edit" ||
-    normalizedId === "ripgrep" ||
-    normalizedId === "grep" ||
-    normalizedId === "glob" ||
+    normalizedId === "search" ||
+    normalizedId === "find" ||
     normalizedId === "list"
   ) {
     return {

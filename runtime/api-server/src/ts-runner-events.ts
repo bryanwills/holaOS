@@ -6,6 +6,7 @@ import {
   type TsRunnerRequest,
   resolvePushCallbackConfig
 } from "./ts-runner-contracts.js";
+import { installBenignStdioEpipeGuard } from "./stdio-epipe.js";
 
 export type TsRunnerPushEventClient = {
   config: TsRunnerPushCallbackConfig;
@@ -61,6 +62,7 @@ export async function closePushEventClient(_pushClient: TsRunnerPushEventClient 
 }
 
 export function writeTsRunnerEvent(io: { stdout: NodeJS.WritableStream }, event: TsRunnerEvent): void {
+  installBenignStdioEpipeGuard({ stdout: io.stdout, stderr: null });
   io.stdout.write(`${JSON.stringify(event)}\n`);
 }
 

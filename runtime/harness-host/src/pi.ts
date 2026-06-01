@@ -8,8 +8,6 @@ import {
   AuthStorage,
   createAgentSession,
   createCodingTools,
-  createFindTool,
-  createGrepTool,
   createLsTool,
   DefaultResourceLoader,
   loadSkillsFromDir,
@@ -93,7 +91,11 @@ import {
   harnessGenAiSpanAttributes,
   type HarnessGenAiUsageMetrics,
 } from "./harness-ai-monitoring.js";
+import { createPiFindToolDefinition } from "./pi-find-tool.js";
+import { HashlineSnapshotStore } from "./pi-hashline-shared.js";
 import { createPiHashlineToolDefinitions } from "./pi-hashline-tools.js";
+import { createPiSearchToolDefinition } from "./pi-search-tool.js";
+import { installBenignStdioEpipeGuard } from "./stdio-epipe.js";
 import { resolvePiWebSearchToolDefinitions } from "./pi-web-search.js";
 
 export type PiMappedEvent = {
@@ -205,11 +207,8 @@ const PI_AGENT_STATE_DIR = ".holaboss/pi-agent";
 const PI_SESSION_DIR = ".holaboss/pi-sessions";
 const PI_HARNESS_CLIENT_NAME = "holaboss-pi-harness";
 const PI_HARNESS_CLIENT_VERSION = "0.1.0";
-const PI_REQUEST_TOOL_NAME_ALIASES: Record<string, string> = {
-  find: "glob",
-  grep: "ripgrep",
-  ls: "list",
-  ripgrep: "grep",
+const PI_REQUEST_TOOL_NAME_ALIASES: Record<string, string[]> = {
+  ls: ["list"],
 };
 // The host provides local implementations for these public tool names. If the
 // runtime capability surface also returns them, OpenAI-compatible providers see
@@ -1767,8 +1766,8 @@ export function toolEnabledForPiRequest(
   if (requestedTools[normalizedToolName] === true) {
     return true;
   }
-  const alias = PI_REQUEST_TOOL_NAME_ALIASES[normalizedToolName];
-  return alias ? requestedTools[alias] === true : false;
+  const aliases = PI_REQUEST_TOOL_NAME_ALIASES[normalizedToolName] ?? [];
+  return aliases.some((alias) => requestedTools[alias] === true);
 }
 
 export function filterPiToolDefinitionsForRequest<TTool extends { name: string }>(
@@ -1866,14 +1865,15 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
   const webSearchTools = toolEnabledForPiRequest(request, "web_search")
     ? await resolvePiWebSearchToolDefinitions()
     : [];
+  const hashlineSnapshotStore = new HashlineSnapshotStore();
   const hashlineTools = filterPiToolDefinitionsForRequest(
     request,
-    createPiHashlineToolDefinitions(request.workspace_dir),
+    createPiHashlineToolDefinitions(request.workspace_dir, hashlineSnapshotStore),
   );
   const baseTools = filterPiToolDefinitionsForRequest(request, [
     ...createCodingTools(request.workspace_dir),
-    createRipgrepTool(request.workspace_dir),
-    createFindTool(request.workspace_dir),
+    createPiSearchToolDefinition(request.workspace_dir, hashlineSnapshotStore),
+    createPiFindToolDefinition(request.workspace_dir),
     createLsTool(request.workspace_dir),
   ]);
   const nonSkillCustomTools: ToolDefinition[] = [
@@ -2497,6 +2497,7 @@ function suppressPiPostRunAutoCompaction(session: AgentSession): void {
 }
 
 export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaultPiDeps()): Promise<number> {
+  installBenignStdioEpipeGuard();
   let sequence = 0;
   const nextSequence = () => {
     sequence += 1;

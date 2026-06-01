@@ -6,6 +6,7 @@ import { decodeHarnessHostPiRequestBase64 } from "./contracts.js";
 import { flushHarnessSentry, initHarnessSentry } from "./harness-ai-monitoring.js";
 import { requireHarnessHostPluginByCommand } from "./harness-registry.js";
 import { compactPiSession } from "./pi.js";
+import { installBenignStdioEpipeGuard } from "./stdio-epipe.js";
 
 type ReadableRequestStream = Pick<NodeJS.ReadableStream, "setEncoding"> &
   AsyncIterable<string | Buffer>;
@@ -100,6 +101,7 @@ export async function runHarnessHostMain(argv: string[], deps: HarnessHostCliDep
   const stdout = deps.stdout ?? process.stdout;
   const stderr = deps.stderr ?? process.stderr;
   const exit = deps.exit ?? ((code: number) => process.exit(code));
+  installBenignStdioEpipeGuard({ stdout, stderr });
 
   try {
     const exitCode = await runHarnessHostCli(argv, deps);

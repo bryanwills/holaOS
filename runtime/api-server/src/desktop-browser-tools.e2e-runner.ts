@@ -1,4 +1,5 @@
 import { DesktopBrowserToolService } from "./desktop-browser-tools.js";
+import { installBenignStdioEpipeGuard } from "./stdio-epipe.js";
 
 function requiredArg(args: string[], index: number, name: string): string {
   const value = args[index];
@@ -9,6 +10,7 @@ function requiredArg(args: string[], index: number, name: string): string {
 }
 
 async function main() {
+  installBenignStdioEpipeGuard();
   const args = process.argv.slice(2);
   const config = JSON.parse(requiredArg(args, 0, "config")) as {
     authToken: string;

@@ -69,6 +69,7 @@ import {
   prepareInstructionWithQuotedWorkspaceSkills,
   projectSessionVisibleWorkspaceSkills,
   resolveWorkspaceSkills,
+  type ResolvedWorkspaceSkill,
 } from "./workspace-skills.js";
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
 import {
@@ -78,6 +79,7 @@ import {
   type RuntimeHarnessPlugin,
 } from "./harness-registry.js";
 import { buildRunnerEnv } from "./runner-worker.js";
+import { installBenignStdioEpipeGuard } from "./stdio-epipe.js";
 import {
   startWorkspaceMcpSidecar,
   type WorkspaceMcpSidecarCliRequest,
@@ -103,16 +105,16 @@ const RECALLED_MEMORY_PREFETCH_WAIT_MS = 150;
 const WORKSPACE_ONBOARDING_IMPLEMENTING_STATE = "implementing";
 const MAIN_SESSION_DEFAULT_TOOLS = [
   "read",
-  "ripgrep",
-  "glob",
+  "search",
+  "find",
   "list",
   "question",
   "skill",
 ];
 const ONBOARDING_DEFAULT_TOOLS = [
   "read",
-  "ripgrep",
-  "glob",
+  "search",
+  "find",
   "list",
   "question",
   "skill",
@@ -121,8 +123,8 @@ const SUBAGENT_DEFAULT_TOOLS = [
   "read",
   "edit",
   "bash",
-  "ripgrep",
-  "glob",
+  "search",
+  "find",
   "list",
   "question",
   "todowrite",
@@ -1419,6 +1421,16 @@ function projectResolvedMcpServerIdsForSession(params: {
   return params.resolvedMcpServerIds;
 }
 
+function projectWorkspaceSkillsForSession(params: {
+  sessionKind: string | null | undefined;
+  workspaceSkills: ResolvedWorkspaceSkill[];
+}): ResolvedWorkspaceSkill[] {
+  if (isFrontSessionKind(params.sessionKind)) {
+    return [];
+  }
+  return params.workspaceSkills;
+}
+
 function explicitHolabossUserId(request: TsRunnerRequest): string | undefined {
   return (
     firstNonEmptyString(
@@ -2413,19 +2425,22 @@ export async function executeTsRunnerRequest(
           workspaceDir: bootstrap.workspaceDir,
         }),
     );
-    const workspaceSkills = measureBootstrapStage(
-      bootstrapStageTimingsMs,
-      "resolve_workspace_skills",
-      () => {
-        const teammateId = teammateSkillContextId(request, { logger }) ?? null;
-        return projectSessionVisibleWorkspaceSkills({
-          workspaceSkills: resolveWorkspaceSkills(bootstrap.workspaceDir, {
+    const workspaceSkills = projectWorkspaceSkillsForSession({
+      sessionKind: request.session_kind,
+      workspaceSkills: measureBootstrapStage(
+        bootstrapStageTimingsMs,
+        "resolve_workspace_skills",
+        () => {
+          const teammateId = teammateSkillContextId(request, { logger }) ?? null;
+          return projectSessionVisibleWorkspaceSkills({
+            workspaceSkills: resolveWorkspaceSkills(bootstrap.workspaceDir, {
+              teammateId,
+            }),
             teammateId,
-          }),
-          teammateId,
-        });
-      },
-    );
+          });
+        },
+      ),
+    });
     const preparedInstruction = prepareInstructionWithQuotedWorkspaceSkills({
       instruction: request.instruction,
       workspaceSkills,
@@ -2896,6 +2911,7 @@ export async function runTsRunnerCli(
   } = {},
 ): Promise<number> {
   const io = options.io ?? { stdout: process.stdout, stderr: process.stderr };
+  installBenignStdioEpipeGuard(io);
   const logger = options.logger ?? console;
   const requestBase64 =
     argv[0] === "--request-base64" ? (argv[1] ?? "") : (argv[0] ?? "");

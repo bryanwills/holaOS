@@ -247,9 +247,13 @@ function runtimeStateEffectiveStatus(
 export function IssueDetailPane({
   workspaceId,
   issueId,
+  onBack,
+  backLabel = "Back to board",
 }: {
   workspaceId: string;
   issueId: string;
+  onBack?: () => void;
+  backLabel?: string;
 }) {
   const { setSelectedWorkspaceId } = useWorkspaceSelection();
   const { selectedWorkspace } = useWorkspaceDesktop();
@@ -650,6 +654,10 @@ export function IssueDetailPane({
   }, []);
 
   const handleBackToBoard = useCallback(() => {
+    if (onBack) {
+      onBack();
+      return;
+    }
     const normalizedWorkspaceId = workspaceId.trim();
     if (!normalizedWorkspaceId) {
       return;
@@ -659,6 +667,7 @@ export function IssueDetailPane({
     setInternalTabs((prev) => upsertInternalTab(prev, tab));
     setActiveInternalTabId(tab.id);
   }, [
+    onBack,
     setActiveInternalTabId,
     setInternalTabs,
     setSelectedWorkspaceId,
@@ -1457,8 +1466,8 @@ export function IssueDetailPane({
           type="button"
           onClick={handleBackToBoard}
           className="window-no-drag grid size-7 shrink-0 place-items-center rounded-md text-foreground/55 transition-colors hover:bg-foreground/[0.04] hover:text-foreground"
-          aria-label="Back to board"
-          title="Back to board"
+          aria-label={backLabel}
+          title={backLabel}
         >
           <ArrowLeft className="size-4" />
         </button>
@@ -2088,4 +2097,3 @@ function Field({
     </div>
   );
 }
-
