@@ -1,9 +1,20 @@
-import { app as electronApp } from "electron";
 import { loadDesktopEnv } from "./desktopEnv";
-
-electronApp.setName("holaOS");
+import { app as electronApp } from "electron";
 
 loadDesktopEnv();
+
+function initialDesktopAppName(): string {
+  if (
+    process.platform === "darwin" &&
+    (!electronApp.isPackaged ||
+      process.env.HOLABOSS_INTERNAL_DEV?.trim() === "1")
+  ) {
+    return "holaOS Dev";
+  }
+  return "holaOS";
+}
+
+electronApp.setName(initialDesktopAppName());
 
 import * as Sentry from "@sentry/electron/main";
 
@@ -233,6 +244,7 @@ import {
 
 const APP_DISPLAY_NAME = "holaOS";
 const MAC_APP_MENU_PRODUCT_LABEL = "holaOS";
+const MAC_DEV_APP_MENU_PRODUCT_LABEL = "holaOS Dev";
 const AUTH_CALLBACK_PROTOCOL = "ai.holaboss.app";
 const DESKTOP_LAUNCH_ID = randomUUID();
 const nodeRequire = createRequire(__filename);
@@ -561,7 +573,45 @@ function configureChromiumLoggingPolicy() {
   app.commandLine.appendSwitch("log-level", "3");
 }
 
+function shouldUseMacMockKeychain(): boolean {
+  if (process.platform !== "darwin") {
+    return false;
+  }
+  const override = process.env.HOLABOSS_MAC_USE_MOCK_KEYCHAIN?.trim();
+  if (override === "1") {
+    return true;
+  }
+  if (override === "0") {
+    return false;
+  }
+  return !app.isPackaged || process.env.HOLABOSS_INTERNAL_DEV?.trim() === "1";
+}
+
+function configureMacKeychainPolicy() {
+  if (!shouldUseMacMockKeychain()) {
+    return;
+  }
+  // macOS otherwise persists Chromium secrets in Keychain Access under the
+  // app's "Safe Storage" item, which blocks local/dev launches with an OS
+  // password prompt as soon as any workspace browser profile has cookies.
+  app.commandLine.appendSwitch("use-mock-keychain");
+}
+
 configureChromiumLoggingPolicy();
+configureMacKeychainPolicy();
+
+function shouldUseDevMacAppIdentity(): boolean {
+  return (
+    process.platform === "darwin" &&
+    (!app.isPackaged || process.env.HOLABOSS_INTERNAL_DEV?.trim() === "1")
+  );
+}
+
+function configuredMacAppMenuProductLabel(): string {
+  return shouldUseDevMacAppIdentity()
+    ? MAC_DEV_APP_MENU_PRODUCT_LABEL
+    : MAC_APP_MENU_PRODUCT_LABEL;
+}
 
 interface DirectoryEntryPayload {
   name: string;
@@ -23001,17 +23051,17 @@ function installMacStatusItem() {
   icon.setTemplateImage(true);
 
   statusItemTray = new Tray(icon);
-  statusItemTray.setToolTip(MAC_APP_MENU_PRODUCT_LABEL);
+  statusItemTray.setToolTip(configuredMacAppMenuProductLabel());
   statusItemTray.setContextMenu(
     Menu.buildFromTemplate([
       {
-        label: `Open ${MAC_APP_MENU_PRODUCT_LABEL}`,
+        label: `Open ${configuredMacAppMenuProductLabel()}`,
         click: () => {
           focusOrCreateMainWindow();
         },
       },
       {
-        label: `Quit ${MAC_APP_MENU_PRODUCT_LABEL}`,
+        label: `Quit ${configuredMacAppMenuProductLabel()}`,
         role: "quit",
       },
     ]),
@@ -23028,13 +23078,13 @@ function installMacApplicationMenu() {
       label: app.getName(),
       submenu: [
         {
-          label: `Open ${MAC_APP_MENU_PRODUCT_LABEL}`,
+          label: `Open ${configuredMacAppMenuProductLabel()}`,
           click: () => {
             focusOrCreateMainWindow();
           },
         },
         {
-          label: `Quit ${MAC_APP_MENU_PRODUCT_LABEL}`,
+          label: `Quit ${configuredMacAppMenuProductLabel()}`,
           role: "quit",
         },
       ],
@@ -23120,8 +23170,8 @@ const singleInstanceLock =
     ? true
     : app.requestSingleInstanceLock();
 app.setName(
-  process.platform === "darwin" && isDev
-    ? MAC_APP_MENU_PRODUCT_LABEL
+  process.platform === "darwin"
+    ? configuredMacAppMenuProductLabel()
     : APP_DISPLAY_NAME,
 );
 if (!singleInstanceLock) {
