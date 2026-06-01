@@ -63,6 +63,29 @@ type DraftState = {
   kind: TeammateKindPayload;
 };
 
+const DETAIL_TABS = [
+  {
+    value: "activity",
+    label: "Activity",
+    Icon: Activity,
+  },
+  {
+    value: "issues",
+    label: "Issues",
+    Icon: ListTodo,
+  },
+  {
+    value: "instructions",
+    label: "Instructions",
+    Icon: ScrollText,
+  },
+  {
+    value: "skills",
+    label: "Skills",
+    Icon: FileCode2,
+  },
+] as const;
+
 function makeDraftSkillId(): string {
   return `skill-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -419,6 +442,14 @@ export function TeammatesPane({ workspaceId }: { workspaceId: string }) {
     isSaving ||
     (!!selectedTeammate && selectedTeammate.kind === "system") ||
     (!!selectedTeammate && selectedTeammate.status === "archived");
+  const systemTeammateDetail = selectedTeammate?.kind === "system";
+  const visibleDetailTabs = useMemo(
+    () =>
+      DETAIL_TABS.filter(
+        (tab) => tab.value !== "skills" || !systemTeammateDetail,
+      ),
+    [systemTeammateDetail],
+  );
   const canSave =
     !!selectedTeammate &&
     selectedTeammate.kind === "custom" &&
@@ -1043,18 +1074,6 @@ export function TeammatesPane({ workspaceId }: { workspaceId: string }) {
                     </div>
                   </div>
 
-                  <div className="rounded-xl border border-border bg-card px-4 py-3">
-                    <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                      Routing note
-                    </div>
-                    <p className="mt-2 text-xs leading-snug text-muted-foreground">
-                      The Workspace Manager routes from each teammate&apos;s
-                      capability profile first, then falls back to their
-                      instructions and teammate skill folders. Archived
-                      teammates drop out of routing and disappear from normal
-                      navigation.
-                    </p>
-                  </div>
                 </aside>
 
                 <div className="min-w-0">
@@ -1071,30 +1090,7 @@ export function TeammatesPane({ workspaceId }: { workspaceId: string }) {
                           variant="line"
                           className="h-auto w-full justify-start gap-0 rounded-none bg-transparent p-0"
                         >
-                          {(
-                            [
-                              {
-                                value: "activity",
-                                label: "Activity",
-                                Icon: Activity,
-                              },
-                              {
-                                value: "issues",
-                                label: "Issues",
-                                Icon: ListTodo,
-                              },
-                              {
-                                value: "instructions",
-                                label: "Instructions",
-                                Icon: ScrollText,
-                              },
-                              {
-                                value: "skills",
-                                label: "Skills",
-                                Icon: FileCode2,
-                              },
-                            ] as const
-                          ).map(({ value, label, Icon }) => (
+                          {visibleDetailTabs.map(({ value, label, Icon }) => (
                             <TabsTrigger
                               key={value}
                               value={value}
@@ -1323,20 +1319,22 @@ export function TeammatesPane({ workspaceId }: { workspaceId: string }) {
                                 className="h-9"
                               />
                             </FormField>
-                            <FormField label="Instructions">
-                              <Textarea
-                                value={draft.instructions}
-                                onChange={(event) =>
-                                  setDraft((current) => ({
-                                    ...current,
-                                    instructions: event.target.value,
-                                  }))
-                                }
-                                placeholder="Describe what this teammate is good at, how it should work, and any routing cues."
-                                disabled={draftLocked}
-                                className="min-h-[240px] resize-y"
-                              />
-                            </FormField>
+                            {!systemTeammateDetail ? (
+                              <FormField label="Instructions">
+                                <Textarea
+                                  value={draft.instructions}
+                                  onChange={(event) =>
+                                    setDraft((current) => ({
+                                      ...current,
+                                      instructions: event.target.value,
+                                    }))
+                                  }
+                                  placeholder="Describe what this teammate is good at, how it should work, and any routing cues."
+                                  disabled={draftLocked}
+                                  className="min-h-[240px] resize-y"
+                                />
+                              </FormField>
+                            ) : null}
                           </div>
                         </DetailSection>
                       </TabsContent>

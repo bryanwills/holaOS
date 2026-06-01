@@ -190,6 +190,15 @@ test("workspace surfaces wire board and dashboard tabs through the shell", async
   assert.match(teammatesPaneSource, /value: "issues",/);
   assert.match(teammatesPaneSource, /value: "instructions",/);
   assert.match(teammatesPaneSource, /value: "skills",/);
+  assert.match(teammatesPaneSource, /const visibleDetailTabs = useMemo\(/);
+  assert.match(
+    teammatesPaneSource,
+    /tab\.value !== "skills" \|\| !systemTeammateDetail/,
+  );
+  assert.match(
+    teammatesPaneSource,
+    /!\s*systemTeammateDetail \? \(\s*<FormField label="Instructions">/s,
+  );
   assert.match(teammatesPaneSource, /ConfirmDialog/);
   assert.match(teammatesPaneSource, /SKILL\.md/);
 });
