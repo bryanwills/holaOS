@@ -132,6 +132,14 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   );
   assert.match(
     prompt.systemPrompt,
+    /For workspace file inspection, search, listing, and direct file changes, prefer surfaced tools such as `read`, `search`, `find`, `list`, `edit`, and `write` over `bash` when they can complete the task directly\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Reserve `bash` for shell-native work such as invoking programs, pipelines, process control, tests\/builds, or operations the surfaced file\/runtime tools cannot express cleanly\./
+  );
+  assert.match(
+    prompt.systemPrompt,
     /Use MCP tools directly, and prefer surfaced MCP\/app tools over browser work, web search, bash, or file inspection when they match the target system, including its URLs\./
   );
   assert.doesNotMatch(
@@ -467,6 +475,10 @@ test("composeAgentPrompt requires subagent outputs to stay self-contained", () =
   assert.match(
     prompt.systemPrompt,
     /When surfaced MCP\/app tools match the task or a provided system URL, use them first instead of defaulting to bash, file inspection, or browser exploration\./,
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Workspace file routing: when surfaced file tools such as `read`, `search`, `find`, `list`, `edit`, or `write` can inspect, locate, or change workspace files directly, use them before `bash`\./,
   );
   assert.match(
     prompt.systemPrompt,
@@ -1668,7 +1680,8 @@ test("composeBaseAgentPrompt includes background terminal guidance when terminal
 
   assert.match(prompt.systemPrompt, /Background terminal routing:/);
   assert.match(prompt.systemPrompt, /prefer `terminal_session_start` for long-running, interactive, or revisitable shell work/i);
-  assert.match(prompt.systemPrompt, /Prefer one-shot `bash` for short commands/i);
+  assert.match(prompt.systemPrompt, /Workspace file routing: when surfaced file tools such as `read`, `search`, `find`, `list`, `edit`, or `write` can inspect, locate, or change workspace files directly, use them before `bash`\./i);
+  assert.match(prompt.systemPrompt, /Prefer one-shot `bash` only for short commands that genuinely require shell execution/i);
   assert.match(prompt.systemPrompt, /inspect it with `terminal_session_read` or `terminal_session_wait` before claiming success/i);
 });
 

@@ -1100,6 +1100,8 @@ export function buildBaseAgentPromptSections(
     "Inspect before mutating workspace, app, browser, runtime state, or external systems when possible.",
     "After edits, commands, browser actions, or state-changing tool calls, verify the result with the most direct inspection path available.",
     "Use available tools, skills, and MCP integrations when they are more reliable than reasoning alone.",
+    "For workspace file inspection, search, listing, and direct file changes, prefer surfaced tools such as `read`, `search`, `find`, `list`, `edit`, and `write` over `bash` when they can complete the task directly.",
+    "Reserve `bash` for shell-native work such as invoking programs, pipelines, process control, tests/builds, or operations the surfaced file/runtime tools cannot express cleanly.",
     "Treat explicit user requirements and verification targets as completion criteria, not optional detail.",
     "If evidence is incomplete, keep retrieving or say what remains unverified; do not claim side effects happened without proof in this turn.",
     "Treat deleting files, wiping directories, `replace_existing`, or blanking a non-empty file as destructive; do them only when the user explicitly asked.",

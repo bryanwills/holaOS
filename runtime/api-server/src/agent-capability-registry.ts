@@ -357,13 +357,19 @@ const BUILTIN_CAPABILITY_DEFINITIONS: Record<string, ToolCapabilityDefinition> =
     kind: "builtin_tool",
     policy: "mutate",
     title: "Edit",
-    description: "Modify existing workspace files directly from exact text previously read or searched.",
+    description: "Modify existing workspace files directly from exact text previously read or searched; prefer this over shell patching or ad hoc file mutation via bash.",
+  },
+  write: {
+    kind: "builtin_tool",
+    policy: "mutate",
+    title: "Write",
+    description: "Create new files or overwrite existing ones directly; prefer this over shell heredocs or ad hoc file creation via bash.",
   },
   bash: {
     kind: "builtin_tool",
     policy: "mutate",
     title: "Bash",
-    description: "Run shell commands that may inspect or mutate workspace state.",
+    description: "Run shell commands when shell semantics, external programs, or process control are genuinely required.",
   },
   search: {
     kind: "builtin_tool",
@@ -1481,11 +1487,25 @@ export function renderCapabilityToolRoutingPromptSection(
   const hasMemoryRetrieve = manifest.runtime_tools.some(
     (capability) => capability.id === "memory_retrieve",
   );
+  const hasBashTool = manifest.tools.some((capability) => capability.id === "bash");
+  const hasDirectWorkspaceFileTool = manifest.tools.some((capability) =>
+    capability.id === "read" ||
+    capability.id === "search" ||
+    capability.id === "find" ||
+    capability.id === "list" ||
+    capability.id === "edit" ||
+    capability.id === "write"
+  );
   const ensureHeading = () => {
     if (lines.length === 0) {
       lines.push("Capability routing addenda:");
     }
   };
+  if (hasBashTool && hasDirectWorkspaceFileTool) {
+    ensureHeading();
+    lines.push("Workspace file routing: when surfaced file tools such as `read`, `search`, `find`, `list`, `edit`, or `write` can inspect, locate, or change workspace files directly, use them before `bash`.");
+    lines.push("Use `bash` only when the task genuinely needs shell-native behavior such as invoking external programs, pipelines, process control, archive CLIs, or commands the surfaced file/runtime tools cannot express directly.");
+  }
   if (manifest.runtime_tools.some((capability) => capability.id === "cronjobs_create")) {
     ensureHeading();
     lines.push("Cronjob delivery routing: use `session_run` for recurring agent work such as running instructions, tasks, analysis, browsing, or writing.");
@@ -1521,7 +1541,7 @@ export function renderCapabilityToolRoutingPromptSection(
   if (manifest.runtime_tools.some((capability) => capability.id === "terminal_session_start")) {
     ensureHeading();
     lines.push("Background terminal routing: prefer `terminal_session_start` for long-running, interactive, or revisitable shell work such as dev servers, watch mode, and background jobs.");
-    lines.push("Prefer one-shot `bash` for short commands that should complete within the current tool call.");
+    lines.push("Prefer one-shot `bash` only for short commands that genuinely require shell execution and should complete within the current tool call.");
     lines.push("After starting a background terminal, inspect it with `terminal_session_read` or `terminal_session_wait` before claiming success.");
   }
   if (manifest.runtime_tools.some((capability) => capability.id === "download_url")) {

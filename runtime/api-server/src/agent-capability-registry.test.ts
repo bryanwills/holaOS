@@ -420,6 +420,9 @@ test("renderCapabilityToolRoutingPromptSection prefers surfaced MCP tools before
   });
 
   const section = renderCapabilityToolRoutingPromptSection(manifest);
+  assert.match(section, /Workspace file routing:/);
+  assert.match(section, /when surfaced file tools such as `read`, `search`, `find`, `list`, `edit`, or `write` can inspect, locate, or change workspace files directly, use them before `bash`\./i);
+  assert.match(section, /Use `bash` only when the task genuinely needs shell-native behavior such as invoking external programs, pipelines, process control, archive CLIs, or commands the surfaced file\/runtime tools cannot express directly\./i);
   assert.match(section, /Memory-first routing:/);
   assert.match(section, /when `memory_retrieve` is surfaced, treat it as the first retrieval step for non-UI recall, triage, recent-activity, or `what should I know` questions/i);
   assert.match(section, /Do not skip `memory_retrieve` just because a browser surface is active, a relevant tab is already open, or a connected MCP\/app surface looks partial\./i);
